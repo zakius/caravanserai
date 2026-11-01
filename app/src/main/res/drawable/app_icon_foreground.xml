@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- roma's glyph, the same in both apps (packaging/roma.svg, where its placement is explained): the play triangle with a
+<!-- roma's glyph, the same in both apps (packaging/caravan.svg, where its placement is explained): the play triangle with a
      bar beneath it, like the romanization under the original. Drawn in 256 units, scaled into the adaptive icon's 66 dp
      safe zone. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"

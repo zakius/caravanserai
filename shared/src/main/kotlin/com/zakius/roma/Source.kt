@@ -19,7 +19,7 @@ class Found(val items: List<Item>, val corrected: String? = null, val autoCorrec
 class SongPage(val songs: List<Song>, val next: String?)
 
 /**
- * Where music comes from. Each app has one: roma YouTube Music, the Subsonic app a Subsonic server; the build flavor
+ * Where music comes from. Each app has one: roma ytm YouTube Music, caravan a Subsonic server; the build flavor
  * picks it as [backend] (docs/subsonic.md, Two apps). Names come back romanized, and songs that enter the app are
  * remembered in the local index. Besides the data, a source brings what only it shows: its settings page, Home's
  * pinned tiles, its first-start step, its comments.

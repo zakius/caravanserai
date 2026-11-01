@@ -30,7 +30,7 @@ android {
     }
 
     // Two apps from one codebase (docs/subsonic.md, Two apps): roma ytm (the youtube flavor), YouTube Music only,
-    // released on GitHub; and roma (subsonic), for Subsonic servers and Google Play, whose APK carries no YouTube code
+    // released on GitHub; and caravan (subsonic), for Subsonic servers and Google Play, whose APK carries no YouTube code
     // at all. Each flavor brings its own music source.
     flavorDimensions += "app"
     productFlavors {

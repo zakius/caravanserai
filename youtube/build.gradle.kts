@@ -1,6 +1,6 @@
-// YouTube Music for roma: the vendored com.metrolist.innertube sources on top of InnerTubeX (vendored too), over
+// YouTube Music for roma ytm: the vendored com.metrolist.innertube sources on top of InnerTubeX (vendored too), over
 // HttpURLConnection (core's Http.kt); the stream lookup with its JavaScript player (meow.nyx.quackjs); comments, the
-// personal mixes, and the lyrics providers besides LRCLIB. Only roma (the youtube flavor) has it: the Subsonic app must
+// personal mixes, and the lyrics providers besides LRCLIB. Only roma ytm (the youtube flavor) has it: caravan must
 // carry none of it (docs/subsonic.md, Two apps).
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 

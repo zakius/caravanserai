@@ -1,6 +1,6 @@
 # Every push to master builds and tests. When app/build.gradle.kts has a versionName with no release yet, the run also
 # signs (tools/release.sh) and publishes roma ytm, the YouTube Music app, as a GitHub release, tagged v<version> on that
-# commit: a merge that bumps the version is the release. roma, the Subsonic app (for Google Play; docs/subsonic.md, Two
+# commit: a merge that bumps the version is the release. caravan, the Subsonic app (for Google Play; docs/subsonic.md, Two
 # apps), builds in the same jobs, Android and Linux desktop, and is checked for YouTube code (tools/residue_check.py)
 # but not published. The desktop app (:desktop) ships in the same release: a .deb and an .rpm built on Linux, an
 # .msi on Windows, with roma-aac (tools/build-ffmpeg.sh) built for both on Linux. The Japanese dictionary (data, a zip)

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Release APKs, signed with the key named in keystore.properties (outside git):
 #   dist/roma-ytm-<version>.apk: roma ytm (the youtube flavor), R8-shrunk, Zopfli-recompressed (tools/repack_apk.py),
-#     zipaligned (arm64 and x86_64 in one). roma's APK (the subsonic flavor, for Google Play) builds beside it, unsigned: tools/residue_check.py
+#     zipaligned (arm64 and x86_64 in one). caravan's APK (the subsonic flavor, for Google Play) builds beside it, unsigned: tools/residue_check.py
 #     checks neither carries the other's code, and fails the run when one does.
 #   dist/roma-dict-<dictionary version>.zip: the Japanese dictionary with its notices (:core:dictZip), only when that
 #     file is missing. Data, not an app: nothing to sign.

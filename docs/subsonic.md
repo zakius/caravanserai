@@ -1,4 +1,6 @@
-# roma: Subsonic backend (plan, 2026-10-30)
+# caravan: the Subsonic app (plan, 2026-10-30)
+
+caravan is the Subsonic and OpenSubsonic client built from this repository, romanized by roma; until 2026-11-01 it was named roma, and before that it was roma's second backend. A caravan travels between oases and handles many languages: the user's server is oasis, the desktop client mirage.
 
 roma gets a second backend next to YouTube Music: any Subsonic or OpenSubsonic server, and first of all oasis (~/dev/oasis), the user's server that merges the local library with YouTube Music and later other services. Romanization and the fixed controls stay the point of the app; they work on any track's metadata. Decided with the user on 2026-10-30.
 
@@ -6,7 +8,7 @@ The music stack:
 
 - **oasis**: a Python OpenSubsonic server. Clients never see where a track comes from. Every response carries `"type": "oasis"` in `subsonic-response`.
 - **mirage**: a fooyin fork for the desktop (another thread).
-- **roma**: this app, with either backend.
+- **caravan**: this app (roma's Subsonic backend until 2026-11-01); **roma ytm**, the YouTube Music one.
 
 ## Decisions
 
@@ -32,7 +34,7 @@ The music stack:
 | Like | `likeVideo`, `likeStatus` | `star`/`unstar`; the status from the song's `starred`, kept from the sync and from `getSong`. |
 | Lyrics: the reference provider | `YouTubeLyrics` (ANDROID_MUSIC browse) | OpenSubsonic `getLyricsBySongId`, only when the server lists the `songLyrics` extension; with `romanization`, its pronunciation layer too (Server romanization below). The third-party providers run as before. |
 | Comments, Share | YouTube comments; a YouTube link | None: both buttons dimmed, in place. |
-| Scrobbling | Last.fm from roma | Subsonic `scrobble`; Last.fm from roma only where the rule below says so. |
+| Scrobbling | Last.fm from the app | Subsonic `scrobble`; Last.fm from the app only where the rule below says so. |
 | Covers | Google-hosted URLs, sized in the URL | `subsonic:<coverArt id>` in the song; `Images` turns it into a `getCoverArt` URL with fresh auth and `size`. No credentials in stored songs. |
 
 What stays as it is: romanization (every name enters through `Romanizer` once, as before), the lyrics rules, the queue sections, the filters, bans, corrections, the player, the controls.
@@ -72,7 +74,7 @@ One server at a time: changing the server's URL or user drops the index and the 
 Each play is reported exactly once, by the side that knows the real source (`Source.lastFm`).
 
 - YouTube Music songs: roma scrobbles to Last.fm itself, as now.
-- Subsonic songs: always Subsonic `scrobble`, `submission=false` when the song starts (now playing), `submission=true` once `shouldScrobble` holds. roma scrobbles to Last.fm as well with the per-server switch "Also scrobble to Last.fm from roma". Until the user sets it, it follows `getUser`'s `scrobblingEnabled`: off when the server says it scrobbles to Last.fm itself, on otherwise. Every server is treated alike.
+- Subsonic songs: always Subsonic `scrobble`, `submission=false` when the song starts (now playing), `submission=true` once `shouldScrobble` holds. caravan scrobbles to Last.fm as well with the per-server switch "Also scrobble to Last.fm from caravan". Until the user sets it, it follows `getUser`'s `scrobblingEnabled`: off when the server says it scrobbles to Last.fm itself, on otherwise. Every server is treated alike.
 - Offline: finished plays go into the timestamped queue (`ScrobbleQueue`, one file per target: scrobbles.json for Last.fm as now, subsonic-scrobbles.json for the server). The server's queue is sent as `scrobble` calls with `submission=true` and `time` in milliseconds, one call per batch of up to 50 ids with their times; oasis stores that time. Now-playing calls are never queued.
 - Known gap, not in scope: with the YouTube Music backend roma never reports plays to YouTube Music history, only to Last.fm.
 
@@ -108,21 +110,21 @@ The YouTube Music and Subsonic backends became two apps built from this repo, wi
 | App | Backend | Ships to | Built by |
 |---|---|---|---|
 | roma ytm (com.zakius.roma.ytm, files roma-ytm) | YouTube Music only | GitHub releases | `:app:assembleYoutubeRelease`, `:desktop` |
-| roma (com.zakius.roma) | Subsonic/OpenSubsonic only | Google Play | `:app:assembleSubsonicRelease`, `:desktop-subsonic` |
+| caravan (com.zakius.caravan, files caravan) | Subsonic/OpenSubsonic only | Google Play | `:app:assembleSubsonicRelease`, `:desktop-subsonic` |
 
-Each app has its colour, on one icon design (the play triangle with a bar beneath it, packaging/*.svg): roma Subsonic's orange (#F28C28), roma ytm YouTube Music's red, a shade off YouTube's own (#E62117), so its icon isn't YouTube's logo. The colour is also the accent where the system gives none (`Source.brandColor`; Android 12+ follows the wallpaper).
+Each app has its colour, on one icon design (the play triangle with a bar beneath it, packaging/*.svg): caravan Subsonic's orange (#F28C28), roma ytm YouTube Music's red, a shade off YouTube's own (#E62117), so its icon isn't YouTube's logo. The colour is also the accent where the system gives none (`Source.brandColor`; Android 12+ follows the wallpaper).
 
-Names, ids and slugs: gradle.properties (decided 2026-11-01: roma, the name the app had, goes to the Play app; nothing had been distributed, so the old releases were deleted and nobody's install moved).
+Names, ids and slugs: gradle.properties. Decided 2026-11-01: roma, the name the app had, went to the Play app (nothing had been distributed, so the old releases were deleted and nobody's install moved); later that day the user named the Play app caravan (com.zakius.caravan), so roma stays the project's, the romanization engine's and the dictionary's name. caravan's desktop data folder is its own (~/.local/share/caravan, %APPDATA%\caravan), not roma's old one. The flavors and Gradle projects keep the names `subsonic` and `youtube`, `:desktop-subsonic` and `:desktop`.
 
 Google Play review can find innertube calls, client spoofing or BotGuard in an APK even when no screen uses them, so the Subsonic app's YouTube code is compiled out, not hidden.
 
 - Modules: `:core` (romanization, lyrics rules and LRCLIB, radio filters, scrobbling, roma's models) knows no service. `:youtube` has innertube, InnerTubeX, the stream lookup, comments, the personal mixes and the other lyrics providers. `:subsonic` has the client and index.
 - Screens: shared/src/main holds every screen and the `Source` interface, which also brings what only one source shows: its settings page, Home's tiles, its first-start step, the comments view, picture sizing. shared/src/youtube and shared/src/subsonic each define `backend` and their source's own screens.
-- Android: product flavors `youtube` (id com.zakius.roma, as before: existing installs upgrade with their data) and `subsonic` (its own id, name, icon, Last.fm link scheme; no self-update). Desktop: `:desktop` and `:desktop-subsonic`, one build script (desktop/build.gradle.kts), their own data folders and packages. The BotGuard WebView, the sign-in, Chromium and CEF are roma's alone.
-- Both apps play through ExoPlayer, each with only its source's containers (the flavor's `containers()`: WebM and MP4 for roma ytm; MP3, FLAC, Ogg, WAV, M4A and ADTS AAC for the Subsonic app) and a one-track selector (`FirstAudioTrack`) instead of DefaultTrackSelector. Sizes after release.sh's repack: roma (Subsonic) 1.47 MB, roma ytm 1.69 MB (1.74 before). Android's MediaPlayer under the desktop's queue player made the Subsonic APK 1.19 MB, but went back out (2026-11-01): it had no gapless change, no seek past the downloaded part, no partial download and no ranged cache.
+- Android: product flavors `youtube` (roma ytm) and `subsonic` (caravan: its own id, name, icon, Last.fm link scheme; no self-update). Desktop: `:desktop` and `:desktop-subsonic`, one build script (desktop/build.gradle.kts), their own data folders and packages. The BotGuard WebView, the sign-in, Chromium and CEF are roma ytm's alone.
+- Both apps play through ExoPlayer, each with only its source's containers (the flavor's `containers()`: WebM and MP4 for roma ytm; MP3, FLAC, Ogg, WAV, M4A and ADTS AAC for the Subsonic app) and a one-track selector (`FirstAudioTrack`) instead of DefaultTrackSelector. Sizes after release.sh's repack: caravan 1.47 MB, roma ytm 1.69 MB (1.74 before). Android's MediaPlayer under the desktop's queue player made the Subsonic APK 1.19 MB, but went back out (2026-11-01): it had no gapless change, no seek past the downloaded part, no partial download and no ranged cache.
 - The Japanese dictionary is downloaded as data, as in every app since 2026-11-01 (docs/design.md, Japanese dictionary): `roma-dict-<version>.zip`, unpacked into filesDir/dict (left out of device transfers), checked against its sha256 and memory-mapped from there. Google Play forbids installing apps (REQUEST_INSTALL_PACKAGES) and running downloaded code, not downloading data.
-- Left out of the Subsonic app: roma's self-update (and with it REQUEST_INSTALL_PACKAGES), the YouTube Music link to oasis, YouTube share links, YouTube lyrics, NetEase, KuGou and LyricsPlus. Its lyrics: the server's `getLyricsBySongId` as the reference (oasis gathers every provider's), LRCLIB beside it.
-- `tools/residue_check.py` fails the build when one app carries the other's code: every file of the Subsonic APK and desktop distribution (jars entry by entry, UTF-8 and UTF-16) against innertube, metrolist, BotGuard, YouTube, googlevideo and VISIONOS; and PackageInstaller or REQUEST_INSTALL_PACKAGES (Google Play); roma's against Subsonic. release.sh runs it on both release APKs, the Linux desktop job on both release distributions. One library string is allowed: the web-address pattern's list of top-level domains, which holds `.youtube`.
+- Left out of caravan: roma ytm's self-update (and with it REQUEST_INSTALL_PACKAGES), the YouTube Music link to oasis, YouTube share links, YouTube lyrics, NetEase, KuGou and LyricsPlus. Its lyrics: the server's `getLyricsBySongId` as the reference (oasis gathers every provider's), LRCLIB beside it.
+- `tools/residue_check.py` fails the build when one app carries the other's code: every file of the Subsonic APK and desktop distribution (jars entry by entry, UTF-8 and UTF-16) against innertube, metrolist, BotGuard, YouTube, googlevideo and VISIONOS; and PackageInstaller or REQUEST_INSTALL_PACKAGES (Google Play); roma ytm's against Subsonic. release.sh runs it on both release APKs, the Linux desktop job on both release distributions. One library string is allowed: the web-address pattern's list of top-level domains, which holds `.youtube`.
 - Checked 2026-11-01 on the desktop (agent device access was off, so not on the emulator): the Subsonic app against a test oasis (server form at first start, sync of 4,709 songs, Home's mixes, Search "yoru ni" finding 夜に駆ける, playback, romanized lyrics, Comments and Share disabled, Settings with LRCLIB alone); roma signed out (no source question, YouTube Music search, playback, lyrics, comments, its YouTube settings).
 
 ## Server romanization (2026-11-01)

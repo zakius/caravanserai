@@ -102,7 +102,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
     private fun query(params: List<Pair<String, String>>): String {
         val salt = ByteArray(8).also { random.nextBytes(it) }.joinToString("") { "%02x".format(it) }
         val token = md5(password + salt)
-        val all = listOf("u" to user, "t" to token, "s" to salt, "v" to API, "c" to "roma", "f" to "json") + params
+        val all = listOf("u" to user, "t" to token, "s" to salt, "v" to API, "c" to "caravan", "f" to "json") + params
         return all.joinToString("&") { (k, v) -> enc(k) + "=" + enc(v) }
     }
 

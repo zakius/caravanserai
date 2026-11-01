@@ -231,7 +231,7 @@ fun demuxer(f: StreamFile): Demuxer {
     return when {
         head[0] == 0x1A.toByte() && head[1] == 0x45.toByte() -> WebmDemuxer(f)
         String(head, 4, 4, Charsets.ISO_8859_1) == "ftyp" -> Mp4Demuxer(f)
-        else -> throw IOException("Not an audio stream roma can read")
+        else -> throw IOException("Not an audio stream ${BuildConfig.APP_NAME} can read")
     }
 }
 

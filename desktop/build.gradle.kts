@@ -1,6 +1,6 @@
-// roma for Linux and Windows: the app's screens and playback logic (shared/, compiled into :app too) on Compose for
+// roma ytm and caravan for Linux and Windows: the app's screens and playback logic (shared/, compiled into :app too) on Compose for
 // Desktop, with roma's own audio decoding and the system's Chromium-family browser for BotGuard and sign-in (docs/design.md).
-// :desktop builds roma ytm, the YouTube Music app. roma, the Subsonic app, is this script too, as :desktop-subsonic
+// :desktop builds roma ytm, the YouTube Music app. caravan, the Subsonic app, is this script too, as :desktop-subsonic
 // (settings.gradle.kts): its own sources (src/subsonic, shared/src/subsonic), name and packages, and no YouTube code,
 // browser or CEF (docs/subsonic.md, Two apps).
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat

@@ -1,13 +1,13 @@
 # roma
 
-A music player for Android, Linux and Windows that romanizes every non-Latin title, artist and lyric line, and whose controls stay in the same place. Two apps from this repository:
+roma romanizes every non-Latin title, artist and lyric line. This repository holds its romanization engine and two music players for Android, Linux and Windows built on it, whose controls stay in the same place:
 
-- **roma**, for your own Subsonic or OpenSubsonic server (oasis, Navidrome, …), headed for Google Play.
+- **caravan**, for your own Subsonic or OpenSubsonic server (oasis, Navidrome, …), romanized by roma, headed for Google Play.
 - **roma ytm**, for YouTube Music, from [Releases](https://github.com/zakius/roma/releases). The rest of this page is about it.
 
 https://github.com/user-attachments/assets/a9b0ed15-224c-46ec-89f7-82014df466c7
 
-Tiny and fast: roma ytm is a 1.7 MB download (roma 1.5 MB); romanizing Japanese needs an optional dictionary, downloaded separately. Install it and tap around; that shows the speed better than a benchmark.
+Tiny and fast: roma ytm is a 1.7 MB download (caravan 1.5 MB); romanizing Japanese needs an optional dictionary, downloaded separately. Install it and tap around; that shows the speed better than a benchmark.
 
 - **Romanization everywhere:** lists, player, queue, search, lyrics, notification.
   - Japanese: [Sudachi](https://github.com/WorksApplications/Sudachi) with SudachiDict core, Hepburn.
@@ -32,9 +32,9 @@ Requirements: JDK 21 and the Android SDK (compileSdk 37).
 ./gradlew :core:test :youtube:test :subsonic:test :app:assembleYoutubeDebug
 ```
 
-The same code builds a second app, for Subsonic servers and Google Play, without any YouTube code: `:app:assembleSubsonicDebug` and `:desktop-subsonic:run` ([docs/subsonic.md](docs/subsonic.md#two-apps-2026-11-01)).
+The same code builds caravan, for Subsonic servers and Google Play, without any YouTube code: `:app:assembleSubsonicDebug` and `:desktop-subsonic:run` ([docs/subsonic.md](docs/subsonic.md#two-apps-2026-11-01)).
 
-The tests and the dictionary's download (`:core:dictZip`) need SudachiDict: their first build downloads it (about 77 MB, checked against a pinned sha256) into the Gradle cache. Building roma itself doesn't.
+The tests and the dictionary's download (`:core:dictZip`) need SudachiDict: their first build downloads it (about 77 MB, checked against a pinned sha256) into the Gradle cache. Building the apps doesn't.
 
 Release builds are made with `tools/release.sh`: R8 shrinking, Zopfli-recompressed, signed with a key that you supply in `keystore.properties` (not in the repository). A merge to master that sets a new `versionName` builds and publishes it as a GitHub release (`.github/workflows/release.yml`); there's no tag to push.
 

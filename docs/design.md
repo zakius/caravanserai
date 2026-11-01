@@ -1,9 +1,6 @@
 # roma: design
 
-A YouTube Music client for Android, Linux and Windows. It shows a romanized form of every non-Latin string, and its controls never move.
-Working name; rename freely.
-
-A second backend, any Subsonic server (first of all oasis), is planned in [subsonic.md](subsonic.md) (2026-10-30).
+roma romanizes every non-Latin string, and its apps' controls never move. It began as a YouTube Music client for Android, Linux and Windows, now roma ytm; this file is mostly about it. Since 2026-11-01 the same code also builds caravan, a Subsonic and OpenSubsonic client romanized by roma ([subsonic.md](subsonic.md)). Both follow the rules below.
 
 ## Rules
 

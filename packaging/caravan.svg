@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-  <!-- roma's icon (the Subsonic app), on Subsonic's orange: roma's glyph, the play triangle with a bar beneath it like the romanization under the original. Placed by
+  <!-- caravan's icon, on Subsonic's orange: roma's glyph, the play triangle with a bar beneath it like the romanization under the original. Placed by
        eye, not by the numbers: the triangle's box sits right of centre so it looks centred, the bar spans it, and the
        pair is centred by weight. The same glyph in both apps (app/src/main/res/drawable/app_icon_foreground.xml). -->
   <rect width="256" height="256" rx="56" fill="#F28C28"/>

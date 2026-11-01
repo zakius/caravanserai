@@ -84,7 +84,7 @@ class SubsonicTest {
         val c = SubsonicClient(url, "admin", "secret")
         c.ping()
         val ps = calls.last().second.toMap()
-        assertEquals("roma", ps["c"])
+        assertEquals("caravan", ps["c"])
         assertEquals("json", ps["f"])
         assertTrue("p" !in ps) // the password itself never goes out
         assertEquals(listOf("formPost", "songLyrics"), c.extensions())
