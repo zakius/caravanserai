@@ -112,10 +112,6 @@ interface Source {
     @Composable fun Comments() {}
     /** Blocking. A link to the song for Share; null when there's none. */
     fun shareUrl(s: Song): String?
-    /** Blocking. Where the song's audio comes from, shown in its menu for debugging; null when there's nothing to tell. */
-    fun origin(s: Song): String? = null
-    /** A song's tag on song rows and the player, for debugging; null for none. */
-    fun tag(s: Song): String? = null
 
     /** The app scrobbles this source's songs to Last.fm itself; otherwise the source reports them (docs/subsonic.md, Scrobbling). */
     val lastFm: Boolean
@@ -134,8 +130,5 @@ interface Source {
     @Composable fun Settings()
 }
 
-/** Debug builds show where server songs come from and how Lidarr gets what's added; release builds only whether it's in the library. */
-var showDetails = false
-
-/** [note]: how getting it is going, when the server fetches what's added (oasis through Lidarr). */
+/** [note]: how getting it is going, from servers that fetch what's added (oasis); null elsewhere. */
 class InLibrary(val saved: Boolean, val note: String? = null)

@@ -11,7 +11,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** The client and the index sync against a small fake server on localhost, which answers like oasis does. */
+/** The client and the index sync against a small fake server on localhost, which answers like an OpenSubsonic server. */
 class SubsonicTest {
     private val calls = ArrayList<Pair<String, List<Pair<String, String>>>>()
     private var ignoreOffset = false
@@ -36,17 +36,16 @@ class SubsonicTest {
                 "getLyricsBySongId" -> """"lyricsList":{"structuredLyrics":[{"synced":false,"line":[{"value":"plain"}]},{"synced":true,"offset":-100,"line":[{"start":1000,"value":"沈むように"},{"start":4000,"value":"溶けてゆくように"}]}]}"""
                 "getSong" -> """"song":{"id":"tr-8","title":"Lyra","artist":"Breaking Benjamin","suffix":"flac","bitRate":1411,"path":"Breaking Benjamin/Lyra.flac"}"""
                 "getAlbum" -> """"album":{"id":"al-9","name":"STRAY SHEEP","starred":"2026-10-31T01:00:00Z","oasisWanted":"wanted","oasisWantedError":"searching","artist":"米津玄師","artistId":"ar-9","song":[${songs[0]},${songs[1]}]}"""
-                "getArtist" -> """"artist":{"id":"ar-9","name":"米津玄師","album":[{"id":"al-9","name":"STRAY SHEEP"},{"id":"yt-al-1","name":"Lemon","year":2018,"releaseTypes":["Single"]}]}"""
+                "getArtist" -> """"artist":{"id":"ar-9","name":"米津玄師","album":[{"id":"al-9","name":"STRAY SHEEP"},{"id":"al-10","name":"Lemon","year":2018,"releaseTypes":["Single"]}]}"""
+                "getUser" -> """"user":{"username":"${p("username")}","scrobblingEnabled":true,"adminRole":true}"""
                 "getTopSongs" -> """"topSongs":{"song":[${songs[2]}]}"""
                 "getSimilarSongs" -> """"similarSongs":{"song":[${songs[4]}]}"""
-                "getPlaylists" -> """"playlists":{"playlist":[{"id":"1","name":"Radio","owner":"admin"},{"id":"2","name":"Liked Music","owner":"YouTube Music"},""" +
-                    """{"id":"3","name":"Replay Mix","owner":"YouTube Music","oasisMix":true},""" +
-                    """{"id":"4","name":"Archive Mix","owner":"YouTube Music","oasisMix":true},""" +
-                    """{"id":"5","name":"My Supermix","owner":"YouTube Music","oasisMix":true}]}"""
+                "getPlaylists" -> """"playlists":{"playlist":[{"id":"1","name":"Radio","owner":"admin"},{"id":"2","name":"Favourites","owner":"admin"},""" +
+                    """{"id":"3","name":"Replay Mix","owner":"YouTube Music","oasisMix":true},{"id":"4","name":"Archive Mix","owner":"YouTube Music","oasisMix":true}]}"""
                 "scrobble", "star" -> """"x":1"""
                 else -> """"x":1"""
             }
-            val json = """{"subsonic-response":{$body,"version":"1.16.1","type":"oasis","openSubsonic":true}}""".toByteArray()
+            val json = """{"subsonic-response":{$body,"version":"1.16.1","type":"navidrome","openSubsonic":true}}""".toByteArray()
             ex.sendResponseHeaders(200, json.size.toLong())
             ex.responseBody.use { it.write(json) }
         }
@@ -67,10 +66,9 @@ class SubsonicTest {
         assertEquals("s.a.2fb", SubsonicIds.encode("a/b"))
     }
 
-    @Test fun tokenAuthAndType() {
+    @Test fun tokenAuth() {
         val c = SubsonicClient(url, "admin", "secret")
         c.ping()
-        assertEquals("oasis", c.type)
         val ps = calls.last().second.toMap()
         assertEquals("roma", ps["c"])
         assertEquals("json", ps["f"])
@@ -99,8 +97,8 @@ class SubsonicTest {
         assertEquals(listOf(3), index.songs.filter { it.starred }.map { it.track })
         assertEquals("THE BOOK", index.albums.single().name)
         assertEquals("YOASOBI", index.artists.single().name)
-        assertEquals("oasis", index.type)
         assertEquals(203, index.songs[2].duration)
+        assertEquals(true, index.serverScrobbles)
     }
 
     @Test fun syncStopsWhenOffsetIsIgnored() {
@@ -149,7 +147,7 @@ class SubsonicTest {
         assertEquals(listOf("tr-1", "tr-2"), tracks.map { it.id })
         val (artist, albums) = c.artist("ar-9")
         assertEquals("米津玄師", artist.name)
-        assertEquals(listOf("al-9", "yt-al-1"), albums.map { it.id })
+        assertEquals(listOf("al-9", "al-10"), albums.map { it.id })
         assertEquals(listOf(null, "Single"), albums.map { it.releaseType })
         assertEquals(listOf("tr-3"), c.topSongs("米津玄師").map { it.id })
         assertEquals("米津玄師", calls.last().second.toMap()["artist"])
@@ -166,15 +164,8 @@ class SubsonicTest {
 
     @Test fun mixesMarked() {
         val all = SubsonicClient(url, "admin", "secret").playlists()
-        assertEquals(listOf("Radio", "Liked Music"), all.filter { !it.mix }.map { it.name })
-        assertEquals(listOf("Replay Mix", "Archive Mix", "My Supermix"), all.filter { it.mix }.map { it.name }) // in the server's order
-    }
-
-    @Test fun scrobbleRule() {
-        // Once, by the side that knows the source: oasis forwards plays itself; other servers only with the switch.
-        assertEquals(false, scrobblesToLastFm(serverType = "oasis", lastFmForServer = true))
-        assertEquals(false, scrobblesToLastFm(serverType = "navidrome", lastFmForServer = false))
-        assertEquals(true, scrobblesToLastFm(serverType = "navidrome", lastFmForServer = true))
+        assertEquals(listOf("Radio", "Favourites"), all.filter { !it.mix }.map { it.name })
+        assertEquals(listOf("Replay Mix", "Archive Mix"), all.filter { it.mix }.map { it.name }) // in the server's order
     }
 
     @Test fun mediaUrlsCarryAuth() {

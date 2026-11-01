@@ -92,10 +92,7 @@ import roma.core.song
 
 // The Subsonic app's own screens: Home's tiles, the server's settings and the first-start server form.
 
-/**
- * Home's pinned tiles: the server's mixes (oasis publishes its streaming services' personal mixes as playlists), then
- * the starred songs and the whole library at random, three to a row.
- */
+/** Home's pinned tiles: the server's mixes (oasis only), then the starred songs and the whole library at random, three to a row. */
 @Composable
 internal fun LibraryTiles() {
     val mixes = SubsonicSource.mixTiles
@@ -144,10 +141,9 @@ internal fun ServerSettings() {
             Row1("Sync now", state, enabled = !SubsonicSource.syncing) { SubsonicSource.sync() }
         }
         item {
-            val oasis = SubsonicSource.serverType == "oasis"
             Switch1(
-                "Also scrobble to Last.fm from ${BuildConfig.APP_NAME}", "subsonic.lastfm", false, enabled = !oasis,
-                subtitle = if (oasis) "Not needed: oasis passes every play on to Last.fm and ListenBrainz itself" else "${BuildConfig.APP_NAME} always tells the server. Leave this off when the server scrobbles to Last.fm, as Navidrome can",
+                "Also scrobble to Last.fm from ${BuildConfig.APP_NAME}", "subsonic.lastfm", SubsonicSource.lastFmDefault,
+                subtitle = "${BuildConfig.APP_NAME} always tells the server. " + if (SubsonicSource.library?.index?.serverScrobbles == true) "The server says it scrobbles to Last.fm itself, so this starts off" else "Turn this off if the server scrobbles to Last.fm itself",
             )
         }
     }
@@ -158,7 +154,7 @@ internal fun ServerSettings() {
 internal fun ServerSetup() {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
         Text("Where is your music?", style = MaterialTheme.typography.headlineSmall)
-        Text("Your Subsonic server: oasis, Navidrome, … You can change this in Settings.", Modifier.padding(top = 8.dp, bottom = 16.dp), style = MaterialTheme.typography.bodyMedium)
+        Text("Your Subsonic or OpenSubsonic server. You can change this in Settings.", Modifier.padding(top = 8.dp, bottom = 16.dp), style = MaterialTheme.typography.bodyMedium)
         ServerForm("Continue") {}
     }
 }

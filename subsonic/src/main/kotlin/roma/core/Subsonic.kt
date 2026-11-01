@@ -53,18 +53,18 @@ class SubSong(
     val created: String? = null,
     val suffix: String? = null,
     val bitRate: Int = 0,
-    /** The file under the server's music folder; oasis gives none for the songs it streams. */
+    /** The file under the server's music folder, when the server gives one. */
     val path: String? = null,
 )
 
 @Serializable
-class SubAlbum(val id: String, val name: String, val artist: String = "", val artistId: String? = null, val year: Int = 0, val coverArt: String? = null, val songCount: Int = 0, val created: String? = null, val starred: Boolean = false, val wanted: String? = null, val releaseType: String? = null, val wantedError: String? = null)
+class SubAlbum(val id: String, val name: String, val artist: String = "", val artistId: String? = null, val year: Int = 0, val coverArt: String? = null, val songCount: Int = 0, val created: String? = null, val starred: Boolean = false, val releaseType: String? = null, val wanted: String? = null, val wantedError: String? = null)
 
-/** [wanted]: oasis's "oasisWanted", how Lidarr is getting a starred album or artist: wanted, downloading or failed; [wantedError]: why it isn't there yet. */
+/** [wanted]: how a starred album or artist the server doesn't hold yet is coming (oasis's "oasisWanted": wanted, downloading, failed), [wantedError] why it isn't there yet; null on other servers. */
 @Serializable
 class SubArtist(val id: String, val name: String, val coverArt: String? = null, val albumCount: Int = 0, val starred: Boolean = false, val wanted: String? = null, val wantedError: String? = null)
 
-/** [mix]: one of the account's personal mixes (oasis's "oasisMix"). */
+/** [mix]: one of the account's personal mixes (oasis's "oasisMix"; false on other servers). */
 @Serializable
 class SubPlaylist(val id: String, val name: String, val owner: String = "", val songCount: Int = 0, val coverArt: String? = null, val mix: Boolean = false)
 
@@ -75,9 +75,9 @@ class SubsonicIndex(
     val albums: List<SubAlbum>,
     val artists: List<SubArtist>,
     val syncedAt: Long,
-    /** subsonic-response's "type": "oasis", "navidrome", …; null for servers that don't say. */
-    val type: String? = null,
     val extensions: List<String> = emptyList(),
+    /** getUser's "scrobblingEnabled": the server sends this user's plays to Last.fm itself; null when it doesn't say. */
+    val serverScrobbles: Boolean? = null,
 )
 
 /** The server's answer to a call that failed: [code] as Subsonic gives it (40 wrong user or password, 70 not found). */
@@ -86,10 +86,6 @@ class SubsonicException(val code: Int, message: String) : Exception(message)
 /** Calls to a Subsonic or OpenSubsonic server, with token auth: md5(password + salt), a fresh salt per request. Blocking. */
 class SubsonicClient(url: String, val user: String, private val password: String) {
     val base = url.trim().trimEnd('/').let { if ("://" in it) it else "http://$it" }
-    /** subsonic-response's "type" from the last answer: "oasis" means oasis, which forwards plays itself. */
-    @Volatile var type: String? = null
-        private set
-
     /** The URL of [method] with auth and [params], for calls and for what the player and image loader fetch. */
     fun url(method: String, params: List<Pair<String, String>> = emptyList()) = "$base/rest/$method?" + query(params)
 
@@ -105,7 +101,6 @@ class SubsonicClient(url: String, val user: String, private val password: String
         val (code, body) = httpCall(url(method, params), timeoutMs = 30_000)
         val root = runCatching { Json.parseToJsonElement(body).obj()?.get("subsonic-response").obj() }.getOrNull()
             ?: throw SubsonicException(0, if (code in 200..299) "Not a Subsonic server: no subsonic-response in the answer" else "The server answered HTTP $code")
-        type = root["type"].str() ?: type
         if (root["status"].str() != "ok") {
             val e = root["error"].obj()
             throw SubsonicException(e?.get("code").str()?.toIntOrNull() ?: 0, e?.get("message").str() ?: "The server refused $method")
@@ -118,8 +113,11 @@ class SubsonicClient(url: String, val user: String, private val password: String
     /** OpenSubsonic extensions ("songLyrics", "formPost", …); none from a plain Subsonic server. */
     fun extensions(): List<String> = runCatching { call("getOpenSubsonicExtensions")["openSubsonicExtensions"].arr().orEmpty().mapNotNull { it.obj()?.get("name").str() } }.getOrDefault(emptyList())
 
+    /** getUser's "scrobblingEnabled" for this user; null when the server doesn't say. */
+    fun scrobblingEnabled(): Boolean? = runCatching { call("getUser", listOf("username" to user))["user"].obj()?.get("scrobblingEnabled").str()?.toBooleanStrictOrNull() }.getOrNull()
+
     /**
-     * The whole library: songs from an empty search3 (`query=""`, which oasis, Navidrome and others read as
+     * The whole library: songs from an empty search3 (`query=""`, which Navidrome and others read as
      * everything), albums from getAlbumList2, artists from getArtists, [page] at a time. A page shorter than asked
      * ends a list; so does one with nothing new, in case a server ignores the offset.
      */
@@ -132,7 +130,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
         }
         val artists = call("getArtists")["artists"].obj()?.get("index").arr().orEmpty()
             .flatMap { it.obj()?.get("artist").arr().orEmpty() }.mapNotNull { artist(it) }.distinctBy { it.id }
-        return SubsonicIndex(songs, albums, artists, System.currentTimeMillis(), type, extensions())
+        return SubsonicIndex(songs, albums, artists, System.currentTimeMillis(), extensions(), scrobblingEnabled())
     }
 
     private fun <T> paged(page: Int, id: (T) -> String, fetch: (Int) -> List<T>): List<T> {
@@ -164,7 +162,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
     /** Songs like the song, album or artist [id] (getSimilarSongs takes any of the three). */
     fun similarSongs(id: String, count: Int = 50) = call("getSimilarSongs", listOf("id" to id, "count" to "$count"))["similarSongs"].obj()?.get("song").arr().orEmpty().mapNotNull { song(it) }
 
-    /** An album and its songs, for one the synced lists don't hold (oasis: a streamed album seen in search or radio). */
+    /** An album and its songs, for one the synced lists don't hold (seen in search or radio). */
     fun album(id: String): Pair<SubAlbum, List<SubSong>> {
         val a = call("getAlbum", listOf("id" to id))["album"] ?: throw SubsonicException(70, "No such album")
         return (album(a) ?: throw SubsonicException(70, "No such album")) to a.obj()?.get("song").arr().orEmpty().mapNotNull { song(it) }
@@ -175,8 +173,8 @@ class SubsonicClient(url: String, val user: String, private val password: String
         return (artist(a) ?: throw SubsonicException(70, "No such artist")) to a.obj()?.get("album").arr().orEmpty().mapNotNull { album(it) }
     }
 
-    /** The server's own search, which on oasis reaches its streaming services too. */
-    /** The artist's top songs (oasis: the most played library songs, then its streaming services' list). */
+    /** The server's own search. */
+    /** The artist's top songs. */
     fun topSongs(artist: String, count: Int = 50) = call("getTopSongs", listOf("artist" to artist, "count" to "$count"))["topSongs"].obj()?.get("song").arr().orEmpty().mapNotNull { song(it) }
 
     fun search(query: String, count: Int = 30): Triple<List<SubSong>, List<SubAlbum>, List<SubArtist>> {
@@ -228,7 +226,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
 
         fun album(e: JsonElement): SubAlbum? {
             val o = e.obj() ?: return null
-            return SubAlbum(o["id"].str() ?: return null, o["name"].str() ?: o["title"].str() ?: "", o["artist"].str() ?: "", o["artistId"].str(), o["year"].int(), o["coverArt"].str(), o["songCount"].int(), o["created"].str(), o["starred"] != null, o["oasisWanted"].str(), o["releaseTypes"].arr()?.firstOrNull().str(), o["oasisWantedError"].str())
+            return SubAlbum(o["id"].str() ?: return null, o["name"].str() ?: o["title"].str() ?: "", o["artist"].str() ?: "", o["artistId"].str(), o["year"].int(), o["coverArt"].str(), o["songCount"].int(), o["created"].str(), o["starred"] != null, o["releaseTypes"].arr()?.firstOrNull().str(), o["oasisWanted"].str(), o["oasisWantedError"].str())
         }
 
         fun artist(e: JsonElement): SubArtist? {
@@ -268,10 +266,3 @@ class SubsonicLyrics(private val client: () -> SubsonicClient) : LyricsProvider 
     override val name = "Your server"
     override fun fetch(q: LyricsQuery): Lyrics? = client().lyrics(SubsonicIds.decode(q.videoId), name)
 }
-
-/**
- * Whether the app scrobbles a server's song to Last.fm itself. Each play is reported once, by the side that knows its
- * real source: the server (which the app always tells), and the app as well only when the user turned that on for a
- * server other than oasis, since oasis forwards every play itself.
- */
-fun scrobblesToLastFm(serverType: String?, lastFmForServer: Boolean) = serverType != "oasis" && lastFmForServer

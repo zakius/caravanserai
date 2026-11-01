@@ -65,10 +65,7 @@ object SubsonicSource : Source {
 
     private fun need() = client ?: throw IllegalStateException("No server set. Add one in Settings → Music source.")
 
-    /** The server's own name for itself ("oasis", "navidrome"), from the last sync or answer. */
-    val serverType get() = library?.index?.type ?: cachedClient?.type
-
-    override val name get() = if (serverType == "oasis") "oasis" else "your server"
+    override val name = "your server"
     // Subsonic's orange; as the icon (app/src/subsonic/res/values/app_icon.xml).
     override val brandColor = 0xFFF28C28.toInt()
     override val account get() = Store.prefs.getString("subsonic.url", null)?.let { it + "\n" + Store.prefs.getString("subsonic.user", "") }
@@ -175,7 +172,7 @@ object SubsonicSource : Source {
 
     // ---- Pages ----
 
-    /** The server's mixes (oasis: its streaming services' personal mixes, marked "oasisMix"), for Home's tiles, in the server's order. */
+    /** The server's mixes (playlists marked "oasisMix"; oasis publishes its streaming services' personal mixes so), for Home's tiles, in the server's order. Other servers have none. */
     var mixTiles by mutableStateOf<List<Item>>(emptyList())
         private set
 
@@ -209,7 +206,7 @@ object SubsonicSource : Source {
     override val searchIsLocal = true
     override suspend fun suggestions(query: String) = emptyList<String>()
 
-    /** The index's matches at once, then the server's own results after them (on oasis, its streaming services' too). */
+    /** The index's matches at once, then the server's own results after them. */
     override suspend fun search(query: String, filter: Int, asTyped: String?, partial: suspend (Found) -> Unit): Found {
         val local = searchLocal(query, filter)
         if (filter == 3) return local
@@ -254,7 +251,7 @@ object SubsonicSource : Source {
         }
     }
 
-    // The mixes live in Home's tiles; Playlists holds the rest (oasis: the streaming services' library playlists too).
+    // The mixes live in Home's tiles; Playlists holds the rest.
     private fun playlists() = need().playlists().filter { !it.mix }.map { Store.romanizer.item(it) }
 
     override suspend fun detail(p: Page, partial: suspend (Detail) -> Unit): Detail {
@@ -262,7 +259,7 @@ object SubsonicSource : Source {
         val r = Store.romanizer
         return when (p.kind) {
             "album" -> {
-                // An album the synced lists don't hold (oasis: one seen in search or radio) comes from the server.
+                // An album the synced lists don't hold (one seen in search or radio) comes from the server.
                 if (l.albumSongs[p.id].isNullOrEmpty()) {
                     val (a, subs) = need().album(SubsonicIds.decode(p.id))
                     val songs = subs.map { l.byId[SubsonicIds.encode(it.id)] ?: r.song(it) }
@@ -282,8 +279,8 @@ object SubsonicSource : Source {
             }
             else -> {
                 fun count(n: Int, what: String) = "$n $what" + if (n == 1) "" else "s"
-                // The library's own first, at once; then the server's page, which on oasis holds the artist's whole
-                // discography and top songs from its streaming services. Offline the library's stays.
+                // The library's own first, at once; then the server's page, which may hold more releases and top songs.
+                // Offline the library's stays.
                 val a = l.artistById[p.id]
                 val songs = l.artistSongs[p.id].orEmpty()
                 val albums = l.index.albums.filter { it.artistId?.let(SubsonicIds::encode) == p.id }.mapNotNull { l.albumById[SubsonicIds.encode(it.id)] }
@@ -314,8 +311,7 @@ object SubsonicSource : Source {
         val l = runCatching { lib() }.getOrNull() ?: return null
         val similar = runCatching { need().similarSongs(SubsonicIds.decode(from ?: seed.id)) }.getOrDefault(emptyList())
             .map { l.byId[SubsonicIds.encode(it.id)] ?: Store.romanizer.song(it) }
-        // oasis always finds similar songs when there are any; other servers often have no recommendations at all.
-        if (similar.isEmpty()) return if (serverType == "oasis") SongPage(emptyList(), null) else SongPage(l.songs.shuffled().take(25), "more")
+        if (similar.isEmpty()) return SongPage(l.songs.shuffled().take(25), "more")
         return SongPage(similar, similar.last().id)
     }
 
@@ -336,7 +332,7 @@ object SubsonicSource : Source {
     override fun like(id: String, like: Boolean) = runCatching { need().star(SubsonicIds.decode(id), like) }.isSuccess
     override fun liked(id: String) = runCatching { need().song(SubsonicIds.decode(id)).starred }.getOrNull()
 
-    // A starred album or artist is in the library; on oasis that also has Lidarr fetch what's missing.
+    // A starred album or artist is in the library. A server that then fetches what's missing (oasis) says how that goes.
     override fun saved(p: Page) = runCatching {
         val id = SubsonicIds.decode(p.id)
         val (starred, wanted, why) = when (p.kind) {
@@ -344,7 +340,7 @@ object SubsonicSource : Source {
             "artist" -> need().artist(id).first.let { Triple(it.starred, it.wanted, it.wantedError) }
             else -> return null
         }
-        val state = when (wanted) { "wanted" -> "Lidarr is getting it"; "downloading" -> "Downloading"; "failed" -> "Lidarr couldn't find it"; else -> null }
+        val state = when (wanted) { "wanted" -> "On its way to the server"; "downloading" -> "Downloading to the server"; "failed" -> "The server couldn't find it"; else -> null }
         InLibrary(starred, state?.let { listOfNotNull(it, why).joinToString(": ") })
     }.getOrNull()
     override fun save(p: Page, on: Boolean) = runCatching { need().star(SubsonicIds.decode(p.id), on, if (p.kind == "album") "albumId" else "artistId") }.isSuccess
@@ -367,23 +363,17 @@ object SubsonicSource : Source {
 
     private val ownLyrics = SubsonicLyrics(::need)
     override val lyrics: LyricsProvider? get() = ownLyrics.takeIf { library?.index?.extensions?.contains("songLyrics") == true }
-    // oasis gathers lyrics from every provider itself; LRCLIB (free, open) is for other servers and songs it has none for.
+    // LRCLIB (free, open) for songs the server has no lyrics for.
     override val lyricsProviders = listOf<LyricsProvider>(LrcLib)
     override val lyricsRule = "The server's lyrics are the reference, when it has any: word timing that matches them wins, then their own timing, then matching line timing, then their plain text."
     override val hasComments = false
     override fun shareUrl(s: Song): String? = null
 
-    // oasis: a file has a path; the songs it streams have none and ids starting "yt-". getSong looks a local file up
-    // the first time it's asked.
-    override fun origin(s: Song) = runCatching { need().song(SubsonicIds.decode(s.id)) }.getOrNull()?.let { a ->
-        val format = listOfNotNull(a.suffix?.uppercase(), a.bitRate.takeIf { it > 0 }?.let { "$it kbps" }).joinToString(" ")
-        val from = if (a.path != null) "File ${a.path}" else if (a.id.startsWith("yt-")) "Streamed by the server" else "From the server"
-        listOf(from, format).filter { it.isNotEmpty() }.joinToString(" · ")
-    }
-
     // ---- Scrobbling: see docs/subsonic.md ----
 
-    override val lastFm get() = roma.core.scrobblesToLastFm(serverType, Store.prefs.getBoolean("subsonic.lastfm", false))
+    /** "Also scrobble to Last.fm" until the user sets it: on unless the server says it scrobbles to Last.fm itself (getUser's scrobblingEnabled). */
+    val lastFmDefault get() = library?.index?.serverScrobbles != true
+    override val lastFm get() = Store.prefs.getBoolean("subsonic.lastfm", lastFmDefault)
 
     override fun nowPlaying(s: Song) {
         val c = client ?: return
@@ -403,7 +393,7 @@ object SubsonicSource : Source {
     private fun flushPlays() {
         val c = client ?: return
         fun send(batch: List<Scrobble>) = c.scrobble(batch.map { SubsonicIds.decode(it.id!!) }, batch.map { it.timestamp * 1000 }, submission = true)
-        // A song the server no longer has (oasis swaps a stream for a local copy) fails the whole batch, which would stay
+        // A song the server no longer has fails the whole batch, which would stay
         // queued for good: then the plays go one by one, and the missing songs' are dropped.
         runCatching {
             plays.flush { batch ->
@@ -415,8 +405,6 @@ object SubsonicSource : Source {
         }
     }
 
-    // Debug builds tag where a song comes from. oasis ids of the songs it streams start "yt-"; every other song is taken as a file.
-    override fun tag(s: Song) = if (!showDetails) null else if (s.id.startsWith("s.yt-")) "[STREAM]" else "[FILE]"
 
     override val setUp get() = Store.str("subsonic.url", "").isNotBlank()
     @Composable override fun Setup() = ServerSetup()

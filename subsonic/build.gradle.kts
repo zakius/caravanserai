@@ -1,4 +1,4 @@
-// Subsonic and OpenSubsonic servers (oasis first): the client, the library index and its sync. Only the Subsonic app
+// Subsonic and OpenSubsonic servers: the client, the library index and its sync. Only the Subsonic app
 // (the subsonic flavor) has it (docs/subsonic.md, Two apps).
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 

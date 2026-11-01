@@ -506,7 +506,6 @@ private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
         Column(Modifier.goTo("album", s.album?.id)) { Name(s.title, Store.playerMode, style = MaterialTheme.typography.headlineSmall, center = true) }
         Spacer(Modifier.height(4.dp))
         Column(Modifier.goTo("artist", s.firstArtistId)) { Name(s.artistText, Store.playerMode, style = MaterialTheme.typography.titleMedium, center = true) }
-        backend.tag(s)?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         if (fixing) CorrectDialog(s) { fixing = false }
         if (current && Playback.waitingForNetwork) {
             Spacer(Modifier.height(8.dp))

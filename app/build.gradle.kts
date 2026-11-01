@@ -18,8 +18,6 @@ android {
         targetSdk = 36
         versionCode = 58
         versionName = "0.1.57"
-        // `-Proma.details=true`: a release build that shows the debug details too (song origins, Lidarr's progress).
-        buildConfigField("boolean", "SHOW_DETAILS", (findProperty("roma.details") == "true").toString())
         // The dictionary app, gzipped. `-Proma.dictBase=<url>` points a build at another folder holding it.
         val dictBase = (findProperty("roma.dictBase") as String?) ?: "https://github.com/zakius/roma/releases/download/dict-$dictVersion"
         buildConfigField("String", "DICT_URL", "\"$dictBase/roma-dict-$dictVersion.apk.gz\"")

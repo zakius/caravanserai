@@ -37,7 +37,6 @@ fun main(args: Array<String>) {
     // Everything roma does at start, on the UI thread as on Android, in App.onCreate's order.
     javax.swing.SwingUtilities.invokeAndWait {
         Store.init(Prefs(File(Dirs.files, "prefs.properties")), Dirs.files, Dirs.cache)
-        showDetails = System.getProperty("roma.details") == "true"
         Images.init(Dirs.cache, picMemory())
         if (Store.prefs.getInt("ui.tab", TAB_HOME) == TAB_HOME) Home.preload()
         if (BuildConfig.UPDATES) Update.init()

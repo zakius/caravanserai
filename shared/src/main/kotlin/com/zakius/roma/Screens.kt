@@ -136,7 +136,7 @@ fun SongRow(s: Song, highlight: Boolean = false, extra: String? = null, onMenu: 
         Column(Modifier.weight(1f)) {
             val style = if (highlight) MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary) else MaterialTheme.typography.bodyLarge
             Name(s.title, Store.listMode, style)
-            val sub = listOfNotNull(backend.tag(s), s.artistLatin).joinToString(" ") + (extra?.let { " · $it" } ?: "")
+            val sub = s.artistLatin + (extra?.let { " · $it" } ?: "")
             Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         IconButton(onClick = onMenu) { Icon(Icons.Default.MoreVert, "Song menu") }
@@ -189,8 +189,7 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
     val inQueue = queueIndex != null && queueIndex != Playback.player.currentMediaItemIndex
     val liked = s.id in Playback.liked
     LaunchedEffect(s.id) { Playback.checkLike(s) }
-    val about by produceState<Pair<String?, String?>>(null to null, s.id) { value = withContext(Dispatchers.IO) { backend.let { it.shareUrl(s) to it.origin(s).takeIf { showDetails } } } }
-    val (link, origin) = about
+    val link by produceState<String?>(null, s.id) { value = withContext(Dispatchers.IO) { backend.shareUrl(s) } }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     // Fully open at once: half open, the bans at the bottom would need a drag first.
     ModalBottomSheet(onDismissRequest = onClose, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
@@ -198,7 +197,6 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
             Column(Modifier.padding(horizontal = 24.dp)) {
                 Name(s.title, "both", MaterialTheme.typography.titleMedium)
                 Text(s.artistLatin, style = MaterialTheme.typography.bodySmall)
-                origin?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
             Spacer(Modifier.height(8.dp))
             HorizontalDivider()
@@ -878,7 +876,7 @@ fun PageScreen(p: Page) {
     menuFor?.let { SongMenu(it, null) { menuFor = null } }
 }
 
-/** Play, and Add to library / Remove from library on a page its source can save (none until the source has said), with how getting it goes. */
+/** Play, and Add to library / Remove from library on a page its source can save (none until the source has said). */
 @Composable
 private fun PageButtons(p: Page, d: Detail) {
     val scope = rememberCoroutineScope()
@@ -898,7 +896,7 @@ private fun PageButtons(p: Page, d: Detail) {
             }) { Text(if (now.saved) "Remove from library" else "Add to library") }
         }
     }
-    state?.note?.takeIf { showDetails }?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    state?.note?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
 }
 
 /** Generated playlists (mixes, editorial RD… lists) page on as they play; anything else plays what the page holds. */
