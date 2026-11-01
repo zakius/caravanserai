@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- roma's colour: Subsonic's orange. Also the app's accent (SubsonicSource.brandColor). -->
+<resources>
+    <color name="app_icon">#F28C28</color>
+</resources>

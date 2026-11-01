@@ -22,7 +22,7 @@
         android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:label="${appLabel}"
-        android:icon="${appIcon}"
+        android:icon="@mipmap/app_icon"
         android:theme="@style/Roma"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true">

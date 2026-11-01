@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- roma ytm's icon: roma's glyph, the play triangle with a bar beneath it like the romanization under the original, on YouTube Music's red (a shade off YouTube's own). The same as roma's but its colour (app/src/main/res/drawable/app_icon_foreground.xml). -->
+  <rect width="256" height="256" rx="56" fill="#E62117"/>
+  <path d="M100 56v104l84-52z" fill="#FFFFFF"/>
+  <rect x="84" y="186" width="88" height="16" rx="8" fill="#FFFFFF"/>
+</svg>

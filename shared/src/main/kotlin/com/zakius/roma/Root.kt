@@ -84,7 +84,8 @@ object Touch {
 @Composable
 fun Theme(content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
-    var scheme = systemColorScheme(dark) ?: if (dark) darkColorScheme() else lightColorScheme()
+    // The system's colours (Android 12+, from the wallpaper), else the app's own accent on the base scheme.
+    var scheme = systemColorScheme(dark) ?: accentScheme(if (dark) darkColorScheme() else lightColorScheme(), backend.brandColor, dark)
     // Options, both off by default. True black: OLED pixels that are off draw no power. Artwork colours: the accent
     // follows the playing song's art (one 24 px decode per song).
     if (dark && Store.bool("ui.trueBlack", false)) {

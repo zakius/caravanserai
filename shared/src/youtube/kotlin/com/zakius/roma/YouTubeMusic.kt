@@ -27,6 +27,8 @@ val backend: Source = YouTubeMusic
 /** YouTube Music through innertube. */
 object YouTubeMusic : Source {
     override val name = "YouTube Music"
+    // YouTube Music's red, a shade off YouTube's own; as the icon (app/src/youtube/res/values/app_icon.xml).
+    override val brandColor = 0xFFE62117.toInt()
     override val account get() = cookie
 
     /** The account's cookie, as saved. YouTube's own copy isn't read on the main thread: that would build its client. */

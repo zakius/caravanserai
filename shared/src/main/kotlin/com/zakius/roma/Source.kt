@@ -27,6 +27,8 @@ class SongPage(val songs: List<Song>, val next: String?)
 interface Source {
     /** Shown where results are headed and in Settings. */
     val name: String
+    /** The app's colour (ARGB): its icon's, and the accent where the system gives none (Root's Theme). */
+    val brandColor: Int
     /** Changes when the account or server does: what Home holds belongs to it. */
     val account: String?
 

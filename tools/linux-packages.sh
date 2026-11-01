@@ -25,7 +25,7 @@ rm -rf "$stage/x"
 sed -e 's|@APPDIR@|/opt/roma-ytm|' packaging/roma-ytm-system-java.sh > "$root/usr/bin/roma-ytm"
 chmod 755 "$root/usr/bin/roma-ytm"
 install -m644 packaging/io.github.zakius.roma.ytm.desktop "$root/usr/share/applications/"
-install -m644 packaging/roma.svg "$root/usr/share/icons/hicolor/scalable/apps/io.github.zakius.roma.ytm.svg"
+install -m644 packaging/roma-ytm.svg "$root/usr/share/icons/hicolor/scalable/apps/io.github.zakius.roma.ytm.svg"
 install -m644 packaging/io.github.zakius.roma.ytm.metainfo.xml "$root/usr/share/metainfo/"
 
 mkdir "$root/DEBIAN"

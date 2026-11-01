@@ -184,8 +184,7 @@ compose.desktop {
             // java.instrument, which only optional code refers to. The JDK must have jmods (Temurin 24+ has none).
             modules("java.management", "java.net.http", "java.sql", "jdk.httpserver", "jdk.unsupported")
             windows {
-                // ponytail: the Subsonic app has no .ico of its own yet, nor a Windows release.
-                if (youtube) iconFile.set(rootProject.file("packaging/roma.ico"))
+                iconFile.set(rootProject.file("packaging/$slug.ico"))
                 menuGroup = appName
                 perUserInstall = true
                 shortcut = true

@@ -41,7 +41,7 @@ android {
             applicationId = property("${app}App.id") as String
             buildConfigField("String", "APP_NAME", "\"$name\"")
             buildConfigField("String", "SLUG", "\"$slug\"")
-            manifestPlaceholders += mapOf("appLabel" to name, "appIcon" to if (app == "youtube") "@android:drawable/ic_media_play" else "@drawable/app_icon", "linkScheme" to slug)
+            manifestPlaceholders += mapOf("appLabel" to name, "linkScheme" to slug)
         }
         // Testing only: `-Proma.refuseVisionOs=true` acts as if YouTube refused the VISIONOS client (Streams.refuseVisionOs),
         // so songs play through InnerTubeX's other clients. Never set for a release.

@@ -110,6 +110,8 @@ The YouTube Music and Subsonic backends became two apps built from this repo, wi
 | roma ytm (com.zakius.roma.ytm, files roma-ytm) | YouTube Music only | GitHub releases | `:app:assembleYoutubeRelease`, `:desktop` |
 | roma (com.zakius.roma) | Subsonic/OpenSubsonic only | Google Play | `:app:assembleSubsonicRelease`, `:desktop-subsonic` |
 
+Each app has its colour, on one icon design (the play triangle with a bar beneath it, packaging/*.svg): roma Subsonic's orange (#F28C28), roma ytm YouTube Music's red, a shade off YouTube's own (#E62117), so its icon isn't YouTube's logo. The colour is also the accent where the system gives none (`Source.brandColor`; Android 12+ follows the wallpaper).
+
 Names, ids and slugs: gradle.properties (decided 2026-11-01: roma, the name the app had, goes to the Play app; nothing had been distributed, so the old releases were deleted and nobody's install moved).
 
 Google Play review can find innertube calls, client spoofing or BotGuard in an APK even when no screen uses them, so the Subsonic app's YouTube code is compiled out, not hidden.

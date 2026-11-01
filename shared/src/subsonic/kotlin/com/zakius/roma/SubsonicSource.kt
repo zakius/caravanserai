@@ -69,6 +69,8 @@ object SubsonicSource : Source {
     val serverType get() = library?.index?.type ?: cachedClient?.type
 
     override val name get() = if (serverType == "oasis") "oasis" else "your server"
+    // Subsonic's orange; as the icon (app/src/subsonic/res/values/app_icon.xml).
+    override val brandColor = 0xFFF28C28.toInt()
     override val account get() = Store.prefs.getString("subsonic.url", null)?.let { it + "\n" + Store.prefs.getString("subsonic.user", "") }
     // Another server or user: what pages hold is the old one's.
     override fun changes(key: String) = key == "subsonic.url" || key == "subsonic.user"

@@ -27,7 +27,7 @@ static class Pins
 }
 PINS
 /c/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe -nologo -optimize -target:winexe \
-  -out:"$(cygpath -w "$tmp/roma-ytm.exe")" -win32icon:"$(cygpath -w packaging/roma.ico)" \
+  -out:"$(cygpath -w "$tmp/roma-ytm.exe")" -win32icon:"$(cygpath -w packaging/roma-ytm.ico)" \
   -r:System.IO.Compression.dll -r:System.IO.Compression.FileSystem.dll -r:System.Windows.Forms.dll -r:System.Drawing.dll \
   "$(cygpath -w packaging/windows/Launcher.cs)" "$(cygpath -w "$tmp/Pins.cs")"
 
