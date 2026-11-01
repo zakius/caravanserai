@@ -4,9 +4,10 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
-// The Japanese dictionary is a separate app, :dict-app; roma needs its version and where to fetch it.
+// The Japanese dictionary, downloaded as data (:core:dictZip): its version, its sha256 and where to fetch it.
 evaluationDependsOn(":core")
 val dictVersion = project(":core").extra["dictRelease"] as String
+val dictSha256 = project(":core").extra["dictSha256"] as String
 
 android {
     namespace = "com.zakius.roma"
@@ -18,10 +19,12 @@ android {
         targetSdk = 36
         versionCode = 58
         versionName = "0.1.57"
-        // The dictionary app, gzipped. `-Proma.dictBase=<url>` points a build at another folder holding it.
+        // `-Proma.dictBase=<url>` points a build at another folder holding the dictionary's zip.
         val dictBase = (findProperty("roma.dictBase") as String?) ?: "https://github.com/zakius/roma/releases/download/dict-$dictVersion"
-        buildConfigField("String", "DICT_URL", "\"$dictBase/roma-dict-$dictVersion.apk.gz\"")
-        buildConfigField("int", "DICT_VERSION", (project(":core").extra["dictCode"] as Int).toString())
+        buildConfigField("String", "DICT_URL", "\"$dictBase/roma-dict-$dictVersion.zip\"")
+        buildConfigField("String", "DICT_VERSION", "\"$dictVersion\"")
+        buildConfigField("String", "DICT_SHA256", "\"$dictSha256\"")
+        // The dictionary app of roma ytm 0.1.57 and earlier, which roma ytm says can go (Flavor.kt).
         buildConfigField("String", "DICT_PACKAGE", "\"com.zakius.roma.dict\"")
         manifestPlaceholders["dictPackage"] = "com.zakius.roma.dict"
     }
@@ -69,7 +72,7 @@ android {
     sourceSets["youtube"].kotlin.directories += "../shared/src/youtube/kotlin"
     sourceSets["subsonic"].kotlin.directories += "../shared/src/subsonic/kotlin"
     // The dictionary download, as on the desktop.
-    sourceSets["subsonic"].kotlin.directories += "../shared/src/portable/kotlin"
+    sourceSets["main"].kotlin.directories += "../shared/src/portable/kotlin"
     // Only the app's languages: libraries bring strings for about 80 locales.
     androidResources { localeFilters += setOf("en", "pl") }
     packaging {

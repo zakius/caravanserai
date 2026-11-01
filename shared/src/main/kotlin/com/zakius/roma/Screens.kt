@@ -1117,7 +1117,7 @@ private fun LastFmSettings() {
     editing?.let { (key, title) -> TextInputDialog(title, Store.str(key, ""), { editing = null }) { Store.set(key, it.trim()) } }
 }
 
-/** roma's own question before Android's install prompts, when the dictionary is missing or out of date. */
+/** roma's question before the dictionary's download, when it is missing or out of date. */
 @Composable
 fun DictionaryPrompt() {
     val offer = Dictionary.offer ?: return
@@ -1137,7 +1137,7 @@ fun DictionaryPrompt() {
 }
 
 /**
- * First start: which scripts to romanize. Japanese needs the dictionary app, fetched once if picked, unless the
+ * First start: which scripts to romanize. Japanese needs the dictionary, fetched once if picked, unless the
  * source romanizes ([Source.romanizes]); the others need nothing. Unpicked scripts go into "scripts you read" and show
  * as written. Shown until Continue.
  */

@@ -9,8 +9,7 @@ import androidx.media3.extractor.text.SubtitleParser
 import androidx.media3.extractor.ts.AdtsExtractor
 import androidx.media3.extractor.wav.WavExtractor
 
-// The Subsonic app's own parts of the Android app: the dictionary is a download (shared/src/portable), with nothing to
-// set up, and Google Play updates the app.
+// The Subsonic app's own parts of the Android app: nothing to set up, and Google Play updates the app.
 
 fun flavorInit() {}
 

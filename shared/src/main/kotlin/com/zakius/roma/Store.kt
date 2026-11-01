@@ -59,7 +59,7 @@ object Store {
 
     val icu: Icu = platformIcu
 
-    // The dictionary is memory-mapped in place where Dictionary keeps it (on Android its own app's APK) and stays out
+    // The dictionary is memory-mapped in place where Dictionary keeps it (the app's own storage) and stays out
     // of the heap. While it is missing, or Japanese is in the scripts the user reads (then nothing would show the
     // romaji), Japanese gets kana only and the dictionary isn't loaded.
     val romanizer = Romanizer(icu) {
@@ -239,7 +239,7 @@ object Store {
 
     const val READ_KEY = "display.read"
 
-    /** Japanese romanized again needs the dictionary app: its install starts here if it is missing. */
+    /** Japanese romanized again needs the dictionary: its download starts here if it is missing. */
     fun setReads(script: String, read: Boolean) {
         val r = readScripts
         set(READ_KEY, (if (read) r + script else r - script).joinToString(","))

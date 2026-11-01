@@ -3,8 +3,8 @@
 # commit: a merge that bumps the version is the release. roma, the Subsonic app (for Google Play; docs/subsonic.md, Two
 # apps), builds in the same jobs, Android and Linux desktop, and is checked for YouTube code (tools/residue_check.py)
 # but not published. The desktop app (:desktop) ships in the same release: a .deb and an .rpm built on Linux, an
-# .msi on Windows, with roma-aac (tools/build-ffmpeg.sh) built for both on Linux. The dictionary app gets its own release, dict-<version>, the first time its version ships;
-# roma downloads it from there. The app and the dictionary build in parallel jobs, and the core tests (which need the
+# .msi on Windows, with roma-aac (tools/build-ffmpeg.sh) built for both on Linux. The Japanese dictionary (data, a zip)
+# gets its own release, dict-<version>, the first time its version ships; the apps download it from there. The app and the dictionary build in parallel jobs, and the core tests (which need the
 # slim dictionary) in a third; roma's release is published only once its dictionary release exists and the tests pass.
 # Only master: setup-gradle saves the Gradle cache (with SudachiDict and the slim dictionary) on the default branch
 # alone, and a cache saved by a tag's run is visible to that tag only.
@@ -174,29 +174,18 @@ jobs:
         with: { distribution: temurin, java-version: 21 }
       - if: steps.check.outputs.build
         uses: gradle/actions/setup-gradle@v5
-      - name: Android SDK and pigz
+      # Nothing Android is built, but Gradle configures the Android modules too.
+      - name: Android SDK
         if: steps.check.outputs.build
-        run: |
-          yes 2> /dev/null | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
-          sudo apt-get install -y pigz > /dev/null
-      - name: Signing key
-        if: steps.check.outputs.build && env.RELEASE
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
-          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$RUNNER_TEMP/release.jks" "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > keystore.properties
+        run: yes 2> /dev/null | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
       - if: steps.check.outputs.build
         run: tools/release.sh dict
       - name: Publish
         if: steps.check.outputs.build && env.RELEASE
         env: { GH_TOKEN: "${{ github.token }}", DICT: "${{ steps.check.outputs.tag }}" }
         run: |
-          gh release create "$DICT" dist/roma-dict-*.apk.gz --target "$GITHUB_SHA" --latest=false --title "Japanese dictionary ${DICT#dict-}" \
-            --notes "SudachiDict core ${DICT#dict-} as a companion app for roma, without what roma never reads (postal addresses, split and synonym data; duplicate cost rows merged). roma installs it when Japanese is romanized. SudachiDict is Apache-2.0 (Works Applications)."
+          gh release create "$DICT" "dist/roma-dict-${DICT#dict-}.zip" --target "$GITHUB_SHA" --latest=false --title "Japanese dictionary ${DICT#dict-}" \
+            --notes "SudachiDict core ${DICT#dict-} for roma, without what roma never reads (postal addresses, split and synonym data; duplicate cost rows merged), with its notices. roma downloads it when Japanese is romanized. SudachiDict is Apache-2.0 (Works Applications)."
 
   publish:
     if: needs.version.outputs.release

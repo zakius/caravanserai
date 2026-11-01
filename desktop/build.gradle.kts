@@ -30,6 +30,7 @@ val versionName = Regex("""versionName = "(.+)"""").find(appGradle)!!.groupValue
 val versionCode = Regex("""versionCode = (\d+)""").find(appGradle)!!.groupValues[1]
 evaluationDependsOn(":core")
 val dictVersion = project(":core").extra["dictRelease"] as String
+val dictSha256 = project(":core").extra["dictSha256"] as String
 
 java { sourceCompatibility = JavaVersion.VERSION_21; targetCompatibility = JavaVersion.VERSION_21 }
 kotlin {
@@ -52,7 +53,7 @@ val buildConfig = tasks.register("buildConfig") {
     val name = appName
     val dataSlug = slug
     val own = youtube
-    inputs.property("v", "$versionName $versionCode $dictVersion $refuse $dictBase $name $dataSlug $own")
+    inputs.property("v", "$versionName $versionCode $dictVersion $dictSha256 $refuse $dictBase $name $dataSlug $own")
     inputs.property("cef", jars)
     outputs.file(out)
     doLast {
@@ -71,7 +72,8 @@ val buildConfig = tasks.register("buildConfig") {
             |    const val VERSION_NAME = "$versionName"
             |    const val VERSION_CODE = $versionCode
             |    const val DICT_VERSION = "$dictVersion"
-            |    const val DICT_URL = "$dictBase/roma-dict-$dictVersion.apk.gz"
+            |    const val DICT_URL = "$dictBase/roma-dict-$dictVersion.zip"
+            |    const val DICT_SHA256 = "$dictSha256"
             |""".trimMargin() + "\n" + roma + "}\n")
     }
 }

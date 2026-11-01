@@ -16,7 +16,6 @@ import android.os.Build
 import java.io.FilterInputStream
 import java.net.HttpURLConnection
 import java.net.URL
-import java.util.zip.GZIPInputStream
 
 /**
  * roma's own updates, from its GitHub releases. Once per start, after the first frame, one HEAD request asks which
@@ -63,7 +62,7 @@ object Update {
         status = "Downloading ${BuildConfig.APP_NAME} $v…"
         thread(name = "update") {
             try {
-                installApk(app, "$RELEASES/download/v$v/${BuildConfig.SLUG}-$v.apk", app.packageName, gzip = false, ACTION, userActionNotRequired = true) { status = "Downloading ${BuildConfig.APP_NAME} $v… $it" }
+                installApk(app, "$RELEASES/download/v$v/${BuildConfig.SLUG}-$v.apk", app.packageName, ACTION, userActionNotRequired = true) { status = "Downloading ${BuildConfig.APP_NAME} $v… $it" }
                 status = "Installing ${BuildConfig.APP_NAME} $v…"
             } catch (e: Exception) {
                 busy = false
@@ -90,10 +89,10 @@ object Update {
 }
 
 /**
- * Streams the APK at [url] (gzipped when [gzip]) straight into a PackageInstaller session for [pkg] and commits it;
+ * Streams the APK at [url] straight into a PackageInstaller session for [pkg] and commits it;
  * the outcome arrives as a broadcast of [action]. [progress] gets "n%" (or "n MB" without a length). Blocking.
  */
-fun installApk(app: Context, url: String, pkg: String, gzip: Boolean, action: String, userActionNotRequired: Boolean = false, progress: (String) -> Unit) {
+fun installApk(app: Context, url: String, pkg: String, action: String, userActionNotRequired: Boolean = false, progress: (String) -> Unit) {
     val installer = app.packageManager.packageInstaller
     val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
     params.setAppPackageName(pkg)
@@ -119,7 +118,7 @@ fun installApk(app: Context, url: String, pkg: String, gzip: Boolean, action: St
                 }
             }
             session.openWrite("app.apk", 0, -1).use { out ->
-                (if (gzip) GZIPInputStream(counted, 1 shl 16) else counted).use { it.copyTo(out, 1 shl 16) }
+                counted.use { it.copyTo(out, 1 shl 16) }
                 session.fsync(out)
             }
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
