@@ -351,6 +351,7 @@ class Romanizer(
         val result = ArrayList<Triple<String, String, String?>>()
         val tokens = tokens(s)
         var prevWord = false
+        var prevClose = false // the previous token was closing punctuation (」, ）, ”): a word after it starts a new one
         var prev: Token? = null
         var sokuon = false // the previous token ended in ッ, so this one's first consonant doubles: dat|ta
         var stray = false
@@ -366,8 +367,9 @@ class Romanizer(
                 val latin = wanted.getValue(word)
                 val isWord = latin.firstOrNull()?.isLetterOrDigit() == true
                 // A reading is a word like any other: title case applies to it, as the line's first letter does.
-                result.add(Triple(word, (if (prevWord && isWord) " " else "") + (if (title && isWord) capitalize(latin, false) else latin), null))
+                result.add(Triple(word, (if ((prevWord || prevClose) && isWord) " " else "") + (if (title && isWord) capitalize(latin, false) else latin), null))
                 prevWord = latin.lastOrNull()?.isLetterOrDigit() == true
+                prevClose = false
                 prev = tokens[last]
                 sokuon = false
                 stray = false
@@ -417,10 +419,13 @@ class Romanizer(
             // Particles stay lowercase in titles, and so does だ as に, な or で after a na-adjective ("Shizumu Yō ni").
             val particle = pos == "助詞" && !stray || pos == "助動詞" && t.pos[4] == "助動詞-ダ" && surface in setOf("に", "な", "で")
             val isWord = romaji.firstOrNull()?.isLetterOrDigit() == true
-            val space = prevWord && isWord && !glue
+            // Paired punctuation sits against what it encloses, with a space on its outer side: "Itai" to "itai".
+            val opens = surface.isNotEmpty() && surface.all(::opening)
+            val space = prevWord && isWord && !glue || prevClose && (isWord || opens) || prevWord && opens
             if (title && japaneseText && isWord && !(prevWord && glue) && !particle) romaji = capitalize(romaji, false)
             result.add(Triple(surface, (if (space) " " else "") + romaji, reading))
             prevWord = romaji.lastOrNull()?.isLetterOrDigit() == true
+            prevClose = surface.isNotEmpty() && surface.all(::closing)
             prev = t
         }
         return result
@@ -499,7 +504,7 @@ class Romanizer(
 
     /**
      * A line split into the words its romanization shows: in Japanese a word with its glued endings and the
-     * particles apart (食べます|君|に、), elsewhere at spaces. The pieces join back into the line, and each is made of
+     * particles apart (食べます|君|に、), opening punctuation with the word it opens (と|「居たい」), elsewhere at spaces. The pieces join back into the line, and each is made of
      * whole dictionary tokens, so a correction of one matches it everywhere.
      */
     fun pieces(line: String, siblings: List<String> = emptyList()): List<String> {
@@ -510,10 +515,11 @@ class Romanizer(
         var endsLoose = false // the piece so far ends in punctuation or a space
         for ((surface, romaji, _) in japanese(line, false)) {
             val isWord = romaji.trimStart().firstOrNull()?.isLetterOrDigit() == true || hasNonLatin(surface)
-            if (cur.isNotEmpty() && isWord && hasWord && (romaji.startsWith(' ') || endsLoose)) { out.add(cur.toString()); cur.clear(); hasWord = false }
+            val opens = surface.isNotEmpty() && surface.all(::opening)
+            if (cur.isNotEmpty() && hasWord && (isWord && (romaji.startsWith(' ') || endsLoose) || opens)) { out.add(cur.toString()); cur.clear(); hasWord = false }
             cur.append(surface)
             hasWord = hasWord || isWord
-            endsLoose = !isWord
+            endsLoose = !isWord && !opens
         }
         if (cur.isNotEmpty()) out.add(cur.toString())
         return out
@@ -708,6 +714,10 @@ class Romanizer(
         private val SHIFT_JIS = charset("Shift_JIS")
 
         fun hasHan(s: String) = s.codePoints().anyMatch { Character.UnicodeScript.of(it) == Character.UnicodeScript.HAN }
+        /** Opening and closing punctuation by Unicode's classes (「 （ “ and 」 ）”); ’ is the apostrophe too, so it doesn't close. */
+        private fun opening(c: Char) = Character.getType(c).let { it == Character.START_PUNCTUATION.toInt() || it == Character.INITIAL_QUOTE_PUNCTUATION.toInt() }
+        private fun closing(c: Char) = c != '’' && Character.getType(c).let { it == Character.END_PUNCTUATION.toInt() || it == Character.FINAL_QUOTE_PUNCTUATION.toInt() }
+
         fun hasNonLatin(s: String) = s.codePoints().anyMatch {
             val sc = Character.UnicodeScript.of(it)
             sc != Character.UnicodeScript.LATIN && sc != Character.UnicodeScript.COMMON && sc != Character.UnicodeScript.INHERITED

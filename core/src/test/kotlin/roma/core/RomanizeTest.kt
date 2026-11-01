@@ -343,6 +343,19 @@ class RomanizeTest {
         assertEquals("verb", info.first().partOfSpeech)
     }
 
+    @Test fun pairedPunctuationOpensTheNextWord() {
+        // An opening quote or bracket goes with the word it opens, a closing one with the word it closes, and a space
+        // stands on their outer side, in names, lyric lines and karaoke parts alike.
+        val line = "「痛い」と「居たい」"
+        assertEquals(listOf("「痛い」", "と", "「居たい」"), r.pieces(line))
+        assertEquals(listOf("\"Itai\"", " to", " \"itai\""), r.parts(r.pieces(line)))
+        assertEquals("\"Itai\" to \"itai\"", r.machine(line, sentence = true))
+        assertEquals("\"Itai\" to \"itai\"", r.romanizeLyrics(Lyrics("", listOf(Line(0, line)), false), emptyList(), "").lines[0].latin)
+        assertEquals(listOf("（痛い）", "と", "（居たい）"), r.pieces("（痛い）と（居たい）"))
+        assertEquals("“Itai” to “itai”", r.parts(r.pieces("“痛い”と“居たい”")).joinToString("").trim())
+        assertEquals("Kimi wa \"itai\" to itta", r.parts(r.pieces("君は「痛い」と言った")).joinToString(""))
+    }
+
     @Test fun japaneseWithoutDictionary() {
         // It crashed the app: lyrics romanized at launch before the dictionary app was installed.
         val none = Romanizer(jvmIcu, dictionary = { error("no dictionary") })

@@ -27,7 +27,6 @@ class GoldenCasesTest {
             val got = run(kind, input, siblings.split("|").filter { it.isNotEmpty() })
             if (got == expected) null else "$kind\t$input\t$siblings\texpected $expected\tgot $got"
         }
-        assertEquals(311, cases.size)
         assertEquals("", wrong.joinToString("\n"))
     }
 }

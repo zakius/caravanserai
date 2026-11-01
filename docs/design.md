@@ -55,6 +55,7 @@ Step 0, before writing code: check that both libraries are maintained, that they
 - Mixed script:
   - Before romanizing, the half-width and full-width forms block (U+FF00–U+FFEF) is NFKC-normalized: ＬＯＶＥ → LOVE, ｱｲ → アイ, （ → " (". Only that block: full NFKC also changes Latin text (² → 2, ﬁ → fi) and kaomoji (´ becomes a space and an accent).
   - Japanese punctuation becomes Latin: 、 → ","  。 → "."  「」『』 → `"`  ・ → space (only between two words)  ～ 〜 → "~".
+  - Paired punctuation (Unicode's opening and closing classes: 「」『』（）“”, not the apostrophe ’) sits against what it encloses, with a space on its outer side, and an opening one starts the next word, so lyric words and karaoke parts space it as whole lines do: 「痛い」と「居たい」 → `"Itai" to "itai"`, words 「痛い」|と|「居たい」 (2026-11-01; full-width brackets already got their spaces in `normalize`, which pieces and karaoke parts never saw).
   - Strings are read by code point, so 𠮷 is Han and an emoji doesn't make a title non-Latin.
 - Stylized text stays as is:
   - A word that mixes Latin letters with Greek or Cyrillic letters is not romanized ("ΛRCTIC", "ЯOCK", "μ's"). Only Greek and Cyrillic: Japanese mixed with Latin is normal and is romanized ("Bokura no LIVE").
