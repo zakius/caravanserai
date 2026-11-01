@@ -17,7 +17,7 @@ import kotlin.concurrent.thread
  * The Japanese dictionary on the desktop and in the Subsonic app on Android: the same download as roma's dictionary
  * app (roma-dict-<version>.apk.gz, 31 MB), whose system_core.dic is taken out once into the app's own storage (62 MB)
  * and memory-mapped from there. Nothing else of the APK is kept, and nothing is installed: on Google Play an app may
- * download data but not install apps or run downloaded code.
+ * download data but not install apps or run downloaded code. Never with a source that romanizes ([Source.romanizes]).
  */
 object Dictionary {
     const val DOWNLOAD = "31 MB download, 62 MB on disk"
@@ -43,7 +43,7 @@ object Dictionary {
     /** At start: Japanese is romanized but the dictionary is missing, so roma offers it once per run. */
     fun ensure() {
         installed = file.exists()
-        if (installed || status != null || offer != null || !Store.bool("setup.done", false) || "ja" in Store.readScripts) return
+        if (installed || status != null || offer != null || !Store.bool("setup.done", false) || "ja" in Store.readScripts || backend.romanizes) return
         offer = "install"
     }
 
@@ -53,7 +53,7 @@ object Dictionary {
     }
 
     fun install() {
-        if (busy || installed) return
+        if (busy || installed || backend.romanizes) return
         busy = true
         status = "Downloading the Japanese dictionary…"
         thread(name = "dictionary", isDaemon = true) {

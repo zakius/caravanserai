@@ -20,6 +20,8 @@ class Text(
     /** The original split into words as lyrics split a line, with each word's part of [latin]; empty when unknown. */
     val pieces: List<String> = emptyList(),
     val pieceLatin: List<String> = emptyList(),
+    /** The Latin form the source sent (a Subsonic server's romanization), the original where it sent none; null when romanized here. */
+    val served: String? = null,
 ) {
     val isLatin get() = original == latin || !Romanizer.hasNonLatin(original)
 
@@ -97,12 +99,14 @@ class Romanizer(
 
     /**
      * Romanizes s, honouring overrides. Siblings are the other fields of the same item (artist, album, title).
-     * A song or album title passes [titleOf] = true, so "スピカ - Spica" shows its own Latin form.
+     * A song or album title passes [titleOf] = true, so "スピカ - Spica" shows its own Latin form. A [served] Latin form
+     * (the source's own romanization) is taken as it is, after the user's corrections: nothing is romanized here.
      */
-    fun text(s: String, siblings: List<String> = emptyList(), songId: String? = null, artistId: String? = null, titleOf: Boolean = false): Text {
+    fun text(s: String, siblings: List<String> = emptyList(), songId: String? = null, artistId: String? = null, titleOf: Boolean = false, served: String? = null): Text {
         val o = overrides.firstOrNull { it.original == s && it.scope == "song" && it.id == songId }
             ?: overrides.firstOrNull { it.original == s && it.scope == "artist" && it.id == artistId }
             ?: overrides.firstOrNull { it.original == s && it.scope == "text" }
+        if (served != null) return Text(s, o?.latin ?: served, served = served)
         return pieced(s, o?.latin ?: (if (titleOf) ownLatin(s) else null) ?: machine(s, siblings, songId = songId), siblings, songId)
     }
 

@@ -85,7 +85,9 @@ object LyricsProviders {
         val ref = found.firstOrNull { it.first == reference }?.second
         val chosen = chooseLyrics(ref, found.filter { it.first != reference }.map { it.second }, icu) ?: return LyricsSearch(null, complete)
         val translations = found.mapNotNull { translationOf(it.second) }
-        val bare = Lyrics(chosen.first.source, chosen.first.lines.map { Line(it.startMs, it.text, it.words) }, chosen.first.synced)
+        // A provider's own Latin lines (a server's romanization) stay; the reference's go to the chosen lines with the same text.
+        val latin = ref?.lines.orEmpty().filter { it.latin.isNotEmpty() }.associate { normalizeLyrics(it.text) to it.latin }.filterKeys { it.isNotEmpty() }
+        val bare = Lyrics(chosen.first.source, chosen.first.lines.map { Line(it.startMs, it.text, it.words, latin = it.latin.ifEmpty { latin[normalizeLyrics(it.text)] ?: "" }, wordLatin = it.wordLatin) }, chosen.first.synced)
         return LyricsSearch(LyricsResult(bare, translations, chosen.second), complete)
     }
 }
@@ -111,7 +113,7 @@ private fun unescapedText(s: String) = unescapeQuotes(unescapeHtml(s))
 
 private fun unescaped(l: Lyrics) = Lyrics(
     l.source,
-    l.lines.map { Line(it.startMs, unescapedText(it.text), it.words.map { w -> Word(w.startMs, w.endMs, unescapedText(w.text)) }, it.translation?.let(::unescapedText)) },
+    l.lines.map { Line(it.startMs, unescapedText(it.text), it.words.map { w -> Word(w.startMs, w.endMs, unescapedText(w.text)) }, it.translation?.let(::unescapedText), it.latin, it.wordLatin) },
     l.synced,
     l.translationSource,
 )
@@ -244,6 +246,7 @@ fun Romanizer.romanizeLyrics(l: Lyrics, siblings: List<String>, songId: String):
             // then highlights the corrected line as one piece: it sits on the first word, the other words get nothing.
             val whole = overrides.firstOrNull { it.original == line.text.trim() && (it.scope == "song" && it.id == songId || it.scope == "text") }?.latin
             if (whole != null) return@map Line(line.startMs, line.text, line.words, line.translation, whole, line.words.indices.map { if (it == 0) whole else "" }, listOf(line.text), listOf(whole))
+            if (line.latin.isNotEmpty()) return@map served(line, songId)
             val pieces = pieces(line.text, sib)
             val pieceLatin = parts(pieces, sib, songId, lang)
             val wordLatin = if (line.words.isEmpty()) emptyList() else parts(line.words.map { it.text }, sib, songId, lang)
@@ -253,6 +256,21 @@ fun Romanizer.romanizeLyrics(l: Lyrics, siblings: List<String>, songId: String):
         l.synced,
         l.translationSource,
     )
+}
+
+/**
+ * A line the provider romanized (a server's pronunciation layer) keeps its Latin form, nothing romanized here: its
+ * timed words, or the whole line, are its pieces, and the user's word readings replace the pieces they name.
+ */
+private fun Romanizer.served(line: Line, songId: String): Line {
+    val karaoke = line.words.isNotEmpty() && line.wordLatin.size == line.words.size
+    val pieces = if (karaoke) line.words.map { it.text } else listOf(line.text)
+    val readings = wordReadings(songId)
+    val pieceLatin = (if (karaoke) line.wordLatin else listOf(line.latin)).mapIndexed { k, l ->
+        readings[Romanizer.normalize(pieces[k]).trim()]?.let { it + if (l.endsWith(' ')) " " else "" } ?: l
+    }
+    val latin = if (readings.isEmpty()) line.latin else pieceLatin.joinToString("").trim()
+    return Line(line.startMs, line.text, line.words, line.translation, latin, if (karaoke) pieceLatin else line.wordLatin, pieces, pieceLatin)
 }
 
 /**

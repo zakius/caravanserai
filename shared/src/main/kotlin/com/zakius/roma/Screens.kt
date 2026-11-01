@@ -922,7 +922,7 @@ fun SettingsScreen() {
     val bannedArtists = Store.banned.size - bannedSongs
     val lastFm = Store.str("lastfm.session", "").isNotBlank()
     val place = PLACES.first { it.first == Store.place }.second.lowercase()
-    val dictionary = if (Dictionary.installed) "" else " · no Japanese dictionary"
+    val dictionary = if (Dictionary.installed || backend.romanizes) "" else " · no Japanese dictionary"
     LazyColumn(Modifier.fillMaxSize()) {
         Update.available?.let { v ->
             item { Row1("Update to ${BuildConfig.APP_NAME} $v", Update.status ?: "Restarts ${BuildConfig.APP_NAME}, so the music stops") { Update.install() } }
@@ -980,6 +980,7 @@ private fun RomanizationSettings() = LazyColumn(Modifier.fillMaxSize()) {
         Row1("Corrections", if (n == 0) "None yet · import a file" else "$n · export, import or remove them") { Nav.open(Page("settings", "corrections")) }
     }
     item { Header("Schemes") }
+    if (backend.romanizes) item { Text("Your server romanizes names and its lyrics; these apply to lyrics from elsewhere.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
     item { Switch1("Japanese: long vowels with macrons (ō)", "rom.macrons", true) }
     item { Switch1("Chinese: pinyin with tone marks", "rom.tones", true) }
     item { Options("Cyrillic (other languages use their national Latin form)", "rom.cyrillic", "english", listOf("english" to "Russian: English-style", "polish" to "Russian: Polish-style", "iso9" to "ISO 9, every language")) }
@@ -994,7 +995,7 @@ private fun RomanizationSettings() = LazyColumn(Modifier.fillMaxSize()) {
             Text(label)
         }
     }
-    item {
+    if (!backend.romanizes) item {
         val dictionary = when {
             Dictionary.installed -> "Installed"
             Dictionary.status != null -> Dictionary.status!!
@@ -1136,8 +1137,9 @@ fun DictionaryPrompt() {
 }
 
 /**
- * First start: which scripts to romanize. Japanese needs the dictionary app, fetched once if picked; the others need
- * nothing. Unpicked scripts go into "scripts you read" and show as written. Shown until Continue.
+ * First start: which scripts to romanize. Japanese needs the dictionary app, fetched once if picked, unless the
+ * source romanizes ([Source.romanizes]); the others need nothing. Unpicked scripts go into "scripts you read" and show
+ * as written. Shown until Continue.
  */
 @Composable
 fun SetupScreen() {
@@ -1152,7 +1154,7 @@ fun SetupScreen() {
                 Checkbox(k !in read, null, Modifier.padding(end = 8.dp))
                 Column {
                     Text(label)
-                    if (k == "ja") Text(if (Dictionary.installed) "Dictionary installed" else "Needs the Japanese dictionary: ${Dictionary.DOWNLOAD}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (k == "ja" && !backend.romanizes) Text(if (Dictionary.installed) "Dictionary installed" else "Needs the Japanese dictionary: ${Dictionary.DOWNLOAD}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

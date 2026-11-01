@@ -162,6 +162,30 @@ class LyricsChoiceTest {
         assertEquals(null, found.lyrics.lines[0].translation)
         assertEquals("en", found.translations.single().language)
     }
+
+    @Test fun servedLatinKept() {
+        // Lines a server romanized: nothing is romanized here (no dictionary needed), the timed words are the pieces,
+        // and the user's word reading replaces its piece.
+        val r = Romanizer(jvmIcu, dictionary = { error("no dictionary") })
+        val words = listOf(Word(1000, 1500, "君"), Word(1500, 2000, "の"), Word(2000, 3000, "声"))
+        val served = Lyrics("t", listOf(Line(1000, "君の声", words, latin = "kimi no koe", wordLatin = listOf("kimi ", "no ", "koe")), Line(4000, "花火", latin = "hanabi")), true)
+        val l = r.romanizeLyrics(served, emptyList(), "x")
+        assertEquals(listOf("kimi no koe", "hanabi"), l.lines.map { it.latin })
+        assertEquals(listOf("君", "の", "声"), l.lines[0].pieces)
+        assertEquals(listOf("hanabi"), l.lines[1].pieceLatin)
+        r.overrides = listOf(Override("word", "x", "声", "KOE"))
+        assertEquals("kimi no KOE", r.romanizeLyrics(served, emptyList(), "x").lines[0].latin)
+    }
+
+    @Test fun referenceLatinFollowsTheChosenLyrics() {
+        // The server's plain lyrics with its romanization; a third party's synced copy of the same text wins (rule 3) and takes the Latin lines.
+        fun provider(id: String, l: Lyrics) = object : LyricsProvider { override val id = id; override val name = id; override fun fetch(q: LyricsQuery) = l }
+        val server = provider("server", Lyrics("server", listOf(Line(0, "君の声", latin = "kimi no koe"), Line(0, "花火", latin = "hanabi")), false))
+        val lrc = provider("lrc", Lyrics("lrc", parseLrc("[00:01.00]君の声\n[00:04.00]花火"), true))
+        val found = LyricsProviders.find(LyricsQuery("x", "t", "a", null, 0), listOf(lrc, server), reference = server).result!!.lyrics
+        assertEquals("lrc", found.source)
+        assertEquals(listOf("kimi no koe", "hanabi"), found.lines.map { it.latin })
+    }
 }
 
 class TitleMatchTest {

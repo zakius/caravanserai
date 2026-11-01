@@ -105,6 +105,10 @@ interface Source {
     val lyricsProviders: List<LyricsProvider>
     /** The source's own lyrics, the reference the other providers' text is matched against; null when it has none. */
     val lyrics: LyricsProvider?
+    /** Part of the kept lyrics' file names: lyrics asked for differently (Subsonic's layers, by the display) are kept apart. */
+    val lyricsVariant: String get() = ""
+    /** The source sends names and lyrics already romanized (Subsonic's extension romanization): no Japanese dictionary is needed. */
+    val romanizes: Boolean get() = false
     /** Settings' line under the providers: how the lyrics are chosen. */
     val lyricsRule: String
     val hasComments: Boolean

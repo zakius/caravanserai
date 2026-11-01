@@ -876,7 +876,7 @@ object Playback {
 
     /** The song's lyrics from the disk cache, or (with [network]) from the providers. Null: not cached, no network asked. */
     private fun lyricsResult(s: Song, network: Boolean): LyricsResult? {
-        val file = File(Store.cache, "lyrics/${s.id}.json")
+        val file = rawFile(s.id)
         // A cache file from before 0.1.6 holds a bare Lyrics, fails to decode and is searched again.
         runCatching { Store.json.decodeFromString<LyricsResult>(file.readText()) }.getOrNull()?.let { return it }
         if (!network) return null
@@ -916,9 +916,10 @@ object Playback {
     private val romanizedCache = object : LinkedHashMap<String, LyricsState>(64, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, LyricsState>) = size > 40
     }
-    private fun romanizedKey(id: String) = "$id@${Store.romanizationVersion}"
+    private fun romanizedKey(id: String) = "$id${backend.lyricsVariant}@${Store.romanizationVersion}"
     // The app's version too: an update may romanize differently, and its lyrics shouldn't show the old version's.
-    private fun romanizedFile(id: String) = File(Store.cache, "lyrics/$id.r${Store.romanizationVersion}.${BuildConfig.VERSION_CODE}.json")
+    private fun romanizedFile(id: String) = File(Store.cache, "lyrics/$id${backend.lyricsVariant}.r${Store.romanizationVersion}.${BuildConfig.VERSION_CODE}.json")
+    private fun rawFile(id: String) = File(Store.cache, "lyrics/$id${backend.lyricsVariant}.json")
 
     private fun romanizedLyrics(s: Song): LyricsState? = synchronized(romanizedCache) { romanizedCache[romanizedKey(s.id)] }
 
@@ -943,7 +944,7 @@ object Playback {
     /** Drops the cached lyrics and asks the providers again, e.g. after changing their order. */
     fun refetchLyrics() {
         val s = current()?.song ?: return
-        File(Store.cache, "lyrics/${s.id}.json").delete()
+        rawFile(s.id).delete()
         romanizedFile(s.id).delete()
         synchronized(romanizedCache) { romanizedCache.remove(romanizedKey(s.id)) }
         lyrics = null
@@ -971,7 +972,7 @@ object Playback {
         val t = state.translations + layer
         lyrics = LyricsState(id, state.lyrics, t).also { synchronized(romanizedCache) { romanizedCache[romanizedKey(id)] = it } }
         scope.launch(Dispatchers.IO) {
-            for (f in listOf(File(Store.cache, "lyrics/$id.json"), romanizedFile(id))) runCatching {
+            for (f in listOf(rawFile(id), romanizedFile(id))) runCatching {
                 val r = Store.json.decodeFromString<LyricsResult>(f.readText())
                 f.writeText(Store.json.encodeToString(LyricsResult(r.lyrics, t, r.rule)))
             }

@@ -179,9 +179,10 @@ internal fun ServerForm(action: String, onConnected: () -> Unit) {
             busy = true
             status = "Connecting…"
             scope.launch {
-                val r = withContext(Dispatchers.IO) { runCatching { roma.core.SubsonicClient(url, user.trim(), password).ping() } }
+                val r = withContext(Dispatchers.IO) { runCatching { roma.core.SubsonicClient(url, user.trim(), password).run { ping(); extensions() } } }
                 busy = false
-                r.onSuccess {
+                r.onSuccess { extensions ->
+                    Store.set(SubsonicSource.ROMANIZES, roma.core.SubsonicClient.ROMANIZATION in extensions)
                     val other = url.trim() != Store.str("subsonic.url", "") || user.trim() != Store.str("subsonic.user", "")
                     Store.set("subsonic.url", url.trim())
                     Store.set("subsonic.user", user.trim())

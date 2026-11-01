@@ -59,9 +59,17 @@ object SubsonicSource : Source {
             val user = Store.prefs.getString("subsonic.user", "") ?: ""
             val password = Store.prefs.getString("subsonic.password", "") ?: ""
             val key = "$url\n$user\n$password"
-            if (key != clientKey) { clientKey = key; cachedClient = SubsonicClient(url, user, password) }
+            if (key != clientKey) { clientKey = key; cachedClient = SubsonicClient(url, user, password).also { it.romanization = romanizes } }
             return cachedClient
         }
+
+    /**
+     * The server lists the OpenSubsonic extension romanization: names come with its Latin forms, lyrics with its
+     * pronunciation layer, and the Japanese dictionary is never fetched. Kept in prefs, so the first start's scripts
+     * question and the dictionary's offer know it before the library is read; set on connecting and by every sync.
+     */
+    override val romanizes get() = Store.bool(ROMANIZES, false)
+    const val ROMANIZES = "subsonic.romanization"
 
     private fun need() = client ?: throw IllegalStateException("No server set. Add one in Settings → Music source.")
 
@@ -133,6 +141,9 @@ object SubsonicSource : Source {
         postMain { syncing = true; syncError = null }
         try {
             val index = need().sync()
+            val romanizing = SubsonicClient.ROMANIZATION in index.extensions
+            // The server gained or lost the extension: names come from the new index; lyrics and the queue start over.
+            if (romanizing != romanizes) postMain { Store.set(ROMANIZES, romanizing); Playback.romanizationChanged() }
             dir.mkdirs()
             File(dir, "index.json").writeText(Store.json.encodeToString(index))
             return romanize(index)
@@ -275,7 +286,7 @@ object SubsonicSource : Source {
             "playlist" -> {
                 val (pl, subs) = need().playlist(SubsonicIds.decode(p.id))
                 val songs = subs.map { l.byId[SubsonicIds.encode(it.id)] ?: r.song(it) }
-                Detail(r.text(pl.name), pl.owner, songs.firstOrNull()?.thumb, songs, emptyList())
+                Detail(r.text(pl.name, served = pl.nameLatin), pl.owner, songs.firstOrNull()?.thumb, songs, emptyList())
             }
             else -> {
                 fun count(n: Int, what: String) = "$n $what" + if (n == 1) "" else "s"
@@ -361,7 +372,10 @@ object SubsonicSource : Source {
         return client?.coverUrl(SubsonicIds.decode(SubsonicIds.PREFIX + rest.substringBefore('?')), rest.substringAfter("size=", "").toIntOrNull()) ?: url
     }
 
-    private val ownLyrics = SubsonicLyrics(::need)
+    // The layers the lyrics show, with the extension: original only asks "main", romanization only "pronunciation".
+    private val lyricsKinds get() = if (!romanizes) null else listOfNotNull("main".takeIf { Store.bool("lyrics.layer.original", true) }, "pronunciation".takeIf { Store.bool("lyrics.layer.latin", true) })
+    override val lyricsVariant get() = lyricsKinds?.joinToString("+", prefix = ".") ?: ""
+    private val ownLyrics = SubsonicLyrics(::need) { lyricsKinds }
     override val lyrics: LyricsProvider? get() = ownLyrics.takeIf { library?.index?.extensions?.contains("songLyrics") == true }
     // LRCLIB (free, open) for songs the server has no lyrics for.
     override val lyricsProviders = listOf<LyricsProvider>(LrcLib)

@@ -31,9 +31,9 @@ class Song(
 fun Romanizer.again(s: Song): Song {
     val artistNames = s.artists.map { it.name.original }
     val albumName = s.album?.name?.original
-    val title = text(s.title.original, artistNames + listOfNotNull(albumName), s.id, s.firstArtistId, titleOf = true)
-    val artists = s.artists.map { a -> Named(a.id, text(a.name.original, listOf(s.title.original) + listOfNotNull(albumName), s.id, a.id)) }
-    val album = s.album?.let { Named(it.id, text(it.name.original, listOf(s.title.original) + artistNames, s.id, s.firstArtistId, titleOf = true)) }
+    val title = text(s.title.original, artistNames + listOfNotNull(albumName), s.id, s.firstArtistId, titleOf = true, served = s.title.served)
+    val artists = s.artists.map { a -> Named(a.id, text(a.name.original, listOf(s.title.original) + listOfNotNull(albumName), s.id, a.id, served = a.name.served)) }
+    val album = s.album?.let { Named(it.id, text(it.name.original, listOf(s.title.original) + artistNames, s.id, s.firstArtistId, titleOf = true, served = it.name.served)) }
     return Song(s.id, title, artists, album, s.durationSec, s.thumb, s.video, s.reason)
 }
 

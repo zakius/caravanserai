@@ -131,6 +131,8 @@ object Store {
             romanizer.retryDictionary() // Japanese read as written doesn't load the dictionary; romanized again, it does
         }
         if (backend.changes(key) or key.startsWith("rom.")) dataChanged()
+        // A source that asks for lyrics by what they show (backend.lyricsVariant) loads the song's again.
+        if (key.startsWith("lyrics.layer.")) Playback.current()?.let { Playback.loadLyrics(it.song) }
         version++
         if (key == "play.ahead" && value == true && Playback.player.isPlaying) Playback.downloadAhead()
     }
