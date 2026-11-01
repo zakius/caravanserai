@@ -11,13 +11,13 @@ The music stack:
 ## Decisions
 
 - One codebase. YouTube Music and Subsonic are two implementations of one small interface (`Source`) under the screens. No screen names a backend; a screen asks the source for what it shows, and the source says what it can't do (a dimmed control, a hidden hint). Separate builds, or a combined mode with both at once, can come later and must stay cheap: every id says which source it belongs to (Ids below), so a queue, a ban or a scrobble already finds its source per song.
-- On first launch roma asks which backend to use: YouTube Music, or a Subsonic server (URL, user, password). Existing installs stay on YouTube Music without asking.
+- ~~On first launch roma asks which backend to use.~~ Since 2026-11-01 each backend is its own app (Two apps below); the build picks the source.
 - Library feel on Subsonic: the whole library index (artists, albums, songs, cover ids) is synced into a local store, so browsing and search are instant and work offline.
 - Each play is reported exactly once, by the side that knows the real source (Scrobbling below).
 
 ## The source interface
 
-`Source` (shared/…/Source.kt). `Sources.chosen` is the backend the screens browse (Home, Search, Library); `Sources.of(id)` is the source that owns an id, for everything about one song (stream, like, lyrics, scrobble, radio). Today one of the two is chosen; a combined mode would only change `chosen`.
+`Source` (shared/src/main/…/Source.kt). Each app has one, `backend`, defined by its flavor (Two apps below).
 
 | What | YouTube Music (`YouTubeMusic`, the code that is there now, moved) | Subsonic (`SubsonicSource`) |
 |---|---|---|
@@ -52,11 +52,11 @@ One server at a time: changing the server's URL or user drops the index and the 
 
 ## First launch and settings
 
-- First launch: "Where does your music come from?" before the scripts question (`SetupScreen`): YouTube Music, or a Subsonic server with URL, user and password. Continue on a server pings it (`ping`, then `getOpenSubsonicExtensions`) and says what failed in plain words (no connection, wrong password, not a Subsonic server). An install where `setup.done` is set already is on YouTube Music and isn't asked.
-- Settings: a "Music source" category, first in the list, shows the backend and the server. It switches between the two, edits the server, shows the last sync and its counts, and has "Sync now". The Subsonic page also holds the per-server Last.fm switch (Scrobbling below).
-- oasis (2026-10-30, fa79671) links YouTube Music per user: on an oasis server, Settings → Music source has "Link YouTube Music to this server", which posts roma's own YouTube Music sign-in (the music.youtube.com Cookie header) to `oasisLinkYouTubeMusic` as a form, never in a URL. Without a sign-in, the sign-in page opens first and the link follows it. The server then has the account's mixes, history and play forwarding; "Unlink" calls `oasisUnlinkYouTubeMusic`. The linked account's name is kept as `subsonic.ytm` and dropped with the server.
-- Prefs (user storage, like the YouTube cookie): `source` (`ytm` or `subsonic`), `subsonic.url`, `subsonic.user`, `subsonic.password` (token auth needs the password itself; it never leaves the device except as `md5(password + salt)`), `subsonic.lastfm`. The detected server type and extensions go to the cache with the index.
-- Switching the source starts Home, Search, Library and the open pages over (`Store.dataChanged`). The queue stays: each song plays from its own source.
+- First launch of the Subsonic app: "Where is your music?", the server's URL, user and password, before the scripts question (`SetupScreen`, `Source.Setup`). Continue pings it (`ping`, then `getOpenSubsonicExtensions`) and says what failed in plain words (no connection, wrong password, not a Subsonic server).
+- Settings: a "Server" category, first in the list, shows the server. It edits the server, shows the last sync and its counts, and has "Sync now", and holds the per-server Last.fm switch (Scrobbling below).
+- oasis links a streaming account per user on its own web account page. (From 2026-10-30 to 11-01 roma handed its own sign-in to `oasisLinkYouTubeMusic`; the Subsonic app can't, having no YouTube code.)
+- Prefs (user storage): `subsonic.url`, `subsonic.user`, `subsonic.password` (token auth needs the password itself; it never leaves the device except as `md5(password + salt)`), `subsonic.lastfm`. The detected server type and extensions go to the cache with the index.
+- Another server or user starts Home, Search, Library and the open pages over (`Store.dataChanged`).
 
 ## Index sync
 
@@ -68,7 +68,7 @@ One server at a time: changing the server's URL or user drops the index and the 
 
 ## Scrobbling
 
-Each play is reported exactly once, by the side that knows the real source. The decision is made per song, from `Sources.of(song.id)`, so a combined mode needs nothing more.
+Each play is reported exactly once, by the side that knows the real source (`Source.lastFm`, `scrobblesToLastFm` in :subsonic).
 
 - YouTube Music songs: roma scrobbles to Last.fm itself, as now.
 - Subsonic songs on oasis (`type == "oasis"` in any response): only Subsonic `scrobble`. `submission=false` when the song starts (now playing), `submission=true` once `shouldScrobble` holds. oasis passes the play on to Last.fm, ListenBrainz and YouTube Music history. roma's own Last.fm scrobbling is off for these songs, whatever the setting.
@@ -101,8 +101,27 @@ Against oasis (commit 18b9e5e, run from its venv) with a generated library of 15
 - Scrobbling: a play past half the song reached oasis once, with the start time roma sent. With oasis stopped, the play waited in subsonic-scrobbles.json; after oasis came back, roma's next start sent it, and oasis stored the original time.
 - With oasis stopped, Search and Library still worked from the index.
 
+## Two apps (2026-11-01)
+
+The YouTube Music and Subsonic backends became two apps built from this repo, with no code of the other in either:
+
+| App | Backend | Ships to | Built by |
+|---|---|---|---|
+| roma | YouTube Music only | GitHub releases | `:app:assembleYoutubeRelease`, `:desktop` |
+| the Subsonic app (name not decided: `subsonicApp.*` in gradle.properties) | Subsonic/OpenSubsonic only | Google Play | `:app:assembleSubsonicRelease`, `:desktop-subsonic` |
+
+Google Play review can find innertube calls, client spoofing or BotGuard in an APK even when no screen uses them, so the Subsonic app's YouTube code is compiled out, not hidden.
+
+- Modules: `:core` (romanization, lyrics rules and LRCLIB, radio filters, scrobbling, roma's models) knows no service. `:youtube` has innertube, InnerTubeX, the stream lookup, comments, the personal mixes and the other lyrics providers. `:subsonic` has the client and index.
+- Screens: shared/src/main holds every screen and the `Source` interface, which also brings what only one source shows: its settings page, Home's tiles, its first-start step, the comments view, picture sizing. shared/src/youtube and shared/src/subsonic each define `backend` and their source's own screens.
+- Android: product flavors `youtube` (id com.zakius.roma, as before: existing installs upgrade with their data) and `subsonic` (its own id, name, icon, Last.fm link scheme; no self-update). Desktop: `:desktop` and `:desktop-subsonic`, one build script (desktop/build.gradle.kts), their own data folders and packages. The BotGuard WebView, the sign-in, Chromium and CEF are roma's alone.
+- Left out of the Subsonic app: the YouTube Music link to oasis, YouTube share links, YouTube lyrics, NetEase, KuGou and LyricsPlus. Its lyrics: the server's `getLyricsBySongId` as the reference (oasis gathers every provider's), LRCLIB beside it. The server's mixes keep the server's order (roma ordered them by their YouTube playlist ids).
+- `tools/residue_check.py` fails the build when one app carries the other's code: every file of the Subsonic APK and desktop distribution (jars entry by entry, UTF-8 and UTF-16) against innertube, metrolist, BotGuard, YouTube, googlevideo and VISIONOS; roma's against Subsonic. release.sh runs it on both release APKs, the Linux desktop job on both release distributions. One library string is allowed: the web-address pattern's list of top-level domains, which holds `.youtube`.
+- Checked 2026-11-01 on the desktop (agent device access was off, so not on the emulator): the Subsonic app against a test oasis (server form at first start, sync of 4,709 songs, Home's mixes, Search "yoru ni" finding 夜に駆ける, playback, romanized lyrics, Comments and Share disabled, Settings with LRCLIB alone); roma signed out (no source question, YouTube Music search, playback, lyrics, comments, its YouTube settings).
+
 ## Known limits
 
+- Google Play: the Subsonic app still installs the Japanese dictionary as a separate APK from GitHub (REQUEST_INSTALL_PACKAGES), which Play's policies forbid; it needs another way before it ships there.
 - Desktop: the shared code runs, but the desktop player decodes only Opus in WebM and AAC in MP4. MP3, FLAC and Ogg files from a server need decoders there (or a server that transcodes); Android plays them through MediaCodec.
 - No ReplayGain yet: Subsonic songs play at their own level.
 - Names get machine romanization only: a server has no official Latin names, so 米津玄師 reads "Yonetsu Genshi" (the dictionary's reading) where YouTube gives "Kenshi Yonezu". A correction for that artist fixes it.

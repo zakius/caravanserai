@@ -26,10 +26,12 @@ The design and its rules are in [docs/design.md](docs/design.md).
 Requirements: JDK 21 and the Android SDK (compileSdk 37).
 
 ```sh
-./gradlew :core:test :app:assembleDebug
+./gradlew :core:test :youtube:test :subsonic:test :app:assembleYoutubeDebug
 ```
 
-The core tests and the dictionary app need SudachiDict: their first build downloads it (about 77 MB, checked against a pinned sha256) into the Gradle cache. Building roma itself doesn't.
+The same code builds a second app, for Subsonic servers and Google Play, without any YouTube code: `:app:assembleSubsonicDebug` and `:desktop-subsonic:run` ([docs/subsonic.md](docs/subsonic.md#two-apps-2026-11-01)).
+
+The tests and the dictionary app need SudachiDict: their first build downloads it (about 77 MB, checked against a pinned sha256) into the Gradle cache. Building roma itself doesn't.
 
 Release builds are made with `tools/release.sh`: R8 shrinking, Zopfli-recompressed, signed with a key that you supply in `keystore.properties` (not in the repository). A merge to master that sets a new `versionName` builds and publishes it as a GitHub release (`.github/workflows/release.yml`); there's no tag to push.
 
