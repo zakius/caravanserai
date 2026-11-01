@@ -107,7 +107,7 @@ The YouTube Music and Subsonic backends became two apps built from this repo, wi
 
 | App | Backend | Ships to | Built by |
 |---|---|---|---|
-| roma ytm (com.zakius.roma.mty, files roma-ytm) | YouTube Music only | GitHub releases | `:app:assembleYoutubeRelease`, `:desktop` |
+| roma ytm (com.zakius.roma.ytm, files roma-ytm) | YouTube Music only | GitHub releases | `:app:assembleYoutubeRelease`, `:desktop` |
 | roma (com.zakius.roma) | Subsonic/OpenSubsonic only | Google Play | `:app:assembleSubsonicRelease`, `:desktop-subsonic` |
 
 Names, ids and slugs: gradle.properties (decided 2026-11-01: roma, the name the app had, goes to the Play app; nothing had been distributed, so the old releases were deleted and nobody's install moved).
