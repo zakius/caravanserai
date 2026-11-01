@@ -1,6 +1,7 @@
 # Every push to master builds and tests. When app/build.gradle.kts has a versionName with no release yet, the run also
 # signs (tools/release.sh) and publishes it as a GitHub release, tagged v<version> on that commit: a merge that bumps the
-# version is the release. The desktop app (:desktop) ships in the same release: a .deb and an .rpm built on Linux, an
+# version is the release. The Subsonic app (the subsonic flavor, for Google Play; docs/subsonic.md, Two apps) builds in
+# the same jobs, Android and Linux desktop, and is checked for YouTube code (tools/residue_check.py) but not published. The desktop app (:desktop) ships in the same release: a .deb and an .rpm built on Linux, an
 # .msi on Windows, with roma-aac (tools/build-ffmpeg.sh) built for both on Linux. The dictionary app gets its own release, dict-<version>, the first time its version ships;
 # roma downloads it from there. The app and the dictionary build in parallel jobs, and the core tests (which need the
 # slim dictionary) in a third; roma's release is published only once its dictionary release exists and the tests pass.
@@ -69,6 +70,9 @@ jobs:
       - if: env.RELEASE
         uses: actions/upload-artifact@v7
         with: { name: app, path: dist/roma-*.apk }
+      # Unsigned, for trying it; the residue check above has passed.
+      - uses: actions/upload-artifact@v7
+        with: { name: subsonic-app, path: app/build/outputs/apk/subsonic/release/app-subsonic-release-unsigned.apk }
 
   test:
     runs-on: ubuntu-24.04
@@ -105,8 +109,13 @@ jobs:
       - uses: actions/download-artifact@v8
         with: { name: roma-aac, path: aac }
       - run: chmod +x aac/linux/roma-aac && sudo apt-get install -y rpm > /dev/null # artifacts drop the executable bit
-      - run: ./gradlew -q :desktop:createReleaseDistributable :desktop:icuCheck :desktop:skiaCheck "-Proma.aacDir=$GITHUB_WORKSPACE/aac"
+      - run: ./gradlew -q :desktop:createReleaseDistributable :desktop:icuCheck :desktop:skiaCheck :desktop-subsonic:createReleaseDistributable "-Proma.aacDir=$GITHUB_WORKSPACE/aac"
       - run: desktop/build/compose/binaries/main-release/app/roma/bin/roma --check
+      - name: Neither app carries the other's code
+        run: |
+          python3 tools/residue_check.py youtube desktop/build/compose/binaries/main-release/app/roma
+          python3 tools/residue_check.py subsonic desktop/subsonic/build/compose/binaries/main-release/app/*
+          desktop/subsonic/build/compose/binaries/main-release/app/*/bin/* --check
       - run: tools/linux-packages.sh --no-gradle
       - uses: actions/upload-artifact@v7
         with: { name: desktop-linux, path: "dist/roma*" }
