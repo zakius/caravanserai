@@ -55,19 +55,19 @@ object Update {
         val c = app
         if (busy) return
         if (!app.packageManager.canRequestPackageInstalls()) {
-            status = "Allow roma to install apps, then tap again"
+            status = "Allow ${BuildConfig.APP_NAME} to install apps, then tap again"
             c.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:${app.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             return
         }
         busy = true
-        status = "Downloading roma $v…"
+        status = "Downloading ${BuildConfig.APP_NAME} $v…"
         thread(name = "update") {
             try {
-                installApk(app, "$RELEASES/download/v$v/roma-$v.apk", app.packageName, gzip = false, ACTION, userActionNotRequired = true) { status = "Downloading roma $v… $it" }
-                status = "Installing roma $v…"
+                installApk(app, "$RELEASES/download/v$v/${BuildConfig.SLUG}-$v.apk", app.packageName, gzip = false, ACTION, userActionNotRequired = true) { status = "Downloading ${BuildConfig.APP_NAME} $v… $it" }
+                status = "Installing ${BuildConfig.APP_NAME} $v…"
             } catch (e: Exception) {
                 busy = false
-                status = "Couldn't get roma $v: ${plainError(e)}"
+                status = "Couldn't get ${BuildConfig.APP_NAME} $v: ${plainError(e)}"
             }
         }
     }

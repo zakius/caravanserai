@@ -14,7 +14,6 @@ android {
     buildToolsVersion = "37.0.0"
 
     defaultConfig {
-        applicationId = "com.zakius.roma"
         minSdk = 26
         targetSdk = 36
         versionCode = 58
@@ -29,28 +28,24 @@ android {
         manifestPlaceholders["dictPackage"] = "com.zakius.roma.dict"
     }
 
-    // Two apps from one codebase (docs/subsonic.md, Two apps): roma, YouTube Music only, released on GitHub; and the
-    // Subsonic app for Google Play, whose APK carries no YouTube code at all. Each flavor brings its own music source.
+    // Two apps from one codebase (docs/subsonic.md, Two apps): roma ytm (the youtube flavor), YouTube Music only,
+    // released on GitHub; and roma (subsonic), for Subsonic servers and Google Play, whose APK carries no YouTube code
+    // at all. Each flavor brings its own music source.
     flavorDimensions += "app"
     productFlavors {
-        create("youtube") {
+        // Each app's name, id and slug: gradle.properties.
+        for (app in listOf("youtube", "subsonic")) create(app) {
             dimension = "app"
-            buildConfigField("String", "APP_NAME", "\"roma\"")
-            buildConfigField("String", "SLUG", "\"roma\"")
-            // Testing only: `-Proma.refuseVisionOs=true` acts as if YouTube refused the VISIONOS client (Streams.refuseVisionOs),
-            // so songs play through InnerTubeX's other clients. Never set for a release.
-            buildConfigField("boolean", "REFUSE_VISIONOS", (findProperty("roma.refuseVisionOs") == "true").toString())
-            manifestPlaceholders += mapOf("appLabel" to "roma", "appIcon" to "@android:drawable/ic_media_play", "linkScheme" to "roma")
-        }
-        create("subsonic") {
-            dimension = "app"
-            val name = property("subsonicApp.name") as String
-            val slug = property("subsonicApp.slug") as String
-            applicationId = property("subsonicApp.id") as String
+            val name = property("${app}App.name") as String
+            val slug = property("${app}App.slug") as String
+            applicationId = property("${app}App.id") as String
             buildConfigField("String", "APP_NAME", "\"$name\"")
             buildConfigField("String", "SLUG", "\"$slug\"")
-            manifestPlaceholders += mapOf("appLabel" to name, "appIcon" to "@drawable/app_icon", "linkScheme" to slug)
+            manifestPlaceholders += mapOf("appLabel" to name, "appIcon" to if (app == "youtube") "@android:drawable/ic_media_play" else "@drawable/app_icon", "linkScheme" to slug)
         }
+        // Testing only: `-Proma.refuseVisionOs=true` acts as if YouTube refused the VISIONOS client (Streams.refuseVisionOs),
+        // so songs play through InnerTubeX's other clients. Never set for a release.
+        getByName("youtube").buildConfigField("boolean", "REFUSE_VISIONOS", (findProperty("roma.refuseVisionOs") == "true").toString())
     }
 
     buildTypes {

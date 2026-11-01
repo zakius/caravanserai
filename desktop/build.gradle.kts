@@ -1,7 +1,8 @@
 // roma for Linux and Windows: the app's screens and playback logic (shared/, compiled into :app too) on Compose for
 // Desktop, with roma's own audio decoding and the system's Chromium-family browser for BotGuard and sign-in (docs/design.md).
-// The Subsonic app's desktop build is this script too, as :desktop-subsonic (settings.gradle.kts): its own sources
-// (src/subsonic, shared/src/subsonic), name and packages, and no YouTube code, browser or CEF (docs/subsonic.md, Two apps).
+// :desktop builds roma ytm, the YouTube Music app. roma, the Subsonic app, is this script too, as :desktop-subsonic
+// (settings.gradle.kts): its own sources (src/subsonic, shared/src/subsonic), name and packages, and no YouTube code,
+// browser or CEF (docs/subsonic.md, Two apps).
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.nio.ByteBuffer
@@ -19,9 +20,9 @@ plugins {
 val flavor = if (project.name == "desktop-subsonic") "subsonic" else "youtube"
 val youtube = flavor == "youtube"
 val src = rootProject.file("desktop/src")
-// The Subsonic app's name and slug are placeholders kept in gradle.properties (subsonicApp.*).
-val appName = if (youtube) "roma" else property("subsonicApp.name") as String
-val slug = if (youtube) "roma" else property("subsonicApp.slug") as String
+// Each app's name and slug: gradle.properties.
+val appName = property("${flavor}App.name") as String
+val slug = property("${flavor}App.slug") as String
 
 // One version for both apps, read from the Android build where release.sh and the release workflow look for it.
 val appGradle = rootProject.file("app/build.gradle.kts").readText()

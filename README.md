@@ -1,10 +1,13 @@
 # roma
 
-A YouTube Music client for Android, Linux and Windows. It romanizes every non-Latin title, artist and lyric line, and its controls stay in the same place.
+A music player for Android, Linux and Windows that romanizes every non-Latin title, artist and lyric line, and whose controls stay in the same place. Two apps from this repository:
+
+- **roma**, for your own Subsonic or OpenSubsonic server (oasis, Navidrome, …), headed for Google Play.
+- **roma ytm**, for YouTube Music, from [Releases](https://github.com/zakius/roma/releases). The rest of this page is about it.
 
 https://github.com/user-attachments/assets/a9b0ed15-224c-46ec-89f7-82014df466c7
 
-Tiny and fast: the whole app is a 1.7 MB download; romanizing Japanese needs an optional dictionary, downloaded separately. Install it and tap around; that shows the speed better than a benchmark.
+Tiny and fast: roma ytm is a 1.7 MB download (roma 1.5 MB); romanizing Japanese needs an optional dictionary, downloaded separately. Install it and tap around; that shows the speed better than a benchmark.
 
 - **Romanization everywhere:** lists, player, queue, search, lyrics, notification.
   - Japanese: [Sudachi](https://github.com/WorksApplications/Sudachi) with SudachiDict core, Hepburn.
@@ -48,7 +51,7 @@ Its first build also builds roma-aac (`tools/build-ffmpeg.sh`), the small ffmpeg
 
 ### Android
 
-Get `roma-<version>.apk` from [Releases](https://github.com/zakius/roma/releases). If you want Japanese romanized, roma offers to install its Japanese dictionary on the first start: a separate app (`roma-dict-…`, a 31 MB download, 63 MB installed), so roma's own updates stay small.
+Get `roma-ytm-<version>.apk` from [Releases](https://github.com/zakius/roma/releases). If you want Japanese romanized, roma ytm offers to install its Japanese dictionary on the first start: a separate app (`roma-dict-…`, a 31 MB download, 63 MB installed), so its own updates stay small.
 
 ### Linux
 
@@ -56,16 +59,16 @@ Get `roma-<version>.apk` from [Releases](https://github.com/zakius/roma/releases
 
 | File | For |
 |------|-----|
-| `roma_*_amd64.deb` | Debian 13, Ubuntu 24.04 and newer: `sudo apt install ./roma_*_amd64.deb` |
-| `roma-*.x86_64.rpm` | Fedora: `sudo dnf install ./roma-*.x86_64.rpm` |
+| `roma-ytm_*_amd64.deb` | Debian 13, Ubuntu 24.04 and newer: `sudo apt install ./roma-ytm_*_amd64.deb` |
+| `roma-ytm-*.x86_64.rpm` | Fedora: `sudo dnf install ./roma-ytm-*.x86_64.rpm` |
 
 ### Windows
 
-`roma-*-x64.msi` installs for your user without administrator rights; `roma-*-windows-x64.zip` is the same app to unpack and run (`roma.exe`). Both use your Java 21 or newer, or download [Eclipse Temurin](https://adoptium.net)'s on the first start (about 49 MB). `roma-*-x64-full.msi` includes Java.
+`roma-ytm-*-x64.msi` installs for your user without administrator rights; `roma-ytm-*-windows-x64.zip` is the same app to unpack and run (`roma-ytm.exe`). Both use your Java 21 or newer, or download [Eclipse Temurin](https://adoptium.net)'s on the first start (about 49 MB). `roma-ytm-*-x64-full.msi` includes Java.
 
 ### On the desktop
 
-The Japanese dictionary downloads on the first start if you want Japanese romanized (31 MB). Signing in and some songs need a Chromium-family browser (Chrome, Edge, Chromium, Brave, Vivaldi, Opera, oganesson…); roma starts it with its own profile, never yours. Without one, roma downloads Chromium (CEF, about 150 MB) when first needed. Esc and the mouse's back button go back.
+The Japanese dictionary downloads on the first start if you want Japanese romanized (31 MB). Signing in and some songs need a Chromium-family browser (Chrome, Edge, Chromium, Brave, Vivaldi, Opera, oganesson…); roma ytm starts it with its own profile, never yours. Without one, roma ytm downloads Chromium (CEF, about 150 MB) when first needed. Esc and the mouse's back button go back.
 
 ## Credits
 

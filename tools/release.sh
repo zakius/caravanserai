@@ -1,7 +1,7 @@
 #!/bin/bash
 # Release APKs, signed with the key named in keystore.properties (outside git):
-#   dist/roma-<version>.apk: R8-shrunk, Zopfli-recompressed (tools/repack_apk.py), zipaligned (arm64 and x86_64 in one).
-#     The Subsonic app's APK (the subsonic flavor, for Google Play) builds beside it, unsigned: tools/residue_check.py
+#   dist/roma-ytm-<version>.apk: roma ytm (the youtube flavor), R8-shrunk, Zopfli-recompressed (tools/repack_apk.py),
+#     zipaligned (arm64 and x86_64 in one). roma's APK (the subsonic flavor, for Google Play) builds beside it, unsigned: tools/residue_check.py
 #     checks neither carries the other's code, and fails the run when one does.
 #   dist/roma-dict-<dictionary version>.apk.gz: the Japanese dictionary app (:dict-app), only when that file is missing.
 #     The APK keeps the dictionary uncompressed (roma maps it in place); the gzip is only for the download.
@@ -46,7 +46,7 @@ mkdir -p dist
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 if [ -n "$app" ]; then
-  out="dist/roma-$version.apk"
+  out="dist/roma-ytm-$version.apk"
   python3 tools/repack_apk.py $apks/youtube/release/app-youtube-release-unsigned.apk "$tmp/repacked.apk"
   "$tools/zipalign" -f -P 16 4 "$tmp/repacked.apk" "$tmp/aligned.apk"
   sign "$tmp/aligned.apk" "$out"

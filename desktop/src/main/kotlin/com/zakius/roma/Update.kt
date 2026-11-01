@@ -16,7 +16,7 @@ object Update {
     /** The newer version out, null when this one is the latest or the check failed. */
     var available by mutableStateOf<String?>(null)
         private set
-    val status: String? get() = available?.let { "Opens the release page for roma $it" }
+    val status: String? get() = available?.let { "Opens the release page for ${BuildConfig.APP_NAME} $it" }
 
     fun init() = Startup.later {
         thread(name = "update", isDaemon = true) {

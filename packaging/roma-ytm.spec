@@ -3,7 +3,7 @@
 # xz, as the .deb: Ubuntu's rpmbuild (CI) defaults to gzip, which leaves the package much bigger.
 %global _binary_payload w9.xzdio
 
-Name:           roma
+Name:           roma-ytm
 Version:        %{version}
 Release:        1
 Summary:        YouTube Music, every title and lyric romanized
@@ -23,8 +23,8 @@ controls that never move.
 cp -a %{stage}/. %{buildroot}/
 
 %files
-/opt/roma
-/usr/bin/roma
-/usr/share/applications/io.github.zakius.roma.desktop
-/usr/share/icons/hicolor/scalable/apps/io.github.zakius.roma.svg
-/usr/share/metainfo/io.github.zakius.roma.metainfo.xml
+/opt/roma-ytm
+/usr/bin/roma-ytm
+/usr/share/applications/io.github.zakius.roma.ytm.desktop
+/usr/share/icons/hicolor/scalable/apps/io.github.zakius.roma.ytm.svg
+/usr/share/metainfo/io.github.zakius.roma.ytm.metainfo.xml
