@@ -234,11 +234,12 @@ class SubsonicClient(url: String, val user: String, private val password: String
     // One structuredLyrics entry's lines; with cueLine, their timed words.
     private fun lines(l: JsonObject): List<Line> {
         val synced = l["synced"].str() == "true"
+        // OpenSubsonic: a positive offset shows the lyrics sooner.
         val offset = l["offset"].str()?.toLongOrNull() ?: 0
         // Several cueLines on one line are its voices, the main one first.
         val cues = l["cueLine"].arr().orEmpty().mapNotNull { it.obj() }.groupBy { it["index"].int() }.mapValues { it.value.first() }
         return l["line"].arr().orEmpty().mapNotNull { it.obj() }.mapIndexed { i, o ->
-            Line(if (synced) (o["start"].str()?.toLongOrNull() ?: 0) + offset else 0, o["value"].str() ?: "", if (synced) cues[i]?.let { words(it, offset) }.orEmpty() else emptyList())
+            Line(if (synced) (o["start"].str()?.toLongOrNull() ?: 0) - offset else 0, o["value"].str() ?: "", if (synced) cues[i]?.let { words(it, offset) }.orEmpty() else emptyList())
         }
     }
 
@@ -253,7 +254,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
             val text = if (from in 0..to && to <= bytes.size) String(bytes, from, to - from, Charsets.UTF_8) else q["value"].str() ?: ""
             val start = q["start"].str()?.toLongOrNull() ?: 0
             val end = q["end"].str()?.toLongOrNull() ?: cues.getOrNull(i + 1)?.get("start").str()?.toLongOrNull() ?: c["end"].str()?.toLongOrNull() ?: start
-            Word(start + offset, end + offset, text)
+            Word(start - offset, end - offset, text)
         }
     }
 

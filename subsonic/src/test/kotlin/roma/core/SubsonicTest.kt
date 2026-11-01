@@ -125,7 +125,7 @@ class SubsonicTest {
     @Test fun syncedLyricsWin() {
         val l = SubsonicClient(url, "admin", "secret").lyrics("tr-1", "Your server")!!
         assertTrue(l.synced)
-        assertEquals(listOf(900L, 3900L), l.lines.map { it.startMs })
+        assertEquals(listOf(1100L, 4100L), l.lines.map { it.startMs }) // offset -100: later
         assertEquals("沈むように", l.lines[0].text)
         assertEquals(l.lines.size, SubsonicLyrics({ SubsonicClient(url, "admin", "secret") }, { null }).fetch(LyricsQuery("s.tr-1", "", "", null, 0))!!.lines.size)
         assertEquals("tr-1", calls.last().second.toMap()["id"])
