@@ -1,9 +1,11 @@
-# The release distribution (createReleaseDistributable): shrinking and renaming, as finimal's desktop build does; no
-# optimizing (ProGuard 7.8 fails on Kotlin 2.4's code). Stack traces keep line numbers and read through
-# build/proguard-mapping.txt (roma's: proguard-youtube.pro; retrace; each release attaches it). Exception names stay: the UI shows some.
+# The release distribution (createReleaseDistributable): shrinking and renaming, as finimal's desktop build does, into
+# one package with short names; no optimizing (ProGuard 7.8 and 7.10 fail on Kotlin 2.4's code). No line numbers or
+# generic signatures, which nothing reads (1.2 MB): stack traces name methods, read through build/proguard-mapping.txt
+# (roma ytm's: proguard-youtube.pro; retrace; each release attaches it). Exception names stay: the UI shows some.
 -dontoptimize
--keepattributes *Annotation*, InnerClasses, Signature, Exceptions, EnclosingMethod, SourceFile, LineNumberTable
--renamesourcefileattribute SourceFile
+-keepattributes *Annotation*, InnerClasses, Exceptions, EnclosingMethod
+-repackageclasses ''
+-allowaccessmodification
 -keepnames class * extends java.lang.Throwable
 -adaptresourcefilenames META-INF/services/*
 -adaptresourcefilecontents META-INF/services/*
@@ -11,7 +13,45 @@
 # Enums looked up by name (Sudachi's settings), which R8 keeps on its own and ProGuard doesn't.
 -keepclassmembers enum * { public static **[] values(); public static ** valueOf(java.lang.String); }
 
-# Skia's native code calls back through Function0 by name.
+# Skia's native code (not Compose's rules, which keep all of Skia's Java side, 0.8 MB): its native methods keep their
+# names, and the classes it reaches by name (their names in libskiko and the Windows DLL) stay whole. It calls back
+# through Function0.
+-keepclasseswithmembernames,includedescriptorclasses class org.jetbrains.sk** { native <methods>; }
+-keep class
+    org.jetbrains.skia.AnimationFrameInfo,
+    org.jetbrains.skia.Color4f,
+    org.jetbrains.skia.Drawable,
+    org.jetbrains.skia.FontFamilyName,
+    org.jetbrains.skia.FontFeature,
+    org.jetbrains.skia.FontMetrics,
+    org.jetbrains.skia.FontMgr,
+    org.jetbrains.skia.FontVariation,
+    org.jetbrains.skia.FontVariationAxis,
+    org.jetbrains.skia.ImageInfo,
+    org.jetbrains.skia.impl.Native,
+    org.jetbrains.skia.IPoint,
+    org.jetbrains.skia.IRect,
+    org.jetbrains.skia.PaintFilterCanvas,
+    org.jetbrains.skia.paragraph.DecorationStyle,
+    org.jetbrains.skia.paragraph.LineMetrics,
+    org.jetbrains.skia.paragraph.Shadow,
+    org.jetbrains.skia.paragraph.TextBox,
+    org.jetbrains.skia.Path,
+    org.jetbrains.skia.PathSegment,
+    org.jetbrains.skia.Point,
+    org.jetbrains.skia.Rect,
+    org.jetbrains.skia.RRect,
+    org.jetbrains.skia.RSXform,
+    org.jetbrains.skia.shaper.**,
+    org.jetbrains.skia.skottie.Logger,
+    org.jetbrains.skia.skottie.LogLevel,
+    org.jetbrains.skia.svg.SVGLength,
+    org.jetbrains.skia.svg.SVGPreserveAspectRatio,
+    org.jetbrains.skiko.graphicapi.InternalDirectXApi,
+    org.jetbrains.skiko.redrawer.Direct3DRedrawer,
+    org.jetbrains.skiko.RenderExceptionsHandler,
+    org.jetbrains.skiko.windows.JumpListBuilder$JumpListInteropItem,
+    org.jetbrains.skiko.windows.JumpListException { *; }
 -keep interface kotlin.jvm.functions.Function0 { *; }
 -keep class * implements kotlinx.coroutines.internal.MainDispatcherFactory { *; }
 

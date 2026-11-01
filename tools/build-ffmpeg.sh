@@ -1,7 +1,8 @@
 #!/bin/bash
 # The audio-only ffmpeg the desktop app runs for songs YouTube has only in AAC (about 1 in 150; desktop/Media.kt,
 # AacPcm): ffmpeg's own AAC decoder reading ADTS frames on stdin and writing 16-bit PCM to stdout, nothing else.
-# A static binary of about 1 MB, LGPL (no GPL or non-free parts). Pinned sources, checked against their sha256.
+# A static binary of about 1.3 MB, LGPL (no GPL or non-free parts). Pinned sources, checked against their sha256.
+# Linux's links musl (musl-tools), not glibc: half the size, and static either way, so it runs on any distribution.
 # Usage: build-ffmpeg.sh linux|windows <out dir>; writes <out dir>/roma-aac (roma-aac.exe for Windows).
 # Windows is cross-built with llvm-mingw, so Linux and CI build both the same way.
 set -euo pipefail
@@ -29,15 +30,16 @@ flags=(
   --disable-ffplay --disable-ffprobe --disable-avdevice --disable-swscale --disable-x86asm --enable-small
   --enable-protocol=pipe --enable-demuxer=aac --enable-parser=aac --enable-decoder=aac
   --enable-muxer=pcm_s16le --enable-encoder=pcm_s16le --enable-filter=aformat,anull,aresample
+  --enable-lto --extra-cflags="-ffunction-sections -fdata-sections" --extra-ldflags="-static -Wl,--gc-sections"
 )
 case $target in
-  linux) ./configure "${flags[@]}" --extra-ldflags=-static ;;
+  linux) ./configure "${flags[@]}" --cc=musl-gcc ;;
   windows)
     fetch "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW/llvm-mingw-$LLVM_MINGW-ucrt-ubuntu-22.04-x86_64.tar.xz" \
       "$cache/llvm-mingw-$LLVM_MINGW.tar.xz" $LLVM_MINGW_SHA
     [ -d "$cache/llvm-mingw-$LLVM_MINGW" ] || { tar -xJf "$cache/llvm-mingw-$LLVM_MINGW.tar.xz" -C "$cache" && mv "$cache/llvm-mingw-$LLVM_MINGW-ucrt-ubuntu-22.04-x86_64" "$cache/llvm-mingw-$LLVM_MINGW"; }
     export PATH="$cache/llvm-mingw-$LLVM_MINGW/bin:$PATH"
-    ./configure "${flags[@]}" --target-os=mingw32 --arch=x86_64 --cross-prefix=x86_64-w64-mingw32- --cc=x86_64-w64-mingw32-clang --extra-ldflags=-static ;;
+    ./configure "${flags[@]}" --target-os=mingw32 --arch=x86_64 --cross-prefix=x86_64-w64-mingw32- --cc=x86_64-w64-mingw32-clang ;;
   *) echo "target: linux or windows" >&2; exit 1 ;;
 esac
 exe=ffmpeg; [ "$target" = windows ] && exe=ffmpeg.exe

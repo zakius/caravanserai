@@ -4,6 +4,7 @@
 // (settings.gradle.kts): its own sources (src/subsonic, shared/src/subsonic), name and packages, and no YouTube code,
 // browser or CEF (docs/subsonic.md, Two apps).
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.jetbrains.compose.desktop.application.tasks.AbstractJLinkTask
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -80,10 +81,10 @@ val buildConfig = tasks.register("buildConfig") {
 tasks.named("compileKotlin") { dependsOn(buildConfig) }
 
 // roma-aac, the audio-only ffmpeg for the songs YouTube has only in AAC (tools/build-ffmpeg.sh), built once per version
-// into the Gradle cache. Linux builds both (Windows' by cross-compiling); elsewhere -Proma.aacDir=<dir> hands over
-// prebuilt ones (<dir>/linux/roma-aac, <dir>/windows/roma-aac.exe), as the release's desktop jobs do.
-val ffmpegVersion = Regex("""FFMPEG=(\S+)""").find(rootProject.file("tools/build-ffmpeg.sh").readText())!!.groupValues[1]
-val aacDir = (findProperty("roma.aacDir") as String?)?.let(::File) ?: File(gradle.gradleUserHomeDir, "caches/roma/roma-aac-$ffmpegVersion")
+// of that script into the Gradle cache. Linux builds both (Windows' by cross-compiling); elsewhere -Proma.aacDir=<dir>
+// hands over prebuilt ones (<dir>/linux/roma-aac, <dir>/windows/roma-aac.exe), as the release's desktop jobs do.
+val aacScript = MessageDigest.getInstance("SHA-256").digest(rootProject.file("tools/build-ffmpeg.sh").readBytes()).take(6).joinToString("") { "%02x".format(it) }
+val aacDir = (findProperty("roma.aacDir") as String?)?.let(::File) ?: File(gradle.gradleUserHomeDir, "caches/roma/roma-aac-$aacScript")
 val windowsHost = System.getProperty("os.name").startsWith("Windows")
 // One task builds it for both apps: the Subsonic app's build takes :desktop's.
 if (!youtube) evaluationDependsOn(":desktop")
@@ -110,10 +111,20 @@ val copyAppResources = tasks.register<Sync>("copyAppResources") {
 tasks.matching { it.name.startsWith("prepareAppResources") }.configureEach { dependsOn(copyAppResources) }
 
 // ICU4J without the locale data roma never reads (dates, zones, collation, units, names, line breaks, word dictionaries
-// but Thai's): it only transliterates. ProGuard then drops the classes transliteration doesn't reach. 15.2 to 2.2 MB.
-// :desktop:icuCheck shows the released jar gives the full jar's output on every assigned code point, for every
-// transliterator roma uses.
+// but Thai's) or the transliteration rules its transliterators never load (icuRules): it only transliterates. ProGuard
+// then drops the classes transliteration doesn't reach. 15.2 to 2.1 MB. :desktop:icuCheck shows the released jar gives
+// the full jar's output on every assigned code point, for every transliterator roma uses.
 val icu = configurations.create("icu")
+val icuTrim = sourceSets.create("icuTrim") { java.setSrcDirs(listOf("$src/icuTrim/java")) }
+configurations[icuTrim.implementationConfigurationName].extendsFrom(icu)
+sourceSets.test { compileClasspath += icuTrim.output; runtimeClasspath += icuTrim.output }
+val icuRules = tasks.register<JavaExec>("icuRules") {
+    classpath = icuTrim.runtimeClasspath
+    mainClass = "com.zakius.roma.IcuTrim"
+    val out = layout.buildDirectory.file("icu/root.res")
+    outputs.file(out)
+    args(out.get().asFile.path)
+}
 val cef = configurations.create("cef")
 // "<path on Maven Central> <sha256>" per jar CEF's Java side needs, for BuildConfig.CEF_JARS.
 val cefJars = provider {
@@ -134,9 +145,11 @@ val icuSlim = tasks.register<Jar>("icuSlim") {
         exclude("$data/brkitr/cjdict.dict", "$data/brkitr/line*.brk", "com/ibm/icu/impl/duration/impl/data/**")
         exclude("$data/*.spp", "$data/confusables.cfu", "$data/uts46.nrm", "$data/nfkc_*.nrm", "$data/unames.icu")
         exclude("$data/brkitr/burmesedict.dict", "$data/brkitr/khmerdict.dict", "$data/brkitr/laodict.dict") // Thai's is read
+        exclude("$data/translit/root.res")
         // Locale bundles at the top (ko.res, en_GB.res, …); ICU's own files stay.
         exclude { e -> e.path.matches(Regex("$data/[^/]+\\.res")) && e.name.removeSuffix(".res") !in keepTop }
     }
+    from(icuRules) { into("$data/translit") }
 }
 
 dependencies {
@@ -197,6 +210,9 @@ compose.desktop {
     }
 }
 
+// The full build's Java with its classes compressed (zip-6): 32 MB less, for 10 ms more at start (1.5%, on Linux).
+tasks.withType<AbstractJLinkTask>().configureEach { freeArgs.add("--compress=zip-6") }
+
 dependencies { testImplementation(kotlin("test")) }
 // The unit tests (FedProcessTest); the other test sources are checks run as their own tasks below.
 tasks.test { useJUnitPlatform() }
@@ -214,9 +230,9 @@ if (youtube) tasks.register<JavaExec>("botGuardCheck") {
 }
 
 // Skia's library (Linux; on Windows its icudtl.dat) carries ICU's whole data (10.4 MB) and reads only its line, word and grapheme breaking. The rest
-// (collation, time zones, locale names, converters, the Chinese/Japanese word dictionary) goes: the blob keeps its
-// place and size, its table of contents lists only what stays, and what's freed is zeros. :desktop:skiaCheck shows
-// text lays out as with the full data.
+// (collation, time zones, locale names, converters, the Chinese/Japanese word dictionary) goes: its table of contents
+// lists only what stays. In the library the blob keeps its place and size and what's freed is zeros; Windows' file ends
+// after what stays (10.5 to 1.7 MB). :desktop:skiaCheck shows text lays out as with the full data.
 fun trimSkiaIcu(lib: File) {
     val bytes = lib.readBytes()
     val b = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
@@ -249,7 +265,7 @@ fun trimSkiaIcu(lib: File) {
         System.arraycopy(bytes, data(k), out, at, data(k + 1) - data(k))
         at += data(k + 1) - data(k)
     }
-    lib.writeBytes(out)
+    lib.writeBytes(if (lib.name == "icudtl.dat") out.copyOf(at) else out)
 }
 // Linux: also Skia's symbol table (3 MB). Its exported symbols stay; the Java runtime keeps its own for crash logs.
 tasks.matching { it.name == "createDistributable" || it.name == "createReleaseDistributable" }.configureEach {
@@ -264,7 +280,9 @@ tasks.matching { it.name == "createDistributable" || it.name == "createReleaseDi
 }
 
 // Compose's default ProGuard rules keep all of Kotlin's standard library, which roma mostly doesn't call (finimal's
-// measurement: 5.6 MB of jars). Skia's native code needs only Function0 (proguard-rules.pro).
+// measurement: 5.6 MB of jars), all of Skia's Java side, and every serializer whole and by name, which keeps the YouTube
+// models' package names too. Skia's native code needs only what proguard-rules.pro keeps; kotlinx.serialization, its
+// own rules there, as Android's R8 reads them.
 afterEvaluate {
     val proguard = tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractProguardTask>()
     val stock = proguard.first().defaultComposeRulesFile.get().asFile
@@ -274,10 +292,11 @@ afterEvaluate {
         inputs.file(stock)
         outputs.file(trimmed)
         doLast {
-            val rules = stock.readLines()
-            val kept = rules.filterNot { it == "-keep class kotlin.** { *; }" }
-            check(kept.size < rules.size) { "Compose's default rules no longer keep kotlin.**; this filter can go" }
-            trimmed.get().asFile.writeText(kept.joinToString("\n", postfix = "\n"))
+            val broad = listOf("-keep class kotlin.** { *; }\n", "-keep class org.jetbrains.skia.** { *; }\n",
+                "-keep class org.jetbrains.skiko.** { *; }\n", "-keep class **\$\$serializer {\n    *;\n}\n")
+            val rules = stock.readText()
+            check(broad.all { it in rules }) { "Compose's default rules changed what they keep whole; check this filter" }
+            trimmed.get().asFile.writeText(broad.fold(rules) { r, b -> r.replace(b, "") })
         }
     }
     proguard.configureEach {

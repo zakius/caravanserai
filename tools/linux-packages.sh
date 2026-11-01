@@ -2,7 +2,6 @@
 # The desktop app for Debian/Ubuntu and Fedora: dist/roma-ytm_<version>_amd64.deb and dist/roma-ytm-<version>-1.x86_64.rpm,
 # from the release app image's app files (ProGuard-shrunk). Both install roma ytm to /opt/roma-ytm with /usr/bin/roma-ytm and run on
 # the distribution's Java 21+, so its fixes come with system updates; as finimal's packages.
-# The jars go in stored, not deflated: the package's xz then compresses across all classes.
 # rpmbuild comes from the host (Ubuntu: the rpm package) or, without it, a Fedora container.
 # Usage: tools/linux-packages.sh [--no-gradle]
 set -euo pipefail
@@ -14,14 +13,10 @@ trap 'rm -rf "$stage"' EXIT
 root=$stage/root
 mkdir -p "$root/opt/roma-ytm" "$root/usr/bin" "$root/usr/share/applications" "$root/usr/share/icons/hicolor/scalable/apps" "$root/usr/share/metainfo" dist
 app=$PWD/desktop/build/compose/binaries/main-release/app/roma-ytm/lib/app
-cp -a "$app"/libskiko-*.so "$root/opt/roma-ytm/"
+cp -a "$app"/libskiko-*.so "$app"/*.jar "$root/opt/roma-ytm/"
 cp -a "$app/resources" "$root/opt/roma-ytm/"
 rm -rf "$root/opt/roma-ytm/resources/windows"
 chmod 755 "$root/opt/roma-ytm/resources/roma-aac" # the app image loses its executable bit
-for jar in "$app"/*.jar; do
-  rm -rf "$stage/x"; mkdir "$stage/x"; (cd "$stage/x" && unzip -q "$jar" && zip -q -0 -r -X "$root/opt/roma-ytm/$(basename "$jar")" .)
-done
-rm -rf "$stage/x"
 sed -e 's|@APPDIR@|/opt/roma-ytm|' packaging/roma-ytm-system-java.sh > "$root/usr/bin/roma-ytm"
 chmod 755 "$root/usr/bin/roma-ytm"
 install -m644 packaging/io.github.zakius.roma.ytm.desktop "$root/usr/share/applications/"

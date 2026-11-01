@@ -94,7 +94,7 @@ jobs:
         uses: actions/cache@v4
         with: { path: aac, key: "roma-aac-${{ hashFiles('tools/build-ffmpeg.sh') }}" }
       - if: steps.cache.outputs.cache-hit != 'true'
-        run: tools/build-ffmpeg.sh linux aac/linux && tools/build-ffmpeg.sh windows aac/windows
+        run: sudo apt-get install -y musl-tools > /dev/null && tools/build-ffmpeg.sh linux aac/linux && tools/build-ffmpeg.sh windows aac/windows
       - uses: actions/upload-artifact@v7
         with: { name: roma-aac, path: aac }
 
