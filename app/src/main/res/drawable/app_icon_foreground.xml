@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- roma's glyph, the same in both apps (packaging/roma.svg): the play triangle with a bar beneath it, like the
-     romanization under the original. Drawn in 256 units, scaled into the adaptive icon's 66 dp safe zone. -->
+<!-- roma's glyph, the same in both apps (packaging/roma.svg, where its placement is explained): the play triangle with a
+     bar beneath it, like the romanization under the original. Drawn in 256 units, scaled into the adaptive icon's 66 dp
+     safe zone. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-    <group android:scaleX="0.32" android:scaleY="0.32" android:translateX="13.04" android:translateY="12.72">
-        <path android:fillColor="#FFFFFF" android:pathData="M100,56v104l84,-52z" />
-        <path android:fillColor="#FFFFFF" android:pathData="M92,186h72a8,8 0,0 1,0 16h-72a8,8 0,0 1,0 -16z" />
+    <group android:scaleX="0.36" android:scaleY="0.36" android:translateX="7.92" android:translateY="7.92">
+        <path android:fillColor="#FFFFFF" android:strokeColor="#FFFFFF" android:strokeWidth="12" android:strokeLineJoin="round" android:pathData="M94,66V154L170,110z" />
+        <path android:fillColor="#FFFFFF" android:pathData="M101,176h62a7,7 0,0 1,0 14h-62a7,7 0,0 1,0 -14z" />
     </group>
 </vector>
