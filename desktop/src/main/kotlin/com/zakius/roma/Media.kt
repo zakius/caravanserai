@@ -11,98 +11,6 @@ import java.util.concurrent.ConcurrentHashMap
 // read packet by packet (WebM with Opus, MP4 with AAC: the two containers and codecs YouTube serves audio in) and
 // decoded to 16-bit PCM in pure Java.
 
-/** The stream refused (HTTP [status]): a fresh URL may be needed. */
-class StreamRefused(val status: Int) : IOException("The stream answered HTTP $status")
-
-/**
- * A song's stream in the audio cache (cache/audio/<id>), filled from the front by Range requests: the first bytes
- * ahead of a tap ([fill] with a limit), the rest while it plays. Readers block until the bytes they want arrive.
- * The total length is kept beside it (<id>.len), so a complete file is known without the network.
- */
-class StreamFile private constructor(val id: String) {
-    private val file = File(dir, id)
-    private val lenFile = File(dir, "$id.len")
-    @Volatile var total: Long = runCatching { lenFile.readText().toLong() }.getOrDefault(-1L)
-        private set
-    @Volatile var have: Long = file.length()
-        private set
-    @Volatile private var failure: IOException? = null
-    private val lock = Object()
-    private var filling = false
-
-    val complete get() = total >= 0 && have >= total
-
-    /**
-     * Blocking: downloads from what is there up to [limit] bytes (all with -1), unless another call already is.
-     * Network errors are kept for the readers; [StreamRefused] for a refused URL.
-     */
-    fun fill(limit: Long = -1) {
-        synchronized(lock) { if (filling || complete || (limit >= 0 && have >= limit)) return; filling = true; failure = null }
-        try {
-            val url = Playback.streamUrl(id)
-            val c = URI(url).toURL().openConnection() as HttpURLConnection
-            c.connectTimeout = 15_000
-            c.readTimeout = 20_000
-            // A Range on every request: without one googlevideo throttles the download to a trickle.
-            c.setRequestProperty("Range", "bytes=$have-" + if (limit >= 0) "${limit - 1}" else "")
-            val code = c.responseCode
-            if (code == 416 && total >= 0) return
-            if (code !in 200..299) throw StreamRefused(code)
-            c.getHeaderField("Content-Range")?.substringAfter('/')?.toLongOrNull()?.let { if (total != it) { total = it; lenFile.writeText("$it") } }
-            dir.mkdirs()
-            RandomAccessFile(file, "rw").use { out ->
-                out.seek(have)
-                c.inputStream.use { input ->
-                    val buf = ByteArray(1 shl 16)
-                    while (true) {
-                        val n = input.read(buf)
-                        if (n < 0) break
-                        out.write(buf, 0, n)
-                        synchronized(lock) { have += n; lock.notifyAll() }
-                    }
-                }
-            }
-        } catch (e: IOException) {
-            failure = e
-        } catch (e: Exception) {
-            failure = IOException(e.message, e) // a failed lookup: Streams' reason in its message
-        } finally {
-            synchronized(lock) { filling = false; lock.notifyAll() }
-        }
-    }
-
-    /**
-     * Blocking: [n] bytes at [pos] into [buf], fewer only at the end of the stream. Waits for the download, which it
-     * starts (in the background) if nothing is filling; throws the download's error once nothing more can come.
-     */
-    fun read(pos: Long, buf: ByteArray, off: Int, n: Int): Int {
-        synchronized(lock) {
-            while (have < pos + n && !(total >= 0 && have >= total)) {
-                failure?.let { failure = null; throw it }
-                if (!filling) { filling = true; Thread({ synchronized(lock) { filling = false }; fill() }, "download $id").apply { isDaemon = true }.start() }
-                lock.wait(500)
-            }
-        }
-        val m = minOf(n.toLong(), have - pos).toInt()
-        if (m <= 0) return 0
-        RandomAccessFile(file, "r").use { it.seek(pos); it.readFully(buf, off, m) }
-        return m
-    }
-
-    companion object {
-        val dir get() = File(Dirs.cache, "audio")
-        private val open = ConcurrentHashMap<String, StreamFile>()
-        fun of(id: String): StreamFile = open.computeIfAbsent(id) { StreamFile(it) }
-
-        /** ponytail: oldest files out past 1 GB, once per start, as Android's audio cache. */
-        fun trim() {
-            val files = dir.listFiles { f -> !f.name.endsWith(".len") }.orEmpty().sortedByDescending { it.lastModified() }
-            var kept = 0L
-            for (f in files) { kept += f.length(); if (kept > 1L shl 30 && !open.containsKey(f.name)) { f.delete(); File(dir, "${f.name}.len").delete() } }
-        }
-    }
-}
-
 /** A position in a [StreamFile], read forward. */
 class Cursor(private val f: StreamFile, var pos: Long) {
     private val one = ByteArray(8)
@@ -264,10 +172,12 @@ class AacPcm(private val d: Mp4Demuxer, atMs: Long) : Pcm {
         return got - got % frame
     }
 
+    // Through its handle: Process.destroy first closes its input, which waits for the writer, stuck in a full pipe while
+    // the player holds its lock, and the reader of the output waits for that lock: a skip froze the player.
     override fun close() {
         closed = true
         writer.interrupt()
-        process.destroy()
+        process.toHandle().destroy()
     }
 
     companion object {
