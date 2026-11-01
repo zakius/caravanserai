@@ -1,6 +1,5 @@
 package roma.core
 
-import com.metrolist.innertube.models.SongItem
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -28,23 +27,13 @@ class Song(
     fun withReason(r: String?) = Song(id, title, artists, album, durationSec, thumb, video, r)
 }
 
-fun Romanizer.song(item: SongItem): Song {
-    val artistNames = item.artists.map { it.name }
-    val albumName = item.album?.name
-    val artistId = item.artists.firstOrNull { it.id != null }?.id
-    val title = text(item.title, artistNames + listOfNotNull(albumName), item.id, artistId, titleOf = true)
-    val artists = item.artists.map { a -> Named(a.id, text(a.name, listOf(item.title) + listOfNotNull(albumName), item.id, a.id)) }
-    val album = item.album?.let { Named(it.id, text(it.name, listOf(item.title) + artistNames, item.id, artistId, titleOf = true)) }
-    return Song(item.id, title, artists, album, item.duration ?: 0, item.thumbnail, item.isVideoSong)
-}
-
 /** Redo the Latin forms, e.g. after an override or a scheme change. */
 fun Romanizer.again(s: Song): Song {
     val artistNames = s.artists.map { it.name.original }
     val albumName = s.album?.name?.original
-    val title = text(s.title.original, artistNames + listOfNotNull(albumName), s.id, s.firstArtistId, titleOf = true)
-    val artists = s.artists.map { a -> Named(a.id, text(a.name.original, listOf(s.title.original) + listOfNotNull(albumName), s.id, a.id)) }
-    val album = s.album?.let { Named(it.id, text(it.name.original, listOf(s.title.original) + artistNames, s.id, s.firstArtistId, titleOf = true)) }
+    val title = text(s.title.original, artistNames + listOfNotNull(albumName), s.id, s.firstArtistId, titleOf = true, served = s.title.served)
+    val artists = s.artists.map { a -> Named(a.id, text(a.name.original, listOf(s.title.original) + listOfNotNull(albumName), s.id, a.id, served = a.name.served)) }
+    val album = s.album?.let { Named(it.id, text(it.name.original, listOf(s.title.original) + artistNames, s.id, s.firstArtistId, titleOf = true, served = it.name.served)) }
     return Song(s.id, title, artists, album, s.durationSec, s.thumb, s.video, s.reason)
 }
 
@@ -52,12 +41,15 @@ fun Romanizer.again(s: Song): Song {
  * Local search: the query matches the original or the Latin form, ignoring case, accents (ō = o) and spaces.
  * Small typos pass: one in a query of 5 or more letters, two from 9. Returns how many typos it took, or null.
  */
-fun matchDistance(song: Song, query: String): Int? {
+fun matchDistance(song: Song, query: String): Int? =
+    matchDistance(listOf(song.title.original, song.title.latin, song.artistOriginal, song.artistLatin, song.artistLatin + song.title.latin), query)
+
+/** [matchDistance] against any names: the query matches one of [texts]. */
+fun matchDistance(texts: List<String>, query: String): Int? {
     val q = fold(query)
     if (q.isEmpty()) return null
     val allowed = when { q.length >= 9 -> 2; q.length >= 5 -> 1; else -> 0 }
-    return listOf(song.title.original, song.title.latin, song.artistOriginal, song.artistLatin, song.artistLatin + song.title.latin)
-        .minOf { substringDistance(q, fold(it)) }.takeIf { it <= allowed }
+    return texts.minOf { substringDistance(q, fold(it)) }.takeIf { it <= allowed }
 }
 
 fun matches(song: Song, query: String) = matchDistance(song, query) != null
@@ -79,17 +71,6 @@ private fun fold(s: String) = Romanizer.stripMarks(s).lowercase().replace(Regex(
 /** A card on home, search, library or artist pages: a song, album, playlist or artist. */
 @Serializable
 class Item(val kind: String, val id: String, val title: Text, val subtitle: Text, val thumb: String?, val song: Song? = null)
-
-fun Romanizer.item(y: com.metrolist.innertube.models.YTItem): Item? = when (y) {
-    is SongItem -> song(y).let { Item("song", it.id, it.title, it.artistText, it.thumb, it) }
-    is com.metrolist.innertube.models.AlbumItem -> {
-        val artists = y.artists.orEmpty().joinToString(", ") { it.name }
-        Item("album", y.browseId, text(y.title, listOf(artists), titleOf = true), text(artists, listOf(y.title)), y.thumbnail)
-    }
-    is com.metrolist.innertube.models.PlaylistItem -> Item("playlist", y.id, text(y.title), text(y.author?.name ?: ""), y.thumbnail)
-    is com.metrolist.innertube.models.ArtistItem -> Item("artist", y.id, text(y.title, artistId = y.id), Text("", ""), y.thumbnail)
-    else -> null
-}
 
 /** Dotted versions compared number by number: 0.1.10 is newer than 0.1.9. */
 fun newerVersion(a: String, b: String): Boolean {

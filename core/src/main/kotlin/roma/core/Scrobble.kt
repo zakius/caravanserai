@@ -7,9 +7,12 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.security.MessageDigest
 
-/** One finished listen, in original (not romanized) metadata so it matches Last.fm's database. */
+/**
+ * One finished listen, in original (not romanized) metadata so it matches Last.fm's database. [id]: the server's song
+ * id, for a Subsonic server's own scrobble.
+ */
 @Serializable
-class Scrobble(val artist: String, val track: String, val album: String?, val timestamp: Long, val durationSec: Int)
+class Scrobble(val artist: String, val track: String, val album: String?, val timestamp: Long, val durationSec: Int, val id: String? = null)
 
 /** Last.fm's rule: the track is longer than 30 s and was played for half its length or 4 minutes. */
 fun shouldScrobble(durationSec: Int, playedSec: Int) = durationSec > 30 && playedSec >= minOf(durationSec / 2, 240)

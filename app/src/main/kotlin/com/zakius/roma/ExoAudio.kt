@@ -25,13 +25,8 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
-import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.extractor.ExtractorsFactory
-import androidx.media3.extractor.mkv.MatroskaExtractor
-import androidx.media3.extractor.mp4.FragmentedMp4Extractor
-import androidx.media3.extractor.mp4.Mp4Extractor
-import androidx.media3.extractor.text.SubtitleParser
-import roma.core.Streams
+import roma.core.StreamException
 import java.io.File
 
 /** A queue entry as ExoPlayer holds it: a media item tagged with its [Entry]. */
@@ -58,20 +53,19 @@ class ExoAudio(c: Context) : AudioPlayer {
         // Start after 0.5 s of audio instead of ExoPlayer's 2.5 s; audio downloads far faster than it plays. It buffers
         // 50 s ahead, or with "Download songs ahead" the whole song (at most 10 min).
         val load = DefaultLoadControl.Builder().setBufferDurationsMs(15_000, 10 * 60_000, 500, 2_000).build()
-        // Audio only, in the containers YouTube serves (WebM, MP4): the default factories bring video, text and
-        // a dozen other containers that R8 can't remove.
+        // Audio only, in the containers the app's source serves (the flavor's containers()): the default factories
+        // bring video, text and other containers that R8 can't remove.
         val audio = RenderersFactory { handler, _, listener, _, _ ->
             arrayOf(MediaCodecAudioRenderer(c, MediaCodecSelector.DEFAULT, handler, listener, DefaultAudioSink.Builder(c).build()))
         }
-        val none = SubtitleParser.Factory.UNSUPPORTED
-        val containers = ExtractorsFactory { arrayOf(MatroskaExtractor(none), FragmentedMp4Extractor(none), Mp4Extractor(none)) }
+        val containers = ExtractorsFactory(::containers)
         // NoBandwidthMeter and no diagnostics: neither is used for one audio stream at a time, and both cost binder calls
         // during the launch: the default bandwidth meter watches the network type and asks telephony for the country,
         // the diagnostics report each playback session to MediaMetrics. The constructor that takes every component
         // also keeps the default bandwidth meter out of the APK.
         exo = ExoPlayer.Builder(
             c, audio, ProgressiveMediaSource.Factory(source, containers).setLoadErrorHandlingPolicy(WaitForNetwork),
-            DefaultTrackSelector(c), AheadLoadControl(load), NoBandwidthMeter, NoAnalytics,
+            FirstAudioTrack, AheadLoadControl(load), NoBandwidthMeter, NoAnalytics,
         )
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
             .setHandleAudioBecomingNoisy(true)
@@ -99,7 +93,6 @@ class ExoAudio(c: Context) : AudioPlayer {
 
     override fun item(e: Entry): MediaItem {
         val s = e.song
-        val artistLine = if (s.title.isLatin || Store.reads(s.title.original)) s.artistLatin else "${s.artistLatin} · ${s.title.original}"
         return MediaItem.Builder()
             .setMediaId(s.id)
             .setUri("roma://${s.id}")
@@ -108,7 +101,7 @@ class ExoAudio(c: Context) : AudioPlayer {
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(Store.shown(s.title))
-                    .setArtist(artistLine)
+                    .setArtist(artistLine(s))
                     .setAlbumTitle(s.album?.name?.let(Store::shown))
                     .setArtworkUri(s.thumb?.let { Uri.parse(bigThumb(it)) })
                     .build(),
@@ -165,37 +158,17 @@ class ExoAudio(c: Context) : AudioPlayer {
         return length > 0 && cache.isCached(id, 0, length)
     }
 
-    // When the headphones went away and paused the song (Media3's "becoming noisy"); 0 otherwise.
-    private var unpluggedAt = 0L
+    // Resumes the song when the headphones that paused it come back (Headphones).
+    private val headphones = Headphones { exo.play() }
 
-    /**
-     * Opt-in: headphones, Bluetooth earbuds or a car that come back within an hour of pausing the song by going away
-     * resume it. Only that pause counts: a song the user paused stays paused. The system calls back on device
-     * changes; nothing polls.
-     */
     private fun watchHeadphones() {
         exo.addListener(object : Player.Listener {
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-                unpluggedAt = if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY) elapsedRealtime() else 0L
+                if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY) headphones.unplugged() else headphones.cleared()
             }
         })
-        val audio = appContext.getSystemService(android.media.AudioManager::class.java)
-        audio.registerAudioDeviceCallback(object : android.media.AudioDeviceCallback() {
-            override fun onAudioDevicesAdded(added: Array<android.media.AudioDeviceInfo>) {
-                if (unpluggedAt == 0L || !Store.bool("play.resumeOnHeadphones", false)) return
-                if (elapsedRealtime() - unpluggedAt > 3600_000) return
-                if (added.none { it.isSink && it.type in HEADPHONES }) return
-                unpluggedAt = 0L
-                exo.play()
-            }
-        }, android.os.Handler(android.os.Looper.getMainLooper()))
+        headphones.watch()
     }
-
-    private val HEADPHONES = setOf(
-        android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET, android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
-        android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, android.media.AudioDeviceInfo.TYPE_USB_HEADSET,
-        26 /* TYPE_BLE_HEADSET */, 27 /* TYPE_BLE_SPEAKER */, 23 /* TYPE_HEARING_AID */,
-    )
 
     /**
      * Without a connection the player keeps playing what it has, then waits, retrying every 2 s for up to 10 min
@@ -214,7 +187,7 @@ class ExoAudio(c: Context) : AudioPlayer {
 
         private fun noConnection(e: Throwable): Boolean = generateSequence(e) { it.cause }.any {
             it is java.net.UnknownHostException || it is java.net.ConnectException || it is java.net.SocketTimeoutException ||
-                it is java.net.NoRouteToHostException || it is java.net.SocketException || it.message == Streams.NO_CONNECTION
+                it is java.net.NoRouteToHostException || it is java.net.SocketException || (it as? StreamException)?.offline == true
         }
     }
 }
@@ -236,6 +209,24 @@ private class AheadLoadControl(val load: DefaultLoadControl) : androidx.media3.e
     override fun shouldStartPlayback(p: androidx.media3.exoplayer.LoadControl.Parameters) = load.shouldStartPlayback(p)
     override fun shouldContinuePreloading(id: androidx.media3.exoplayer.analytics.PlayerId, t: androidx.media3.common.Timeline, period: androidx.media3.exoplayer.source.MediaSource.MediaPeriodId, bufferedDurationUs: Long) =
         load.shouldContinuePreloading(id, t, period, bufferedDurationUs)
+}
+
+/**
+ * The song's audio track for the one renderer: a stream here holds one. DefaultTrackSelector, which weighs video, text,
+ * languages and adaptive qualities, would cost several times the code.
+ */
+private object FirstAudioTrack : androidx.media3.exoplayer.trackselection.TrackSelector() {
+    override fun selectTracks(
+        capabilities: Array<out androidx.media3.exoplayer.RendererCapabilities>, groups: androidx.media3.exoplayer.source.TrackGroupArray,
+        period: androidx.media3.exoplayer.source.MediaSource.MediaPeriodId, timeline: androidx.media3.common.Timeline,
+    ): androidx.media3.exoplayer.trackselection.TrackSelectorResult {
+        val audio = (0 until groups.length).map(groups::get).firstOrNull { it.type == C.TRACK_TYPE_AUDIO }
+        return androidx.media3.exoplayer.trackselection.TrackSelectorResult(
+            arrayOf(if (audio != null) androidx.media3.exoplayer.RendererConfiguration.DEFAULT else null),
+            arrayOf(audio?.let { androidx.media3.exoplayer.trackselection.FixedTrackSelection(it, 0) }), null,
+        )
+    }
+    override fun onSelectionActivated(info: Any?) {}
 }
 
 /** Bitrate estimates only matter when choosing between video qualities; roma plays one audio format per song. */
@@ -279,5 +270,3 @@ private object NoAnalytics : androidx.media3.exoplayer.analytics.AnalyticsCollec
     override fun onBandwidthSample(elapsedMs: Int, bytesTransferred: Long, bitrateEstimate: Long) {}
 }
 
-/** The ExoPlayer itself, for Android's media session (Session.kt). */
-val Playback.exo get() = (player as ExoAudio).exo

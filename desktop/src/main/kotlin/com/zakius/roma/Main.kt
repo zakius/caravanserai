@@ -32,15 +32,14 @@ import java.io.File
 import kotlin.concurrent.thread
 
 fun main(args: Array<String>) {
-    if (args.firstOrNull() == "--cef-host") return cefHost(args[1], args.drop(2))
+    if (flavorMain(args)) return
     if (args.firstOrNull() == "--check") return check()
     // Everything roma does at start, on the UI thread as on Android, in App.onCreate's order.
     javax.swing.SwingUtilities.invokeAndWait {
         Store.init(Prefs(File(Dirs.files, "prefs.properties")), Dirs.files, Dirs.cache)
         Images.init(Dirs.cache, picMemory())
         if (Store.prefs.getInt("ui.tab", TAB_HOME) == TAB_HOME) Home.preload()
-        Update.init()
-        roma.core.InnerTubeXStreams.tokenProvider = PoTokens(15_000L) { ChromeBotGuard.start() }
+        if (BuildConfig.UPDATES) Update.init()
         Playback.init(DesktopAudio())
         Startup.later {
             // After an update, the lyrics an older version romanized go: Playback.romanizedFile no longer reads them.
@@ -55,8 +54,8 @@ fun main(args: Array<String>) {
     application {
         Window(
             onCloseRequest = ::exitApplication,
-            title = "roma",
-            icon = androidx.compose.ui.res.painterResource("roma.png"),
+            title = BuildConfig.APP_NAME,
+            icon = androidx.compose.ui.res.painterResource("icon.png"),
             // A phone's shape, but never past the screen's free area: the bottom bar is the only navigation, and a 768 px
             // screen, or 1080 p at 150 %, has less than 900 dp.
             state = rememberWindowState(
@@ -110,7 +109,7 @@ private fun Toast(modifier: Modifier) {
  */
 private fun check() {
     val result = runCatching {
-        println("roma ${BuildConfig.VERSION_NAME} on Java ${System.getProperty("java.version")}")
+        println("${BuildConfig.APP_NAME} ${BuildConfig.VERSION_NAME} on Java ${System.getProperty("java.version")}")
         val pinyin = platformIcu.transliterate("Han-Latin", "晴天")
         check(pinyin == "qíng tiān") { "ICU gave $pinyin" }
         val p = ProcessBuilder(AacPcm.decoderPath(), "-hide_banner", "-version").redirectErrorStream(true).start()
@@ -118,18 +117,6 @@ private fun check() {
         check(p.waitFor() == 0 && version?.startsWith("ffmpeg version") == true) { "roma-aac said $version" }
         println("ICU: $pinyin; roma-aac: $version")
     }
-    result.exceptionOrNull()?.let { System.err.println("roma --check failed: $it") }
+    result.exceptionOrNull()?.let { System.err.println("${BuildConfig.APP_NAME} --check failed: $it") }
     kotlin.system.exitProcess(if (result.isSuccess) 0 else 1)
-}
-
-/**
- * roma --cef-host <jars> [args]: CEF's process (Browser.kt, Cef). CefHost and everything it uses load again in a class
- * loader of their own, over roma's class path and CEF's downloaded jars, which roma's own class loader doesn't have.
- */
-private fun cefHost(jars: String, args: List<String>) {
-    val urls = (System.getProperty("java.class.path").split(File.pathSeparator) + jars.split(File.pathSeparator))
-        .filter { it.isNotBlank() }.map { File(it).toURI().toURL() }
-    val loader = java.net.URLClassLoader(urls.toTypedArray(), ClassLoader.getPlatformClassLoader())
-    Thread.currentThread().contextClassLoader = loader
-    loader.loadClass("com.zakius.roma.CefHostKt").getMethod("main", Array<String>::class.java).invoke(null, args.toTypedArray())
 }

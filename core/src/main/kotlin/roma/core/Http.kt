@@ -23,6 +23,9 @@ class HttpResponse(val status: Int, private val headers: Map<String?, List<Strin
 }
 
 /** A body over its limit; the same request would fail the same way, so it isn't retried. */
+/** No stream for a song. The message is the reason in plain words; [offline]: for want of a network, so worth retrying. */
+class StreamException(message: String, val offline: Boolean = false) : IOException(message)
+
 class ResponseTooLargeException(maxBytes: Int) : IllegalStateException("Response exceeded the $maxBytes byte limit")
 
 /**

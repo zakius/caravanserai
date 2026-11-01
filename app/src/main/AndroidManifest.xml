@@ -7,11 +7,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <!-- Installing the Japanese dictionary app (Dictionary.kt) and roma's own updates (Update.kt). -->
+    <!-- roma ytm's own updates (Update.kt); the Subsonic app has none. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Android 12+: roma updating itself, once it installed itself, without asking each time -->
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
+    <!-- The dictionary app of roma ytm 0.1.57 and earlier, which roma ytm says can go (Flavor.kt). -->
     <queries>
         <package android:name="${dictPackage}" />
     </queries>
@@ -21,10 +22,11 @@
         android:allowBackup="true"
         android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules"
-        android:label="roma"
-        android:icon="@android:drawable/ic_media_play"
+        android:label="${appLabel}"
+        android:icon="@mipmap/app_icon"
         android:theme="@style/Roma"
-        android:supportsRtl="true">
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -40,7 +42,7 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="roma" android:host="lastfm" />
+                <data android:scheme="${linkScheme}" android:host="lastfm" />
             </intent-filter>
         </activity>
         <service

@@ -39,9 +39,7 @@ class App : Application() {
         Store.init(getSharedPreferences("roma", MODE_PRIVATE), filesDir, cacheDir)
         Images.init(cacheDir, picMemory())
         if (Store.prefs.getInt("ui.tab", TAB_HOME) == TAB_HOME) Home.preload()
-        Dictionary.init(this)
-        Update.init(this)
-        roma.core.InnerTubeXStreams.tokenProvider = PoTokens(this)
+        flavorInit()
         Playback.init(ExoAudio(this))
         Startup.later {
             // After an update, the lyrics an older version romanized go: Playback.romanizedFile no longer reads them.

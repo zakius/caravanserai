@@ -1,5 +1,8 @@
-// roma for Linux and Windows: the app's screens and playback logic (shared/, compiled into :app too) on Compose for
+// roma ytm and caravan for Linux and Windows: the app's screens and playback logic (shared/, compiled into :app too) on Compose for
 // Desktop, with roma's own audio decoding and the system's Chromium-family browser for BotGuard and sign-in (docs/design.md).
+// :desktop builds roma ytm, the YouTube Music app. caravan, the Subsonic app, is this script too, as :desktop-subsonic
+// (settings.gradle.kts): its own sources (src/subsonic, shared/src/subsonic), name and packages, and no YouTube code,
+// browser or CEF (docs/subsonic.md, Two apps).
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.compose.desktop.application.tasks.AbstractJLinkTask
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
@@ -15,46 +18,64 @@ plugins {
     id("org.jetbrains.compose")
 }
 
+val flavor = if (project.name == "desktop-subsonic") "subsonic" else "youtube"
+val youtube = flavor == "youtube"
+val src = rootProject.file("desktop/src")
+// Each app's name and slug: gradle.properties.
+val appName = property("${flavor}App.name") as String
+val slug = property("${flavor}App.slug") as String
+
 // One version for both apps, read from the Android build where release.sh and the release workflow look for it.
-val appGradle = file("../app/build.gradle.kts").readText()
+val appGradle = rootProject.file("app/build.gradle.kts").readText()
 val versionName = Regex("""versionName = "(.+)"""").find(appGradle)!!.groupValues[1]
 val versionCode = Regex("""versionCode = (\d+)""").find(appGradle)!!.groupValues[1]
 evaluationDependsOn(":core")
 val dictVersion = project(":core").extra["dictRelease"] as String
+val dictSha256 = project(":core").extra["dictSha256"] as String
 
 java { sourceCompatibility = JavaVersion.VERSION_21; targetCompatibility = JavaVersion.VERSION_21 }
 kotlin {
     compilerOptions { jvmTarget = JvmTarget.JVM_21 }
-    sourceSets["main"].kotlin.srcDir("../shared/src/main/kotlin")
+    sourceSets["main"].kotlin.setSrcDirs(listOf("$src/main/kotlin", "$src/$flavor/kotlin", rootProject.file("shared/src/main/kotlin"), rootProject.file("shared/src/$flavor/kotlin"), rootProject.file("shared/src/portable/kotlin")))
     sourceSets["main"].kotlin.srcDir(layout.buildDirectory.dir("generated/buildConfig"))
+    sourceSets["test"].kotlin.setSrcDirs(listOfNotNull("$src/test/kotlin", "$src/testYoutube/kotlin".takeIf { youtube }))
 }
 // From the Android app: the player's icons (vector drawables, which Compose for Desktop reads too), BotGuard's page
-// and the licence notices.
-sourceSets["main"].resources.srcDirs("../app/src/main/res", "../app/src/main/assets")
-sourceSets["main"].resources.include("drawable/*.xml", "po_token.html", "NOTICE", "*.txt", "roma.png")
+// (roma's) and the licence notices; the window's icon.
+sourceSets["main"].resources.setSrcDirs(listOfNotNull(rootProject.file("app/src/main/res"), rootProject.file("app/src/main/assets"), rootProject.file("app/src/youtube/assets").takeIf { youtube }, "$src/$flavor/resources"))
+sourceSets["main"].resources.include("drawable/*.xml", "po_token.html", "NOTICE", "*.txt", "icon.png")
 
 // What Android's BuildConfig holds, for the shared code.
 val buildConfig = tasks.register("buildConfig") {
     val out = layout.buildDirectory.file("generated/buildConfig/BuildConfig.kt")
     val refuse = findProperty("roma.refuseVisionOs") == "true"
     val dictBase = (findProperty("roma.dictBase") as String?) ?: "https://github.com/zakius/roma/releases/download/dict-$dictVersion"
-    val jars = cefJars
-    inputs.property("v", "$versionName $versionCode $dictVersion $refuse $dictBase")
+    val jars = if (youtube) cefJars else provider { "" }
+    val name = appName
+    val dataSlug = slug
+    val own = youtube
+    inputs.property("v", "$versionName $versionCode $dictVersion $dictSha256 $refuse $dictBase $name $dataSlug $own")
     inputs.property("cef", jars)
     outputs.file(out)
     doLast {
+        // roma's own: the CEF jars Browser.kt fetches, the VISIONOS test switch (Streams), its GitHub updates.
+        val roma = if (!own) "" else """
+            |    const val CEF_JARS = "${jars.get()}"
+            |    const val REFUSE_VISIONOS = $refuse
+            |""".trimMargin() + "\n"
         out.get().asFile.writeText("""
             |package com.zakius.roma
             |
             |object BuildConfig {
+            |    const val APP_NAME = "$name"
+            |    const val SLUG = "$dataSlug"
+            |    const val UPDATES = $own
             |    const val VERSION_NAME = "$versionName"
             |    const val VERSION_CODE = $versionCode
             |    const val DICT_VERSION = "$dictVersion"
-            |    const val DICT_URL = "$dictBase/roma-dict-$dictVersion.apk.gz"
-            |    const val CEF_JARS = "${jars.get()}"
-            |    const val REFUSE_VISIONOS = $refuse
-            |}
-            |""".trimMargin())
+            |    const val DICT_URL = "$dictBase/roma-dict-$dictVersion.zip"
+            |    const val DICT_SHA256 = "$dictSha256"
+            |""".trimMargin() + "\n" + roma + "}\n")
     }
 }
 tasks.named("compileKotlin") { dependsOn(buildConfig) }
@@ -65,7 +86,9 @@ tasks.named("compileKotlin") { dependsOn(buildConfig) }
 val aacScript = MessageDigest.getInstance("SHA-256").digest(rootProject.file("tools/build-ffmpeg.sh").readBytes()).take(6).joinToString("") { "%02x".format(it) }
 val aacDir = (findProperty("roma.aacDir") as String?)?.let(::File) ?: File(gradle.gradleUserHomeDir, "caches/roma/roma-aac-$aacScript")
 val windowsHost = System.getProperty("os.name").startsWith("Windows")
-val romaAac = tasks.register("romaAac") {
+// One task builds it for both apps: the Subsonic app's build takes :desktop's.
+if (!youtube) evaluationDependsOn(":desktop")
+val romaAac = if (!youtube) project(":desktop").tasks.named("romaAac") else tasks.register("romaAac") {
     val script = rootProject.file("tools/build-ffmpeg.sh")
     inputs.file(script)
     outputs.dir(aacDir)
@@ -92,7 +115,7 @@ tasks.matching { it.name.startsWith("prepareAppResources") }.configureEach { dep
 // then drops the classes transliteration doesn't reach. 15.2 to 2.1 MB. :desktop:icuCheck shows the released jar gives
 // the full jar's output on every assigned code point, for every transliterator roma uses.
 val icu = configurations.create("icu")
-val icuTrim = sourceSets.create("icuTrim")
+val icuTrim = sourceSets.create("icuTrim") { java.setSrcDirs(listOf("$src/icuTrim/java")) }
 configurations[icuTrim.implementationConfigurationName].extendsFrom(icu)
 sourceSets.test { compileClasspath += icuTrim.output; runtimeClasspath += icuTrim.output }
 val icuRules = tasks.register<JavaExec>("icuRules") {
@@ -140,12 +163,15 @@ dependencies {
     testImplementation(files(icu)) // icuCheck compares against it
     // Opus, what YouTube serves nearly every song in, decoded in pure Java. The rest (AAC) goes to roma-aac.
     implementation("io.github.jaredmdobson:concentus:1.0.2")
-    // Chromium for BotGuard and sign-in when the system has no Chromium-family browser: CEF. Its Java side isn't
+    // roma's Chromium for BotGuard and sign-in when the system has no Chromium-family browser: CEF. Its Java side isn't
     // packaged either: Browser.kt downloads these jars with CEF on first need (BuildConfig.CEF_JARS pins them).
     // 146, not 152: CEF 152 exits at start on Linux (code 28), off-screen or not (2026-10-29).
-    cef("me.friwi:jcefmaven:146.0.10")
-    compileOnly("me.friwi:jcefmaven:146.0.10")
-    testImplementation("me.friwi:jcefmaven:146.0.10")
+    if (youtube) {
+        cef("me.friwi:jcefmaven:146.0.10")
+        compileOnly("me.friwi:jcefmaven:146.0.10")
+        testImplementation("me.friwi:jcefmaven:146.0.10")
+    }
+    implementation(project(if (youtube) ":youtube" else ":subsonic"))
 }
 
 compose.desktop {
@@ -153,7 +179,7 @@ compose.desktop {
         mainClass = "com.zakius.roma.MainKt"
         // The release distribution (createReleaseDistributable) drops what roma never calls, as finimal's does.
         buildTypes.release.proguard {
-            configurationFiles.from(project.file("proguard-rules.pro"))
+            configurationFiles.from(listOfNotNull(rootProject.file("desktop/proguard-rules.pro"), rootProject.file("desktop/proguard-youtube.pro").takeIf { youtube }))
             obfuscate = true
         }
         nativeDistributions {
@@ -162,9 +188,9 @@ compose.desktop {
             // with its own Java ("full") and a small one that finds or downloads Java (tools/windows-packages.sh, from
             // the release app image; this .msi target only brings the WiX toolset).
             targetFormats(TargetFormat.Msi)
-            packageName = "roma"
+            packageName = slug
             packageVersion = versionName.split('.').let { (it + listOf("0", "0")).take(3) }.joinToString(".")
-            description = "YouTube Music, every title and lyric romanized"
+            description = if (youtube) "YouTube Music, every title and lyric romanized" else "Your music server, every title and lyric romanized"
             vendor = "zakius"
             licenseFile.set(rootProject.file("LICENSE"))
             // The full build's Java, beyond what Compose adds (java.base, java.desktop, java.logging, jdk.crypto.ec):
@@ -173,12 +199,12 @@ compose.desktop {
             // java.instrument, which only optional code refers to. The JDK must have jmods (Temurin 24+ has none).
             modules("java.management", "java.net.http", "java.sql", "jdk.httpserver", "jdk.unsupported")
             windows {
-                iconFile.set(rootProject.file("packaging/roma.ico"))
-                menuGroup = "roma"
+                iconFile.set(rootProject.file("packaging/$slug.ico"))
+                menuGroup = appName
                 perUserInstall = true
                 shortcut = true
                 // Fixed, so a new MSI (full or small) replaces the installed version instead of installing beside it.
-                upgradeUuid = "6d0b7c3e-1f5a-4d7e-9a43-6f8f0b2c9e41"
+                upgradeUuid = if (youtube) "6d0b7c3e-1f5a-4d7e-9a43-6f8f0b2c9e41" else "3f2a9c5e-8b14-4d6f-a0e7-5c9d2b71e486"
             }
         }
     }
@@ -188,6 +214,8 @@ compose.desktop {
 tasks.withType<AbstractJLinkTask>().configureEach { freeArgs.add("--compress=zip-6") }
 
 dependencies { testImplementation(kotlin("test")) }
+// The unit tests (FedProcessTest); the other test sources are checks run as their own tasks below.
+tasks.test { useJUnitPlatform() }
 tasks.register<JavaExec>("decodeCheck") {
     classpath = sourceSets["test"].runtimeClasspath
     mainClass = "com.zakius.roma.DecodeCheckKt"
@@ -195,7 +223,7 @@ tasks.register<JavaExec>("decodeCheck") {
     systemProperty("roma.aac", (findProperty("aac") as String?) ?: File(aacDir, if (windowsHost) "windows/roma-aac.exe" else "linux/roma-aac").path)
     args((findProperty("files") as String? ?: "").split(',').filter { it.isNotBlank() })
 }
-tasks.register<JavaExec>("botGuardCheck") {
+if (youtube) tasks.register<JavaExec>("botGuardCheck") {
     classpath = sourceSets["test"].runtimeClasspath
     mainClass = "com.zakius.roma.BotGuardCheckKt"
     if (project.hasProperty("cef")) systemProperty("cef", "")
@@ -284,14 +312,14 @@ val skiaFull = tasks.register<Copy>("skiaFull") {
 tasks.register<JavaExec>("skiaCheck") {
     classpath = sourceSets["test"].runtimeClasspath
     mainClass = "com.zakius.roma.SkiaCheckKt"
-    val app = "compose/binaries/main-release/app/roma/" + if (windowsHost) "app" else "lib/app" // jpackage's layouts
+    val app = "compose/binaries/main-release/app/$slug/" + if (windowsHost) "app" else "lib/app" // jpackage's layouts
     args(skiaFull.get().destinationDir.path, layout.buildDirectory.dir(app).get().asFile.path)
     dependsOn(skiaFull, "createReleaseDistributable")
 }
 tasks.register<JavaExec>("icuCheck") {
     classpath = sourceSets["test"].runtimeClasspath
     mainClass = "com.zakius.roma.IcuCheckKt"
-    val app = layout.buildDirectory.dir("compose/binaries/main-release/app/roma/lib/app")
+    val app = layout.buildDirectory.dir("compose/binaries/main-release/app/$slug/lib/app")
     argumentProviders += CommandLineArgumentProvider {
         listOf(icu.singleFile.path, app.get().asFile.listFiles()!!.single { it.name.startsWith("icu4j-slim") }.path)
     }

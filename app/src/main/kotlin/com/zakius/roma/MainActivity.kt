@@ -78,15 +78,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        Dictionary.resumed(this)
-        window.decorView.post { Dictionary.ensure(this) } // package manager calls, and maybe a dialog: after the first frame
+        flavorResumed()
+        window.decorView.post { Dictionary.ensure() } // maybe a dialog: after the first frame
     }
 
 
     // Last.fm's browser auth returns to roma://lastfm?token=...
     private fun handleLastFm(intent: Intent?) {
         val data = intent?.data ?: return
-        if (data.scheme != "roma" || data.host != "lastfm") return
+        if (data.scheme != BuildConfig.SLUG || data.host != "lastfm") return
         val token = data.getQueryParameter("token") ?: return
         val fm = LastFm(Store.str("lastfm.key", ""), Store.str("lastfm.secret", ""))
         CoroutineScope(Dispatchers.Main).launch {

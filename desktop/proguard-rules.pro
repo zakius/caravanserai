@@ -1,12 +1,11 @@
 # The release distribution (createReleaseDistributable): shrinking and renaming, as finimal's desktop build does, into
 # one package with short names; no optimizing (ProGuard 7.8 and 7.10 fail on Kotlin 2.4's code). No line numbers or
 # generic signatures, which nothing reads (1.2 MB): stack traces name methods, read through build/proguard-mapping.txt
-# (retrace; each release attaches it). Exception names stay: the UI shows some.
+# (roma ytm's: proguard-youtube.pro; retrace; each release attaches it). Exception names stay: the UI shows some.
 -dontoptimize
 -keepattributes *Annotation*, InnerClasses, Exceptions, EnclosingMethod
 -repackageclasses ''
 -allowaccessmodification
--printmapping build/proguard-mapping.txt
 -keepnames class * extends java.lang.Throwable
 -adaptresourcefilenames META-INF/services/*
 -adaptresourcefilecontents META-INF/services/*
@@ -74,12 +73,6 @@
 # ICU's transliteration reaches its classes without reflection, so ProGuard shrinks it as roma's code. Its entry
 # points keep their names for :desktop:icuCheck, which runs the released jar.
 -keep class com.ibm.icu.text.Transliterator { public static ** getInstance(java.lang.String); public java.lang.String transliterate(java.lang.String); }
-# CEF's process (CefHost.kt) runs with jars that aren't packaged (Browser.kt downloads them): its main class and
-# what it calls keep their names, and its references to those jars aren't checked here.
--keep class com.zakius.roma.CefHostKt { *; }
--keep class com.zakius.roma.Dirs { *; }
--dontwarn org.cef.**
--dontwarn me.friwi.**
 
 # Optional parts of the libraries that roma doesn't use.
 -dontwarn org.slf4j.**

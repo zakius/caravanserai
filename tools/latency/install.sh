@@ -5,8 +5,8 @@ cd "$(dirname "$0")/../.."
 export JAVA_HOME=~/.local/share/JetBrains/Toolbox/apps/air/jbr
 export PATH="$JAVA_HOME/bin:$PATH:$HOME/Android/Sdk/platform-tools"
 BT=~/Android/Sdk/build-tools/37.0.0
-./gradlew -q :app:assembleRelease
-IN=app/build/outputs/apk/release/app-release-unsigned.apk
+./gradlew -q :app:assembleYoutubeRelease
+IN=app/build/outputs/apk/youtube/release/app-youtube-release-unsigned.apk
 OUT=/tmp/roma-latency-$$.apk
 rm -f $OUT.aligned
 $BT/zipalign -f -p 4 $IN $OUT.aligned

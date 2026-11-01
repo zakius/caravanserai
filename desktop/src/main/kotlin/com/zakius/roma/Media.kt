@@ -11,98 +11,6 @@ import java.util.concurrent.ConcurrentHashMap
 // read packet by packet (WebM with Opus, MP4 with AAC: the two containers and codecs YouTube serves audio in) and
 // decoded to 16-bit PCM in pure Java.
 
-/** The stream refused (HTTP [status]): a fresh URL may be needed. */
-class StreamRefused(val status: Int) : IOException("The stream answered HTTP $status")
-
-/**
- * A song's stream in the audio cache (cache/audio/<id>), filled from the front by Range requests: the first bytes
- * ahead of a tap ([fill] with a limit), the rest while it plays. Readers block until the bytes they want arrive.
- * The total length is kept beside it (<id>.len), so a complete file is known without the network.
- */
-class StreamFile private constructor(val id: String) {
-    private val file = File(dir, id)
-    private val lenFile = File(dir, "$id.len")
-    @Volatile var total: Long = runCatching { lenFile.readText().toLong() }.getOrDefault(-1L)
-        private set
-    @Volatile var have: Long = file.length()
-        private set
-    @Volatile private var failure: IOException? = null
-    private val lock = Object()
-    private var filling = false
-
-    val complete get() = total >= 0 && have >= total
-
-    /**
-     * Blocking: downloads from what is there up to [limit] bytes (all with -1), unless another call already is.
-     * Network errors are kept for the readers; [StreamRefused] for a refused URL.
-     */
-    fun fill(limit: Long = -1) {
-        synchronized(lock) { if (filling || complete || (limit >= 0 && have >= limit)) return; filling = true; failure = null }
-        try {
-            val url = Playback.streamUrl(id)
-            val c = URI(url).toURL().openConnection() as HttpURLConnection
-            c.connectTimeout = 15_000
-            c.readTimeout = 20_000
-            // A Range on every request: without one googlevideo throttles the download to a trickle.
-            c.setRequestProperty("Range", "bytes=$have-" + if (limit >= 0) "${limit - 1}" else "")
-            val code = c.responseCode
-            if (code == 416 && total >= 0) return
-            if (code !in 200..299) throw StreamRefused(code)
-            c.getHeaderField("Content-Range")?.substringAfter('/')?.toLongOrNull()?.let { if (total != it) { total = it; lenFile.writeText("$it") } }
-            dir.mkdirs()
-            RandomAccessFile(file, "rw").use { out ->
-                out.seek(have)
-                c.inputStream.use { input ->
-                    val buf = ByteArray(1 shl 16)
-                    while (true) {
-                        val n = input.read(buf)
-                        if (n < 0) break
-                        out.write(buf, 0, n)
-                        synchronized(lock) { have += n; lock.notifyAll() }
-                    }
-                }
-            }
-        } catch (e: IOException) {
-            failure = e
-        } catch (e: Exception) {
-            failure = IOException(e.message, e) // a failed lookup: Streams' reason in its message
-        } finally {
-            synchronized(lock) { filling = false; lock.notifyAll() }
-        }
-    }
-
-    /**
-     * Blocking: [n] bytes at [pos] into [buf], fewer only at the end of the stream. Waits for the download, which it
-     * starts (in the background) if nothing is filling; throws the download's error once nothing more can come.
-     */
-    fun read(pos: Long, buf: ByteArray, off: Int, n: Int): Int {
-        synchronized(lock) {
-            while (have < pos + n && !(total >= 0 && have >= total)) {
-                failure?.let { failure = null; throw it }
-                if (!filling) { filling = true; Thread({ synchronized(lock) { filling = false }; fill() }, "download $id").apply { isDaemon = true }.start() }
-                lock.wait(500)
-            }
-        }
-        val m = minOf(n.toLong(), have - pos).toInt()
-        if (m <= 0) return 0
-        RandomAccessFile(file, "r").use { it.seek(pos); it.readFully(buf, off, m) }
-        return m
-    }
-
-    companion object {
-        val dir get() = File(Dirs.cache, "audio")
-        private val open = ConcurrentHashMap<String, StreamFile>()
-        fun of(id: String): StreamFile = open.computeIfAbsent(id) { StreamFile(it) }
-
-        /** ponytail: oldest files out past 1 GB, once per start, as Android's audio cache. */
-        fun trim() {
-            val files = dir.listFiles { f -> !f.name.endsWith(".len") }.orEmpty().sortedByDescending { it.lastModified() }
-            var kept = 0L
-            for (f in files) { kept += f.length(); if (kept > 1L shl 30 && !open.containsKey(f.name)) { f.delete(); File(dir, "${f.name}.len").delete() } }
-        }
-    }
-}
-
 /** A position in a [StreamFile], read forward. */
 class Cursor(private val f: StreamFile, var pos: Long) {
     private val one = ByteArray(8)
@@ -184,6 +92,46 @@ class Decoded(private val d: Demuxer, private val decoder: Decoder, private val 
 }
 
 /**
+ * A child process fed by a thread of its own ([feed] writes its input; its output is [process]'s input stream).
+ * [failure]: why feeding stopped, unless it was closed. [close] never blocks (FedProcessTest).
+ */
+class FedProcess(command: List<String>, name: String, feed: (java.io.OutputStream) -> Unit) : AutoCloseable {
+    val process: Process = ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.DISCARD).start()
+    @Volatile var failure: Throwable? = null
+        private set
+    @Volatile var closed = false
+        private set
+    private val writer = Thread({
+        try {
+            process.outputStream.buffered().use(feed)
+        } catch (t: Throwable) {
+            if (!closed) failure = t
+            process.toHandle().destroyForcibly()
+        }
+    }, name).apply { isDaemon = true; start() }
+    /** The feeding thread is still at it. */
+    val feeding get() = writer.isAlive
+
+    /**
+     * Kills the process and lets go of its pipes, without waiting for anything. Process.destroy would close the input
+     * first, which waits for the feeder's write; with the process stuck writing its output, which nobody reads any more,
+     * that write never ends (roma-aac doesn't end on SIGTERM then): a track change froze the player and the UI. Killed
+     * outright, the process can't hold out, the feeder's write fails, and the pipes close on a thread of their own:
+     * closing the output waits for a read in progress.
+     */
+    override fun close() {
+        closed = true
+        writer.interrupt()
+        process.toHandle().destroyForcibly()
+        Thread({
+            runCatching { process.inputStream.close() }
+            runCatching { process.outputStream.close() }
+            process.waitFor()
+        }, "close ${writer.name}").apply { isDaemon = true; start() }
+    }
+}
+
+/**
  * AAC through roma-aac, a build of ffmpeg's AAC decoder alone (tools/build-ffmpeg.sh): this reader's frames go to its
  * stdin as ADTS, its PCM comes back on stdout. The frames' times say how many samples to drop at the start (the
  * edit list's lead-in, or up to the seek target), so it behaves as [Decoded].
@@ -192,52 +140,41 @@ class AacPcm(private val d: Mp4Demuxer, atMs: Long) : Pcm {
     override val sampleRate get() = d.sampleRate
     override val channels get() = d.channels
     override val durationMs get() = d.durationMs
-    private val process: Process
-    private val pcm: java.io.InputStream
-    private val writer: Thread
-    @Volatile private var failure: Throwable? = null
-    @Volatile private var closed = false
     @Volatile private var drop = -1L // samples per channel still to drop; -1 until the first frame's time is known
     private val bytes = ByteArray(4096 * 2 * d.channels)
+    private val decoder: FedProcess
 
     init {
         if (atMs > 0) d.seek(atMs)
-        process = ProcessBuilder(decoderPath(), "-hide_banner", "-loglevel", "error", "-f", "aac", "-i", "pipe:0",
-            "-f", "s16le", "-ac", "${d.channels}", "-ar", "${d.sampleRate}", "pipe:1").redirectError(ProcessBuilder.Redirect.DISCARD).start()
-        pcm = process.inputStream
         val (profile, rate, ch) = d.adts
-        writer = Thread({
-            try {
-                process.outputStream.buffered().use { o ->
-                    var first = true
-                    while (true) {
-                        val p = d.next() ?: break
-                        if (first) { first = false; drop = samples(maxOf(atMs * 1000, 0) - p.timeUs, d.sampleRate).coerceAtLeast(0) }
-                        val len = p.data.size + 7
-                        o.write(0xFF); o.write(0xF1)
-                        o.write((profile shl 6) or (rate shl 2) or (ch shr 2))
-                        o.write(((ch and 3) shl 6) or (len shr 11))
-                        o.write((len shr 3) and 0xff)
-                        o.write(((len and 7) shl 5) or 0x1F)
-                        o.write(0xFC)
-                        o.write(p.data)
-                    }
-                    if (first) drop = 0
-                }
-            } catch (t: Throwable) {
-                if (!closed) failure = t
-                process.destroy()
+        decoder = FedProcess(listOf(decoderPath(), "-hide_banner", "-loglevel", "error", "-f", "aac", "-i", "pipe:0",
+            "-f", "s16le", "-ac", "${d.channels}", "-ar", "${d.sampleRate}", "pipe:1"), "aac in") { o ->
+            var first = true
+            while (true) {
+                val p = d.next() ?: break
+                if (first) { first = false; drop = samples(maxOf(atMs * 1000, 0) - p.timeUs, d.sampleRate).coerceAtLeast(0) }
+                val len = p.data.size + 7
+                o.write(0xFF); o.write(0xF1)
+                o.write((profile shl 6) or (rate shl 2) or (ch shr 2))
+                o.write(((ch and 3) shl 6) or (len shr 11))
+                o.write((len shr 3) and 0xff)
+                o.write(((len and 7) shl 5) or 0x1F)
+                o.write(0xFC)
+                o.write(p.data)
             }
-        }, "aac in").apply { isDaemon = true; start() }
+            if (first) drop = 0
+        }
     }
+    private val process get() = decoder.process
+    private val pcm get() = decoder.process.inputStream
 
     override fun read(out: ShortArray): Int {
         while (true) {
             val n = readFully(minOf(bytes.size, out.size * 2))
             if (n <= 0) {
-                failure?.let { throw it }
+                decoder.failure?.let { throw it }
                 // roma-aac ended on its own: at the end of the input, or a crash mid-song, which isn't the song's end.
-                if (!closed && process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS) && process.exitValue() != 0) {
+                if (!decoder.closed && process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS) && process.exitValue() != 0) {
                     throw IOException("roma-aac stopped (exit ${process.exitValue()})")
                 }
                 return -1
@@ -260,15 +197,11 @@ class AacPcm(private val d: Mp4Demuxer, atMs: Long) : Pcm {
             if (m < 0) break
             got += m
         }
-        while (drop < 0 && failure == null && process.isAlive) Thread.sleep(1)
+        while (drop < 0 && decoder.failure == null && process.isAlive) Thread.sleep(1)
         return got - got % frame
     }
 
-    override fun close() {
-        closed = true
-        writer.interrupt()
-        process.destroy()
-    }
+    override fun close() = decoder.close()
 
     companion object {
         /**
@@ -298,7 +231,7 @@ fun demuxer(f: StreamFile): Demuxer {
     return when {
         head[0] == 0x1A.toByte() && head[1] == 0x45.toByte() -> WebmDemuxer(f)
         String(head, 4, 4, Charsets.ISO_8859_1) == "ftyp" -> Mp4Demuxer(f)
-        else -> throw IOException("Not an audio stream roma can read")
+        else -> throw IOException("Not an audio stream ${BuildConfig.APP_NAME} can read")
     }
 }
 

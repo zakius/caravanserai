@@ -5,9 +5,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import com.metrolist.innertube.YouTube
-import com.metrolist.innertube.models.ArtistItem
-import com.metrolist.innertube.models.WatchEndpoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
@@ -29,15 +26,12 @@ import roma.core.Translation
 import roma.core.Scrobble
 import roma.core.ScrobbleQueue
 import roma.core.Song
-import roma.core.InnerTubeXStreams
 import roma.core.StreamException
-import roma.core.Streams
 import roma.core.again
 import roma.core.filterMix
 import roma.core.filterRadio
 import roma.core.romanizeLyrics
 import roma.core.shouldScrobble
-import roma.core.song
 import kotlinx.serialization.Serializable
 import java.io.File
 import kotlin.math.pow
@@ -80,7 +74,6 @@ object Playback {
     /** [p]: the platform's player, set up by the app; the stream tokens' provider is set beside it. */
     fun init(p: AudioPlayer) {
         player = p
-        Streams.refuseVisionOs = BuildConfig.REFUSE_VISIONOS
         Startup.later { scope.launch {
             liked = withContext(Dispatchers.IO) { runCatching { Store.json.decodeFromString<List<String>>(likedFile.readText()).toSet() }.getOrDefault(emptySet()) }
             likeChanged()
@@ -103,22 +96,11 @@ object Playback {
                 online = up
             }
         }
-        Startup.later { scope.launch(Dispatchers.IO) {
-            Streams.keepIn(File(Store.cache, "streams.txt"))
-            // The first stream lookup of a run sets up NewPipe and asks YouTube for visitor data. Do it now so the first
-            // tap doesn't pay for it, on the song Play would resume: its URL is then known too (kept 5 hours).
-            val resume = runCatching { positionFile.readText().substringBefore(' ') }.getOrNull()?.takeIf { !player.fullyCached(it) }
-            (resume ?: Store.anySong()?.id)?.let { id -> runCatching { streamUrl(id) } }
-            // A song needed the InnerTubeX fallback in the last week: warm that path too (its player script, cipher
-            // config and the PoToken WebView, a few seconds cold), within the same limits as the guesses below. Later,
-            // not at launch: creating the first WebView blocks the main thread while Home is still coming in.
-            if (thrifty()) return@launch
-            delay(10_000)
-            Streams.recentFallback()?.let { id -> runCatching { streamUrl(id) } }
-        } }
+        Startup.later { backend.start() }
         player.listener = object : AudioPlayer.Listener {
             override fun onEvents(listChanged: Boolean, transition: Boolean, repeatChanged: Boolean, playingChanged: Boolean, discontinuity: Boolean) {
                 tick++
+                playerChanged?.invoke()
                 if (listChanged || transition || repeatChanged) saveQueue()
                 if (playingChanged || discontinuity) savePosition()
                 if (player.isPlaying) startSideWork()
@@ -226,22 +208,24 @@ object Playback {
         scope.launch { for (u in urls) Images.load(u, px) }
     }
 
+    /** Blocking. The song Play would resume, unless it is on disk already; null when there's none. */
+    fun resumeId(): String? = runCatching { positionFile.readText().substringBefore(' ') }.getOrNull()?.takeIf { !player.fullyCached(it) }
+
     /** Blocking, on the player's loader thread. URLs expire after about 6 hours; reuse them for 5. */
     fun streamUrl(id: String): String {
         synchronized(urls) {
             urls[id]?.let { (url, at) -> if (System.currentTimeMillis() - at < 5 * 3600_000) return url }
         }
-        runBlocking { Store.ensureVisitorData() } // without it YouTube refuses the direct path's client as a bot
-        val a = Streams.audio(id, full = fullLookup.remove(id))
-        synchronized(urls) { urls[id] = a.url to System.currentTimeMillis() }
+        val url = backend.streamUrl(id, full = fullLookup.remove(id))
+        synchronized(urls) { urls[id] = url to System.currentTimeMillis() }
         postMain { applyLoudness(id) }
-        return a.url
+        return url
     }
 
-    // YouTube's loudness is relative to its reference level. Only turn loud tracks down: volume can't go above 1.
+    // Only turn loud tracks down: volume can't go above 1.
     private fun applyLoudness(id: String) {
         if (current()?.song?.id != id) return
-        val db = Streams.loudness(id)
+        val db = backend.loudness(id)
         baseVolume = if (db == null || db <= 0f || !Store.bool("play.normalize", true)) 1f else 10f.pow(-db / 20f)
         player.volume = baseVolume
     }
@@ -509,13 +493,11 @@ object Playback {
                 // A page can be all filtered out; try a few continuations before giving up.
                 repeat(4) {
                     if (fresh.isNotEmpty()) return@repeat
-                    val endpoint = WatchEndpoint(videoId = seed.id, playlistId = "RDAMVM${seed.id}")
                     // A continuation saved before a restart may have expired: start the radio's pages over (the
                     // songs already queued are filtered out).
-                    val page = YouTube.next(endpoint, continuation).getOrNull() ?: run { continuation = null; return@repeat }
-                    continuation = page.continuation
-                    val candidates = page.items.map { Store.romanizer.song(it) }
-                    fresh = filterRadio(candidates, seed, r, already, Store.bans(), settings)
+                    val page = backend.radio(seed, continuation) ?: run { continuation = null; return@repeat }
+                    continuation = page.next
+                    fresh = filterRadio(page.songs, seed, r, already, Store.bans(), settings)
                     if (continuation == null) return@repeat
                 }
                 fresh
@@ -546,11 +528,12 @@ object Playback {
         opening = title to thumb
         duck(true)
         pendingJob = scope.launch {
-            val page = withContext(Dispatchers.IO) { YouTube.playlist(id.removePrefix("VL")).getOrNull() }
+            val source = backend
+            val page = withContext(Dispatchers.IO) { source.playlist(id) }
             // Liked music plays as liked: the mix filters (versions, bans) are for what YouTube picks.
-            val songs = withContext(Dispatchers.IO) { page?.songs.orEmpty().map { Store.romanizer.song(it) }.let { if (id == "LM") it else filterMix(it, emptyList(), Store.bans(), Store.radioSettings()) } }
+            val songs = withContext(Dispatchers.IO) { page?.songs.orEmpty().let { if (id == source.likedId) it else filterMix(it, emptyList(), Store.bans(), Store.radioSettings()) } }
             if (page == null || songs.isEmpty()) { opening = null; duck(false); error = "Couldn't load this playlist."; return@launch }
-            play(songs, 0, id.removePrefix("VL"), page.songsContinuation)
+            play(songs, 0, id.removePrefix("VL"), page.next)
         }
     }
 
@@ -565,9 +548,9 @@ object Playback {
                 repeat(3) {
                     val c = mixContinuation
                     if (fresh.isNotEmpty() || c == null) return@repeat
-                    val page = YouTube.playlistContinuation(c).getOrNull() ?: return@repeat
-                    mixContinuation = page.continuation
-                    fresh = filterMix(page.songs.map { Store.romanizer.song(it) }, already, Store.bans(), Store.radioSettings())
+                    val page = backend.playlist(id, c) ?: return@repeat
+                    mixContinuation = page.next
+                    fresh = filterMix(page.songs, already, Store.bans(), Store.radioSettings())
                 }
                 fresh
             }
@@ -583,11 +566,7 @@ object Playback {
         }
     }
 
-    private suspend fun relatedArtists(seed: Song): Set<String> {
-        val id = seed.firstArtistId ?: return emptySet()
-        val page = YouTube.artist(id).getOrNull() ?: return emptySet()
-        return page.sections.flatMap { it.items }.filterIsInstance<ArtistItem>().map { it.id }.toSet()
-    }
+    private suspend fun relatedArtists(seed: Song) = backend.relatedArtists(seed)
 
     // ---- Sleep timer ----
 
@@ -742,6 +721,9 @@ object Playback {
     // Pause while buffering (waiting for the network) pauses; Play prepares an idle player and restarts an ended one.
     fun togglePlay() = player.togglePlay()
 
+    /** Told of every change the player reports: the platform's media session (Android's PlaybackService). */
+    var playerChanged: (() -> Unit)? = null
+
     // ---- Network drops ----
 
     /** A validated network is up. Changes come from the system's callback, never from polling. */
@@ -802,14 +784,17 @@ object Playback {
         if (index < player.mediaItemCount && entries()[index].song.id == song.id) player.seekTo(index, 0)
     }
 
+    fun canLike(s: Song?) = s != null && backend.canLike
+
     fun toggleLike(s: Song? = current()?.song) {
         val song = s ?: return
-        if (!Store.signedIn) return
+        val source = backend
+        if (!source.canLike) return
         val like = song.id !in liked
         liked = if (like) liked + song.id else liked - song.id
         toggled += song.id
         scope.launch(Dispatchers.IO) {
-            val ok = YouTube.likeVideo(song.id, like).isSuccess
+            val ok = source.like(song.id, like)
             withContext(Dispatchers.Main) {
                 if (ok) saveLiked() else {
                     liked = if (like) liked - song.id else liked + song.id
@@ -839,9 +824,10 @@ object Playback {
      */
     fun checkLike(s: Song?) {
         val id = s?.id ?: return
-        if (!Store.signedIn || id in toggled || !likeChecked.add(id)) return
+        val source = backend
+        if (!source.canLike || id in toggled || !likeChecked.add(id)) return
         scope.launch {
-            val like = withContext(Dispatchers.IO) { YouTube.likeStatus(id).getOrNull() }
+            val like = withContext(Dispatchers.IO) { source.liked(id) }
             if (like == null) { likeChecked -= id; return@launch }
             if (id in toggled || like == (id in liked)) return@launch
             liked = if (like) liked + id else liked - id
@@ -890,13 +876,16 @@ object Playback {
 
     /** The song's lyrics from the disk cache, or (with [network]) from the providers. Null: not cached, no network asked. */
     private fun lyricsResult(s: Song, network: Boolean): LyricsResult? {
-        val file = File(Store.cache, "lyrics/${s.id}.json")
+        val file = rawFile(s.id)
         // A cache file from before 0.1.6 holds a bare Lyrics, fails to decode and is searched again.
         runCatching { Store.json.decodeFromString<LyricsResult>(file.readText()) }.getOrNull()?.let { return it }
         if (!network) return null
         val q = LyricsQuery(s.id, s.title.original, s.artistOriginal, s.album?.name?.original, s.durationSec)
-        val providers = Store.lyricsOrder().filter { Store.lyricsEnabled(it) }
-        val search = LyricsProviders.find(q, providers, Store.icu)
+        // The source's own lyrics are the reference; when Settings lists them (YouTube Music's), their switch is that slot.
+        val own = backend.lyrics
+        val enabled = Store.lyricsOrder().filter { Store.lyricsEnabled(it) }
+        val providers = if (own in backend.lyricsProviders) enabled else enabled + listOfNotNull(own)
+        val search = LyricsProviders.find(q, providers, Store.icu, reference = own)
         val r = search.result ?: LyricsResult(Lyrics("", emptyList(), false))
         // "No lyrics" is kept only when every provider answered; after a failure the next play asks again.
         if (search.result != null || search.complete) {
@@ -927,9 +916,10 @@ object Playback {
     private val romanizedCache = object : LinkedHashMap<String, LyricsState>(64, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, LyricsState>) = size > 40
     }
-    private fun romanizedKey(id: String) = "$id@${Store.romanizationVersion}"
+    private fun romanizedKey(id: String) = "$id${backend.lyricsVariant}@${Store.romanizationVersion}"
     // The app's version too: an update may romanize differently, and its lyrics shouldn't show the old version's.
-    private fun romanizedFile(id: String) = File(Store.cache, "lyrics/$id.r${Store.romanizationVersion}.${BuildConfig.VERSION_CODE}.json")
+    private fun romanizedFile(id: String) = File(Store.cache, "lyrics/$id${backend.lyricsVariant}.r${Store.romanizationVersion}.${BuildConfig.VERSION_CODE}.json")
+    private fun rawFile(id: String) = File(Store.cache, "lyrics/$id${backend.lyricsVariant}.json")
 
     private fun romanizedLyrics(s: Song): LyricsState? = synchronized(romanizedCache) { romanizedCache[romanizedKey(s.id)] }
 
@@ -954,7 +944,7 @@ object Playback {
     /** Drops the cached lyrics and asks the providers again, e.g. after changing their order. */
     fun refetchLyrics() {
         val s = current()?.song ?: return
-        File(Store.cache, "lyrics/${s.id}.json").delete()
+        rawFile(s.id).delete()
         romanizedFile(s.id).delete()
         synchronized(romanizedCache) { romanizedCache.remove(romanizedKey(s.id)) }
         lyrics = null
@@ -982,7 +972,7 @@ object Playback {
         val t = state.translations + layer
         lyrics = LyricsState(id, state.lyrics, t).also { synchronized(romanizedCache) { romanizedCache[romanizedKey(id)] = it } }
         scope.launch(Dispatchers.IO) {
-            for (f in listOf(File(Store.cache, "lyrics/$id.json"), romanizedFile(id))) runCatching {
+            for (f in listOf(rawFile(id), romanizedFile(id))) runCatching {
                 val r = Store.json.decodeFromString<LyricsResult>(f.readText())
                 f.writeText(Store.json.encodeToString(LyricsResult(r.lyrics, t, r.rule)))
             }
@@ -1003,7 +993,7 @@ object Playback {
         return LastFm(key, secret) to sk
     }
 
-    private fun scrobbleOf(s: Song) = Scrobble(s.artists.firstOrNull()?.name?.original ?: "", s.title.original, s.album?.name?.original, startedAt, s.durationSec)
+    private fun scrobbleOf(s: Song) = Scrobble(s.artists.firstOrNull()?.name?.original ?: "", s.title.original, s.album?.name?.original, startedAt, s.durationSec, s.id)
 
     private fun resetPlayCount() {
         playedHalfSeconds = 0
@@ -1014,6 +1004,10 @@ object Playback {
     private fun startedTrack() {
         resetPlayCount()
         val s = current()?.song ?: return
+        // Each play is reported once, by the side that knows its source (docs/subsonic.md).
+        val source = backend
+        source.nowPlaying(s)
+        if (!source.lastFm) return
         val (fm, sk) = lastFm() ?: return
         val now = scrobbleOf(s)
         scope.launch(Dispatchers.IO) { runCatching { fm.nowPlaying(sk, now) } }
@@ -1026,7 +1020,9 @@ object Playback {
         if (scrobbled || !shouldScrobble(duration, playedHalfSeconds / 2)) return
         scrobbled = true
         Store.played(s)
-        if (Store.str("lastfm.session", "").isBlank()) return
+        val source = backend
+        source.played(scrobbleOf(s))
+        if (!source.lastFm || Store.str("lastfm.session", "").isBlank()) return
         scrobbleQueue.add(scrobbleOf(s))
         flushScrobbles()
     }
@@ -1040,16 +1036,9 @@ object Playback {
     }
 }
 
-/**
- * Lists get small thumbnails (60–120 px); the player and the media notification need a large one.
- * Google-hosted art takes its size in the URL; YouTube video stills come in fixed sizes, hqdefault (480 px) always exists.
- */
-fun bigThumb(url: String) = url.replace(BIG_WH, "=w544-h544").replace(SMALL_STILL, "/hqdefault.jpg")
+/** Lists get small thumbnails (60–120 px); the player and the media notification need a large one. */
+fun bigThumb(url: String) = backend.bigThumb(url)
 
 /** The player's art: bigThumb's size. */
 const val BIG_PX = 544
-
-// Compiled once: a 1,000-song playlist builds 1,000 media items on the main thread when it starts.
-private val BIG_WH = Regex("=w\\d+-h\\d+")
-private val SMALL_STILL = Regex("/(default|mqdefault)\\.jpg")
 

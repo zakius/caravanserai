@@ -1,8 +1,10 @@
 # Every push to master builds and tests. When app/build.gradle.kts has a versionName with no release yet, the run also
-# signs (tools/release.sh) and publishes it as a GitHub release, tagged v<version> on that commit: a merge that bumps the
-# version is the release. The desktop app (:desktop) ships in the same release: a .deb and an .rpm built on Linux, an
-# .msi on Windows, with roma-aac (tools/build-ffmpeg.sh) built for both on Linux. The dictionary app gets its own release, dict-<version>, the first time its version ships;
-# roma downloads it from there. The app and the dictionary build in parallel jobs, and the core tests (which need the
+# signs (tools/release.sh) and publishes roma ytm, the YouTube Music app, as a GitHub release, tagged v<version> on that
+# commit: a merge that bumps the version is the release. caravan, the Subsonic app (for Google Play; docs/subsonic.md, Two
+# apps), builds in the same jobs, Android and Linux desktop, and is checked for YouTube code (tools/residue_check.py)
+# but not published. The desktop app (:desktop) ships in the same release: a .deb and an .rpm built on Linux, an
+# .msi on Windows, with roma-aac (tools/build-ffmpeg.sh) built for both on Linux. The Japanese dictionary (data, a zip)
+# gets its own release, dict-<version>, the first time its version ships; the apps download it from there. The app and the dictionary build in parallel jobs, and the core tests (which need the
 # slim dictionary) in a third; roma's release is published only once its dictionary release exists and the tests pass.
 # Only master: setup-gradle saves the Gradle cache (with SudachiDict and the slim dictionary) on the default branch
 # alone, and a cache saved by a tag's run is visible to that tag only.
@@ -68,7 +70,10 @@ jobs:
       - run: tools/release.sh app
       - if: env.RELEASE
         uses: actions/upload-artifact@v7
-        with: { name: app, path: dist/roma-*.apk }
+        with: { name: app, path: dist/roma-ytm-*.apk }
+      # Unsigned, for trying it; the residue check above has passed.
+      - uses: actions/upload-artifact@v7
+        with: { name: subsonic-app, path: app/build/outputs/apk/subsonic/release/app-subsonic-release-unsigned.apk }
 
   test:
     runs-on: ubuntu-24.04
@@ -105,11 +110,16 @@ jobs:
       - uses: actions/download-artifact@v8
         with: { name: roma-aac, path: aac }
       - run: chmod +x aac/linux/roma-aac && sudo apt-get install -y rpm > /dev/null # artifacts drop the executable bit
-      - run: ./gradlew -q :desktop:createReleaseDistributable :desktop:icuCheck :desktop:skiaCheck "-Proma.aacDir=$GITHUB_WORKSPACE/aac"
-      - run: desktop/build/compose/binaries/main-release/app/roma/bin/roma --check
+      - run: ./gradlew -q :desktop:createReleaseDistributable :desktop:icuCheck :desktop:skiaCheck :desktop-subsonic:createReleaseDistributable "-Proma.aacDir=$GITHUB_WORKSPACE/aac"
+      - run: desktop/build/compose/binaries/main-release/app/roma-ytm/bin/roma-ytm --check
+      - name: Neither app carries the other's code
+        run: |
+          python3 tools/residue_check.py youtube desktop/build/compose/binaries/main-release/app/roma-ytm
+          python3 tools/residue_check.py subsonic desktop/subsonic/build/compose/binaries/main-release/app/*
+          desktop/subsonic/build/compose/binaries/main-release/app/*/bin/* --check
       - run: tools/linux-packages.sh --no-gradle
       - uses: actions/upload-artifact@v7
-        with: { name: desktop-linux, path: "dist/roma*" }
+        with: { name: desktop-linux, path: "dist/roma-ytm*" }
       # ProGuard renames the desktop classes; the release keeps the mapping that reads their stack traces (retrace).
       - uses: actions/upload-artifact@v7
         with: { name: desktop-mapping, path: desktop/build/proguard-mapping.txt }
@@ -132,18 +142,18 @@ jobs:
       - name: Check the full build
         shell: pwsh
         run: |
-          $p = Start-Process desktop/build/compose/binaries/main-release/app/roma/roma.exe -ArgumentList --check -Wait -PassThru -RedirectStandardOutput check.txt -RedirectStandardError check-err.txt
+          $p = Start-Process desktop/build/compose/binaries/main-release/app/roma-ytm/roma-ytm.exe -ArgumentList --check -Wait -PassThru -RedirectStandardOutput check.txt -RedirectStandardError check-err.txt
           Get-Content check.txt, check-err.txt
           exit $p.ExitCode
       - run: tools/windows-packages.sh
       - name: Check the small build
         shell: pwsh
         run: |
-          $p = Start-Process desktop/build/windows-small/roma/roma.exe -ArgumentList --check -Wait -PassThru -RedirectStandardOutput check.txt -RedirectStandardError check-err.txt
+          $p = Start-Process desktop/build/windows-small/roma-ytm/roma-ytm.exe -ArgumentList --check -Wait -PassThru -RedirectStandardOutput check.txt -RedirectStandardError check-err.txt
           Get-Content check.txt, check-err.txt
           exit $p.ExitCode
       - uses: actions/upload-artifact@v7
-        with: { name: desktop-windows, path: "dist/roma*" }
+        with: { name: desktop-windows, path: "dist/roma-ytm*" }
 
   # Built only when its version has no release yet; otherwise this job ends after one API call.
   dict:
@@ -164,29 +174,18 @@ jobs:
         with: { distribution: temurin, java-version: 21 }
       - if: steps.check.outputs.build
         uses: gradle/actions/setup-gradle@v5
-      - name: Android SDK and pigz
+      # Nothing Android is built, but Gradle configures the Android modules too.
+      - name: Android SDK
         if: steps.check.outputs.build
-        run: |
-          yes 2> /dev/null | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
-          sudo apt-get install -y pigz > /dev/null
-      - name: Signing key
-        if: steps.check.outputs.build && env.RELEASE
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
-          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$RUNNER_TEMP/release.jks" "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > keystore.properties
+        run: yes 2> /dev/null | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
       - if: steps.check.outputs.build
         run: tools/release.sh dict
       - name: Publish
         if: steps.check.outputs.build && env.RELEASE
         env: { GH_TOKEN: "${{ github.token }}", DICT: "${{ steps.check.outputs.tag }}" }
         run: |
-          gh release create "$DICT" dist/roma-dict-*.apk.gz --target "$GITHUB_SHA" --latest=false --title "Japanese dictionary ${DICT#dict-}" \
-            --notes "SudachiDict core ${DICT#dict-} as a companion app for roma, without what roma never reads (postal addresses, split and synonym data; duplicate cost rows merged). roma installs it when Japanese is romanized. SudachiDict is Apache-2.0 (Works Applications)."
+          gh release create "$DICT" "dist/roma-dict-${DICT#dict-}.zip" --target "$GITHUB_SHA" --latest=false --title "Japanese dictionary ${DICT#dict-}" \
+            --notes "SudachiDict core ${DICT#dict-} for roma, without what roma never reads (postal addresses, split and synonym data; duplicate cost rows merged), with its notices. roma downloads it when Japanese is romanized. SudachiDict is Apache-2.0 (Works Applications)."
 
   publish:
     if: needs.version.outputs.release
@@ -213,5 +212,5 @@ jobs:
           sha=$(sed -n 's/^FFMPEG_SHA=//p' tools/build-ffmpeg.sh)
           curl -sfL -o "dist/ffmpeg-$ffmpeg.tar.xz" "https://ffmpeg.org/releases/ffmpeg-$ffmpeg.tar.xz"
           echo "$sha  dist/ffmpeg-$ffmpeg.tar.xz" | sha256sum -c -
-          gh release create "v$V" dist/roma-$V.apk "$json" dist/roma_${V}_amd64.deb dist/roma-$V-1.x86_64.rpm dist/roma-$V-x64.msi \
-            dist/roma-$V-x64-full.msi dist/roma-$V-windows-x64.zip dist/proguard-mapping.txt "dist/ffmpeg-$ffmpeg.tar.xz" --target "$GITHUB_SHA" --title "roma $V" --notes-file "$RUNNER_TEMP/notes.md" --latest
+          gh release create "v$V" dist/roma-ytm-$V.apk "$json" dist/roma-ytm_${V}_amd64.deb dist/roma-ytm-$V-1.x86_64.rpm dist/roma-ytm-$V-x64.msi \
+            dist/roma-ytm-$V-x64-full.msi dist/roma-ytm-$V-windows-x64.zip dist/proguard-mapping.txt "dist/ffmpeg-$ffmpeg.tar.xz" --target "$GITHUB_SHA" --title "roma ytm $V" --notes-file "$RUNNER_TEMP/notes.md" --latest

@@ -115,7 +115,7 @@ object Images {
             f.setLastModified(System.currentTimeMillis())
             return f.readBytes()
         }
-        val c = java.net.URI(url).toURL().openConnection() as java.net.HttpURLConnection
+        val c = java.net.URI(backend.fetchUrl(url)).toURL().openConnection() as java.net.HttpURLConnection
         c.connectTimeout = 15_000
         c.readTimeout = 15_000
         if (c.responseCode != 200) throw java.io.IOException("HTTP ${c.responseCode}")

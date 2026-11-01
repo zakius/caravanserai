@@ -1,8 +1,8 @@
-// roma.exe of the small Windows build, which carries no Java runtime (finimal's launcher, Java only). It starts the
+// roma-ytm.exe of the small Windows build, which carries no Java runtime (finimal's launcher, Java only). It starts the
 // app on the newest installed Java 21 or later; without one it downloads Eclipse Temurin's JRE once to
-// %LOCALAPPDATA%\roma\java (not runtime: the full build installs its own there), checked against the SHA-256 pinned
+// %LOCALAPPDATA%\roma-ytm\java (not runtime: the full build installs its own there), checked against the SHA-256 pinned
 // at build time (Pins.cs, from tools/windows-packages.sh).
-// The Java options come from app\roma.cfg, which jpackage writes for the full build's own launcher.
+// The Java options come from app\roma-ytm.cfg, which jpackage writes for the full build's own launcher.
 // C# 5: the compiler that comes with .NET Framework 4, which every Windows 10 and 11 has, builds it.
 using System;
 using System.Collections.Generic;
@@ -18,7 +18,7 @@ using Microsoft.Win32;
 
 static class Launcher
 {
-    static readonly string Local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "roma");
+    static readonly string Local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "roma-ytm");
 
     [STAThread]
     static int Main(string[] args)
@@ -38,9 +38,9 @@ static class Launcher
         }
         catch (Exception e)
         {
-            string text = "roma can't start: " + e.Message + "\n\nIt needs Java 21 or newer (Eclipse Temurin, for one). The full roma download includes it.";
+            string text = "roma ytm can't start: " + e.Message + "\n\nIt needs Java 21 or newer (Eclipse Temurin, for one). The full roma download includes it.";
             if (quiet) Console.Error.WriteLine(text);
-            else MessageBox.Show(text, "roma", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            else MessageBox.Show(text, "roma ytm", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
     }
@@ -119,7 +119,7 @@ static class Launcher
         Action<string, int> show = delegate { };
         if (!quiet)
         {
-            form = new Form { Text = "roma", Width = 420, Height = 130, FormBorderStyle = FormBorderStyle.FixedDialog,
+            form = new Form { Text = "roma ytm", Width = 420, Height = 130, FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false, MinimizeBox = false, StartPosition = FormStartPosition.CenterScreen };
             label = new Label { Left = 16, Top = 14, Width = 370 };
             bar = new ProgressBar { Left = 16, Top = 42, Width = 370, Maximum = 100 };
@@ -154,7 +154,7 @@ static class Launcher
         Directory.CreateDirectory(dir);
         string zip = Path.Combine(dir, "download.part");
         var request = (HttpWebRequest)WebRequest.Create(url);
-        request.UserAgent = "roma";
+        request.UserAgent = "roma-ytm";
         using (var response = request.GetResponse())
         using (var input = response.GetResponseStream())
         using (var output = File.Create(zip))
@@ -190,14 +190,14 @@ static class Launcher
         Directory.Delete(unpacked, true);
     }
 
-    // javaw with app\roma.cfg's class path, options and main class, as jpackage's launcher would; waits for it, so
+    // javaw with app\roma-ytm.cfg's class path, options and main class, as jpackage's launcher would; waits for it, so
     // the exit code and any redirected output come through.
     static int Run(string java, string app, string[] args)
     {
         var classpath = new List<string>();
         var command = new StringBuilder();
         string main = null;
-        foreach (string raw in File.ReadAllLines(Path.Combine(app, "roma.cfg")))
+        foreach (string raw in File.ReadAllLines(Path.Combine(app, "roma-ytm.cfg")))
         {
             string line = raw.Replace("$APPDIR", app);
             if (line.StartsWith("app.classpath=")) classpath.Add(line.Substring(14));

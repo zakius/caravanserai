@@ -4,9 +4,10 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
-// The Japanese dictionary is a separate app, :dict-app; roma needs its version and where to fetch it.
+// The Japanese dictionary, downloaded as data (:core:dictZip): its version, its sha256 and where to fetch it.
 evaluationDependsOn(":core")
 val dictVersion = project(":core").extra["dictRelease"] as String
+val dictSha256 = project(":core").extra["dictSha256"] as String
 
 android {
     namespace = "com.zakius.roma"
@@ -14,20 +15,38 @@ android {
     buildToolsVersion = "37.0.0"
 
     defaultConfig {
-        applicationId = "com.zakius.roma"
         minSdk = 26
         targetSdk = 36
-        versionCode = 59
-        versionName = "0.1.58"
-        // Testing only: `-Proma.refuseVisionOs=true` acts as if YouTube refused the VISIONOS client (Streams.refuseVisionOs),
-        // so songs play through InnerTubeX's other clients. Never set for a release.
-        buildConfigField("boolean", "REFUSE_VISIONOS", (findProperty("roma.refuseVisionOs") == "true").toString())
-        // The dictionary app, gzipped. `-Proma.dictBase=<url>` points a build at another folder holding it.
+        versionCode = 60
+        versionName = "0.1.59"
+        // `-Proma.dictBase=<url>` points a build at another folder holding the dictionary's zip.
         val dictBase = (findProperty("roma.dictBase") as String?) ?: "https://github.com/zakius/roma/releases/download/dict-$dictVersion"
-        buildConfigField("String", "DICT_URL", "\"$dictBase/roma-dict-$dictVersion.apk.gz\"")
-        buildConfigField("int", "DICT_VERSION", (project(":core").extra["dictCode"] as Int).toString())
+        buildConfigField("String", "DICT_URL", "\"$dictBase/roma-dict-$dictVersion.zip\"")
+        buildConfigField("String", "DICT_VERSION", "\"$dictVersion\"")
+        buildConfigField("String", "DICT_SHA256", "\"$dictSha256\"")
+        // The dictionary app of roma ytm 0.1.57 and earlier, which roma ytm says can go (Flavor.kt).
         buildConfigField("String", "DICT_PACKAGE", "\"com.zakius.roma.dict\"")
         manifestPlaceholders["dictPackage"] = "com.zakius.roma.dict"
+    }
+
+    // Two apps from one codebase (docs/subsonic.md, Two apps): roma ytm (the youtube flavor), YouTube Music only,
+    // released on GitHub; and caravan (subsonic), for Subsonic servers and Google Play, whose APK carries no YouTube code
+    // at all. Each flavor brings its own music source.
+    flavorDimensions += "app"
+    productFlavors {
+        // Each app's name, id and slug: gradle.properties.
+        for (app in listOf("youtube", "subsonic")) create(app) {
+            dimension = "app"
+            val name = property("${app}App.name") as String
+            val slug = property("${app}App.slug") as String
+            applicationId = property("${app}App.id") as String
+            buildConfigField("String", "APP_NAME", "\"$name\"")
+            buildConfigField("String", "SLUG", "\"$slug\"")
+            manifestPlaceholders += mapOf("appLabel" to name, "linkScheme" to slug)
+        }
+        // Testing only: `-Proma.refuseVisionOs=true` acts as if YouTube refused the VISIONOS client (Streams.refuseVisionOs),
+        // so songs play through InnerTubeX's other clients. Never set for a release.
+        getByName("youtube").buildConfigField("boolean", "REFUSE_VISIONOS", (findProperty("roma.refuseVisionOs") == "true").toString())
     }
 
     buildTypes {
@@ -48,8 +67,12 @@ android {
         targetCompatibility = JavaVersion.VERSION_21
     }
     buildFeatures { compose = true; buildConfig = true }
-    // The screens and playback logic, shared with the desktop app (:desktop).
+    // The screens and playback logic, shared with the desktop app (:desktop); each flavor adds its source's own.
     sourceSets["main"].kotlin.directories += "../shared/src/main/kotlin"
+    sourceSets["youtube"].kotlin.directories += "../shared/src/youtube/kotlin"
+    sourceSets["subsonic"].kotlin.directories += "../shared/src/subsonic/kotlin"
+    // The dictionary download, as on the desktop.
+    sourceSets["main"].kotlin.directories += "../shared/src/portable/kotlin"
     // Only the app's languages: libraries bring strings for about 80 locales.
     androidResources { localeFilters += setOf("en", "pl") }
     packaging {
@@ -66,6 +89,8 @@ android {
 
 dependencies {
     implementation(project(":core"))
+    "youtubeImplementation"(project(":youtube"))
+    "subsonicImplementation"(project(":subsonic"))
 
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.compose.ui:ui:1.12.1")

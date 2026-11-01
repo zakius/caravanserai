@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=roma
-Comment=YouTube Music, every title and lyric romanized
-Exec=roma
-Icon=io.github.zakius.roma
-Categories=AudioVideo;Audio;Player;
-StartupWMClass=com-zakius-roma-MainKt

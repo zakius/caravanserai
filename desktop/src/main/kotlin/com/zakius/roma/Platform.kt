@@ -51,9 +51,9 @@ object Dirs {
     private fun env(name: String) = System.getenv(name)?.takeIf { it.isNotBlank() }
 
     val files: File = File(
-        if (windows) env("APPDATA") ?: "$home/AppData/Roaming" else env("XDG_DATA_HOME") ?: "$home/.local/share", "roma",
+        if (windows) env("APPDATA") ?: "$home/AppData/Roaming" else env("XDG_DATA_HOME") ?: "$home/.local/share", BuildConfig.SLUG,
     ).also { it.mkdirs() }
-    val cache: File = (if (windows) File(env("LOCALAPPDATA") ?: "$home/AppData/Local", "roma/cache") else File(env("XDG_CACHE_HOME") ?: "$home/.cache", "roma"))
+    val cache: File = (if (windows) File(env("LOCALAPPDATA") ?: "$home/AppData/Local", "${BuildConfig.SLUG}/cache") else File(env("XDG_CACHE_HOME") ?: "$home/.cache", BuildConfig.SLUG))
         .also { it.mkdirs() }
 }
 
@@ -268,6 +268,7 @@ fun OutlinedTextField(
     placeholder: String? = null,
     onSearch: (() -> Unit)? = null,
     autoFocus: Boolean = false,
+    password: Boolean = false,
 ) {
     val s = MaterialTheme.colorScheme
     var focused by remember { mutableStateOf(false) }
@@ -287,6 +288,7 @@ fun OutlinedTextField(
             textStyle = style,
             singleLine = singleLine,
             cursorBrush = SolidColor(s.primary),
+            visualTransformation = if (password) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
             keyboardOptions = KeyboardOptions(imeAction = if (onSearch != null) ImeAction.Search else ImeAction.Default),
             keyboardActions = KeyboardActions(onSearch = { onSearch?.invoke() }, onDone = { onSearch?.invoke() }),
             decorationBox = { inner ->
