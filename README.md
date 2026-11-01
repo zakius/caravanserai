@@ -34,7 +34,7 @@ Requirements: JDK 21 and the Android SDK (compileSdk 37).
 
 The same code builds a second app, for Subsonic servers and Google Play, without any YouTube code: `:app:assembleSubsonicDebug` and `:desktop-subsonic:run` ([docs/subsonic.md](docs/subsonic.md#two-apps-2026-11-01)).
 
-The tests and the dictionary app need SudachiDict: their first build downloads it (about 77 MB, checked against a pinned sha256) into the Gradle cache. Building roma itself doesn't.
+The tests and the dictionary's download (`:core:dictZip`) need SudachiDict: their first build downloads it (about 77 MB, checked against a pinned sha256) into the Gradle cache. Building roma itself doesn't.
 
 Release builds are made with `tools/release.sh`: R8 shrinking, Zopfli-recompressed, signed with a key that you supply in `keystore.properties` (not in the repository). A merge to master that sets a new `versionName` builds and publishes it as a GitHub release (`.github/workflows/release.yml`); there's no tag to push.
 
@@ -51,7 +51,7 @@ Its first build also builds roma-aac (`tools/build-ffmpeg.sh`), the small ffmpeg
 
 ### Android
 
-Get `roma-ytm-<version>.apk` from [Releases](https://github.com/zakius/roma/releases). If you want Japanese romanized, roma ytm offers to install its Japanese dictionary on the first start: a separate app (`roma-dict-…`, a 31 MB download, 63 MB installed), so its own updates stay small.
+Get `roma-ytm-<version>.apk` from [Releases](https://github.com/zakius/roma/releases). If you want Japanese romanized, roma ytm offers to download its Japanese dictionary on the first start (32 MB, 62 MB on the phone), kept apart so its own updates stay small. The "roma Japanese dictionary" app that roma ytm 0.1.57 and earlier installed is no longer used: you can uninstall it.
 
 ### Linux
 
@@ -68,7 +68,7 @@ Get `roma-ytm-<version>.apk` from [Releases](https://github.com/zakius/roma/rele
 
 ### On the desktop
 
-The Japanese dictionary downloads on the first start if you want Japanese romanized (31 MB). Signing in and some songs need a Chromium-family browser (Chrome, Edge, Chromium, Brave, Vivaldi, Opera, oganesson…); roma ytm starts it with its own profile, never yours. Without one, roma ytm downloads Chromium (CEF, about 150 MB) when first needed. Esc and the mouse's back button go back.
+The Japanese dictionary downloads on the first start if you want Japanese romanized (32 MB). Signing in and some songs need a Chromium-family browser (Chrome, Edge, Chromium, Brave, Vivaldi, Opera, oganesson…); roma ytm starts it with its own profile, never yours. Without one, roma ytm downloads Chromium (CEF, about 150 MB) when first needed. Esc and the mouse's back button go back.
 
 ## Credits
 
