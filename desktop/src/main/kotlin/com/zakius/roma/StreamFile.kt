@@ -7,8 +7,8 @@ import java.net.HttpURLConnection
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 
-// The audio cache of the players without Media3 (the desktop's, the Subsonic app's on Android): each song's stream
-// kept on disk as it downloads, so a song played once replays without the network.
+// The desktop's audio cache: each song's stream kept on disk as it downloads, so a song played once replays without
+// the network.
 
 /** The stream refused (HTTP [status]): a fresh URL may be needed. */
 class StreamRefused(val status: Int) : IOException("The stream answered HTTP $status")

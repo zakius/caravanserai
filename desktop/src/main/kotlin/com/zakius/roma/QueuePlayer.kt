@@ -1,9 +1,9 @@
 package com.zakius.roma
 
 /**
- * Playback's player where Media3 isn't: the desktop (DesktopAudio) and the Subsonic app on Android (MediaAudio). The
- * list, the repeat modes and the transitions are kept here with Media3's meaning, so Playback behaves as with
- * ExoPlayer; an [Engine] plays the current song. The streams go through the audio cache (StreamFile), so a song played
+ * Playback's player on the desktop, where Media3 isn't. The list, the repeat modes and the transitions are kept here
+ * with Media3's meaning, so Playback behaves as with ExoPlayer; an [Engine] (DesktopAudio's Output) plays the current
+ * song. The streams go through the audio cache (StreamFile), so a song played
  * once replays without the network, and the next song's first bytes are there before it starts. Main thread; an
  * engine's news hops to it.
  */
