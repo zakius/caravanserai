@@ -1,8 +1,5 @@
 package roma.core
 
-import com.metrolist.innertube.YouTube
-import com.metrolist.innertube.models.WatchEndpoint
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -74,20 +71,19 @@ interface LyricsProvider {
 class LyricsSearch(val result: LyricsResult?, val complete: Boolean)
 
 object LyricsProviders {
-    val all: List<LyricsProvider> = listOf(NetEase, KuGou, LrcLib, LyricsPlus, YouTubeLyrics)
     private val pool = Executors.newCachedThreadPool { r -> Thread(r, "lyrics").apply { isDaemon = true } }
 
     /**
      * Asks every provider at once, each for at most [timeoutMs], then picks by [chooseLyrics], with [reference] (the
-     * music source's own lyrics) in YouTube Music's place.
+     * music source's own lyrics) as the text the others are matched against.
      */
-    fun find(q: LyricsQuery, providers: List<LyricsProvider>, icu: Icu? = null, timeoutMs: Long = 5000, reference: LyricsProvider? = YouTubeLyrics): LyricsSearch {
+    fun find(q: LyricsQuery, providers: List<LyricsProvider>, icu: Icu? = null, timeoutMs: Long = 5000, reference: LyricsProvider? = null): LyricsSearch {
         val futures = pool.invokeAll(providers.map { p -> Callable { p.fetch(q) } }, timeoutMs, TimeUnit.MILLISECONDS)
         val got = providers.zip(futures).map { (p, f) -> p to runCatching { f.get() } }
         val found = got.mapNotNull { (p, r) -> r.getOrNull()?.let { withoutCredits(unescaped(it), q) }?.takeIf { it.lines.any { l -> l.text.isNotBlank() } }?.let { p to it } }
         val complete = got.all { it.second.isSuccess }
-        val ytm = found.firstOrNull { it.first == reference }?.second
-        val chosen = chooseLyrics(ytm, found.filter { it.first != reference }.map { it.second }, icu) ?: return LyricsSearch(null, complete)
+        val ref = found.firstOrNull { it.first == reference }?.second
+        val chosen = chooseLyrics(ref, found.filter { it.first != reference }.map { it.second }, icu) ?: return LyricsSearch(null, complete)
         val translations = found.mapNotNull { translationOf(it.second) }
         val bare = Lyrics(chosen.first.source, chosen.first.lines.map { Line(it.startMs, it.text, it.words) }, chosen.first.synced)
         return LyricsSearch(LyricsResult(bare, translations, chosen.second), complete)
@@ -174,23 +170,24 @@ const val SAME_LYRICS = 0.6
 private fun Lyrics.text() = lines.joinToString("\n") { it.text }
 
 /**
- * The rules, YouTube Music's text being the reference. Returns the lyrics and the rule number (design.md, Lyrics):
- * 1. word-level that matches YTM (any word-level when YTM has nothing), 2. YTM line-timed, 3. third-party synced that
- * matches YTM, 4. YTM plain, 5. (YTM has nothing) third-party synced, then plain. [others] are in the user's order,
+ * The rules, the music source's own text being the reference (YouTube Music's in roma). Returns the lyrics and the rule
+ * number (design.md, Lyrics): 1. word-level that matches the reference (any word-level when it has nothing), 2. the
+ * reference line-timed, 3. third-party synced that matches it, 4. the reference plain, 5. (no reference) third-party
+ * synced, then plain. [others] are in the user's order,
  * which breaks ties in rule 5 and among equally similar candidates.
  */
-fun chooseLyrics(ytm: Lyrics?, others: List<Lyrics>, icu: Icu? = null): Pair<Lyrics, Int>? {
-    if (ytm == null) {
+fun chooseLyrics(reference: Lyrics?, others: List<Lyrics>, icu: Icu? = null): Pair<Lyrics, Int>? {
+    if (reference == null) {
         others.firstOrNull { it.wordLevel }?.let { return it to 1 }
         others.firstOrNull { it.synced }?.let { return it to 5 }
         return others.firstOrNull()?.let { it to 5 }
     }
-    val ref = ytm.text()
+    val ref = reference.text()
     fun best(c: List<Lyrics>) = c.map { it to similarity(it.text(), ref, icu) }.filter { it.second > SAME_LYRICS }.maxByOrNull { it.second }?.first
     best(others.filter { it.wordLevel })?.let { return it to 1 }
-    if (ytm.synced) return ytm to 2
+    if (reference.synced) return reference to 2
     best(others.filter { it.synced })?.let { return it to 3 }
-    return ytm to 4
+    return reference to 4
 }
 
 // ---- Translations ----
@@ -318,52 +315,8 @@ fun parseLrc(text: String): List<Line> {
     return closeWords(lines)
 }
 
-/** KuGou KRC: [lineStart,lineDur]<offset,dur,0>word, offsets relative to the line. */
-fun parseKrc(text: String): List<Line> {
-    val head = Regex("""^\[(\d+),(\d+)]""")
-    val word = Regex("""<(\d+),(\d+),\d+>([^<]*)""")
-    val translations = krcTranslations(text)
-    val lines = ArrayList<Line>()
-    for (raw in text.lines()) {
-        val h = head.find(raw) ?: continue
-        val start = h.groupValues[1].toLong()
-        val words = word.findAll(raw.substring(h.range.last + 1)).map {
-            val off = start + it.groupValues[1].toLong()
-            Word(off, off + it.groupValues[2].toLong(), it.groupValues[3])
-        }.filter { it.text.isNotEmpty() }.toList()
-        lines.add(Line(start, words.joinToString("") { it.text }.trim(), words, translations.getOrNull(lines.size)))
-    }
-    return lines
-}
-
-private fun krcTranslations(text: String): List<String?> {
-    val tag = Regex("""\[language:([^\]]*)]""").find(text) ?: return emptyList()
-    return runCatching {
-        val json = Json.parseToJsonElement(String(Base64.getDecoder().decode(tag.groupValues[1]))).jsonObject
-        val content = json["content"]!!.jsonArray.map { it.jsonObject }.firstOrNull { it["type"]?.jsonPrimitive?.content == "1" }
-        content!!["lyricContent"]!!.jsonArray.map { row -> row.jsonArray.joinToString("") { it.jsonPrimitive.content }.ifBlank { null } }
-    }.getOrDefault(emptyList())
-}
-
-/** NetEase YRC: [lineStart,lineDur](wordStart,dur,0)word, word starts absolute. */
-fun parseYrc(text: String): List<Line> {
-    val head = Regex("""^\[(\d+),(\d+)]""")
-    // A word runs to the next stamp, so "(oh)" in the lyrics stays part of its word.
-    val word = Regex("""\((\d+),(\d+),\d+\)(.*?)(?=\(\d+,\d+,\d+\)|$)""")
-    val lines = ArrayList<Line>()
-    for (raw in text.lines()) {
-        val h = head.find(raw) ?: continue
-        val words = word.findAll(raw.substring(h.range.last + 1)).map {
-            val s = it.groupValues[1].toLong()
-            Word(s, s + it.groupValues[2].toLong(), it.groupValues[3])
-        }.filter { it.text.isNotEmpty() }.toList()
-        lines.add(Line(h.groupValues[1].toLong(), words.joinToString("") { it.text }.trim(), words))
-    }
-    return lines
-}
-
 // A word without an end ends where the next line starts.
-private fun closeWords(lines: List<Line>): List<Line> = lines.mapIndexed { i, l ->
+internal fun closeWords(lines: List<Line>): List<Line> = lines.mapIndexed { i, l ->
     if (l.words.none { it.endMs < 0 }) l
     else {
         val nextStart = lines.getOrNull(i + 1)?.startMs ?: (l.words.last().startMs + 1000)
@@ -371,26 +324,17 @@ private fun closeWords(lines: List<Line>): List<Line> = lines.mapIndexed { i, l 
     }
 }
 
-/** Adds translations from a second LRC with the same timestamps. */
-fun withTranslation(lines: List<Line>, translationLrc: String?): List<Line> {
-    if (translationLrc.isNullOrBlank()) return lines
-    val byTime = parseLrc(translationLrc).filter { it.text.isNotBlank() }.associate { it.startMs to it.text }
-    return lines.map { l ->
-        val t = byTime[l.startMs] ?: byTime.entries.firstOrNull { abs(it.key - l.startMs) < 300 }?.value
-        Line(l.startMs, l.text, l.words, t ?: l.translation)
-    }
-}
 
 // ---- Providers ----
 
 /** Throws on an HTTP error, so a provider that couldn't answer isn't taken for one that has no lyrics. */
-private fun get(url: String, vararg headers: Pair<String, String>, body: String? = null): String =
+fun lyricsGet(url: String, vararg headers: Pair<String, String>, body: String? = null): String =
     httpText(url, body?.toByteArray(), mapOf("User-Agent" to "Mozilla/5.0 roma") + headers, timeoutMs = 12_000)
 
-private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
-internal fun JsonElement?.str(): String? = (this as? JsonPrimitive)?.takeIf { it.isString || it.content != "null" }?.content
-internal fun JsonElement?.obj(): JsonObject? = this as? JsonObject
-internal fun JsonElement?.arr(): JsonArray? = this as? JsonArray
+fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
+fun JsonElement?.str(): String? = (this as? JsonPrimitive)?.takeIf { it.isString || it.content != "null" }?.content
+fun JsonElement?.obj(): JsonObject? = this as? JsonObject
+fun JsonElement?.arr(): JsonArray? = this as? JsonArray
 
 private fun foldTitle(s: String) = Romanizer.stripMarks(s).lowercase().replace(Regex("""[(\[（【].*?[)\]）】]"""), "").replace(Regex("""[\s\p{P}]+"""), "")
 
@@ -402,7 +346,7 @@ fun sameTitle(a: String, b: String): Boolean {
 }
 
 /** Picks the candidate whose duration is closest, within 5 s when the song's duration is known. */
-private fun <T> closest(items: List<T>, durationSec: Int, durationOf: (T) -> Double): T? {
+fun <T> closest(items: List<T>, durationSec: Int, durationOf: (T) -> Double): T? {
     if (durationSec <= 0) return items.firstOrNull()
     return items.filter { abs(durationOf(it) - durationSec) <= 5 }.minByOrNull { abs(durationOf(it) - durationSec) }
 }
@@ -413,7 +357,7 @@ object LrcLib : LyricsProvider {
     override val name = "LRCLIB"
 
     override fun fetch(q: LyricsQuery): Lyrics? {
-        val body = get("https://lrclib.net/api/search?track_name=${enc(q.title)}&artist_name=${enc(q.artist)}")
+        val body = lyricsGet("https://lrclib.net/api/search?track_name=${enc(q.title)}&artist_name=${enc(q.artist)}")
         val items0 = Json.parseToJsonElement(body).arr()?.mapNotNull { it.obj() } ?: return null
         val items = items0.filter { sameTitle(it["trackName"].str() ?: "", q.title) }
         val withSynced = items.filter { !it["syncedLyrics"].str().isNullOrBlank() }
@@ -422,143 +366,6 @@ object LrcLib : LyricsProvider {
         val plain = closest(items.filter { !it["plainLyrics"].str().isNullOrBlank() }, q.durationSec) { it["duration"].str()?.toDoubleOrNull() ?: 0.0 }
             ?: return null
         return Lyrics(name, plain["plainLyrics"].str()!!.lines().map { Line(0, it) }, false)
-    }
-}
-
-/** NetEase Cloud Music: word timing (YRC) for much C/J-pop, line LRC and Chinese translations otherwise. Unofficial API. */
-object NetEase : LyricsProvider {
-    override val id = "netease"
-    override val name = "NetEase"
-    private val referer = "Referer" to "https://music.163.com/"
-
-    override fun fetch(q: LyricsQuery): Lyrics? {
-        val body = get("https://music.163.com/api/cloudsearch/pc?s=${enc(q.title + " " + q.artist)}&type=1&limit=10", referer)
-        val songs = Json.parseToJsonElement(body).obj()?.get("result").obj()?.get("songs").arr()?.mapNotNull { it.obj() } ?: return null
-        val song = closest(songs.filter { sameTitle(it["name"].str() ?: "", q.title) }, q.durationSec) { (it["dt"].str()?.toDoubleOrNull() ?: 0.0) / 1000 } ?: return null
-        val id = song["id"].str() ?: return null
-        val lyr = Json.parseToJsonElement(get("https://music.163.com/api/song/lyric?id=$id&lv=-1&tv=-1&yv=-1", referer)).obj() ?: return null
-        val translation = lyr["tlyric"].obj()?.get("lyric").str()
-        val yrc = lyr["yrc"].obj()?.get("lyric").str()
-        if (!yrc.isNullOrBlank()) {
-            val lines = parseYrc(yrc)
-            if (lines.isNotEmpty()) return Lyrics(name, withTranslation(lines, translation), true)
-        }
-        val lrc = lyr["lrc"].obj()?.get("lyric").str() ?: return null
-        val lines = parseLrc(lrc).filter { !it.text.contains(" : ") && !it.text.contains("：") } // credits like "作词 : X"
-        return if (lines.isEmpty()) null else Lyrics(name, withTranslation(lines, translation), true)
-    }
-}
-
-/** KuGou: KRC word timing, encrypted with a well-known key. Unofficial API. */
-object KuGou : LyricsProvider {
-    override val id = "kugou"
-    override val name = "KuGou"
-    private val key = intArrayOf(64, 71, 97, 119, 94, 50, 116, 71, 81, 54, 49, 45, 206, 210, 110, 105)
-
-    override fun fetch(q: LyricsQuery): Lyrics? {
-        val keyword = enc("${q.artist} - ${q.title}")
-        val search = get("https://mobileservice.kugou.com/api/v3/search/song?version=9108&plat=0&pagesize=8&showtype=0&keyword=$keyword")
-        val songs = Json.parseToJsonElement(search).obj()?.get("data").obj()?.get("info").arr()?.mapNotNull { it.obj() } ?: return null
-        val song = closest(songs.filter { sameTitle(it["songname"].str() ?: "", q.title) }, q.durationSec) { it["duration"].str()?.toDoubleOrNull() ?: 0.0 } ?: return null
-        val hash = song["hash"].str() ?: return null
-        val cands = get("https://krcs.kugou.com/search?ver=1&man=yes&client=mobi&keyword=$keyword&duration=${q.durationSec * 1000}&hash=$hash")
-        val cand = Json.parseToJsonElement(cands).obj()?.get("candidates").arr()?.firstOrNull().obj() ?: return null
-        val dl = get("https://krcs.kugou.com/download?ver=1&man=yes&client=pc&fmt=krc&charset=utf8&id=${cand["id"].str()}&accesskey=${cand["accesskey"].str()}")
-        val content = Json.parseToJsonElement(dl).obj()?.get("content").str() ?: return null
-        val lines = parseKrc(decrypt(content))
-        return if (lines.isEmpty()) null else Lyrics(name, lines, true)
-    }
-
-    fun decrypt(base64: String): String {
-        val raw = Base64.getDecoder().decode(base64)
-        val data = ByteArray(raw.size - 4) { i -> (raw[i + 4].toInt() xor key[i % key.size]).toByte() }
-        val inflater = Inflater()
-        inflater.setInput(data)
-        val out = java.io.ByteArrayOutputStream()
-        val buf = ByteArray(8192)
-        try {
-            while (!inflater.finished()) {
-                val n = inflater.inflate(buf)
-                if (n == 0 && (inflater.needsInput() || inflater.needsDictionary())) break
-                out.write(buf, 0, n)
-            }
-        } finally {
-            inflater.end()
-        }
-        // decodeToString, not toString(Charset): that one is API 33, and core isn't lint-checked for Android.
-        return out.toByteArray().decodeToString().removePrefix("﻿")
-    }
-}
-
-/**
- * LyricsPlus, the YouLy+ backend: free, no key. Its server searches Apple Music, QQ Music, Musixmatch and others by
- * title, artist and duration and sends the best as JSON: word timing as syllables, sometimes an English translation
- * per line. The source names the server's own source ("LyricsPlus · Apple"). 404 means nothing found.
- */
-object LyricsPlus : LyricsProvider {
-    override val id = "lyricsplus"
-    override val name = "LyricsPlus"
-
-    // ponytail: the main server only; YouLy+ lists mirrors (lyricsplus.atomix.one, …) to try if it goes down
-    override fun fetch(q: LyricsQuery): Lyrics? {
-        val (code, body) = httpCall("https://lyricsplus.prjktla.my.id/v2/lyrics/get?title=${enc(q.title)}&artist=${enc(q.artist)}&duration=${q.durationSec}", headers = mapOf("User-Agent" to "Mozilla/5.0 roma"), timeoutMs = 12_000)
-        if (code == 404) return null
-        if (code != 200) throw IOException("HTTP $code")
-        return parse(body, q)
-    }
-
-    fun parse(body: String, q: LyricsQuery): Lyrics? {
-        val root = Json.parseToJsonElement(body).obj() ?: return null
-        val meta = root["metadata"].obj()
-        // The server names the song only for some sources; when it does, it must be this one.
-        meta?.get("title").str()?.let { if (!sameTitle(it, q.title)) return null }
-        fun ms(e: JsonElement?) = e.str()?.toDoubleOrNull()?.toLong() ?: 0
-        val lines = root["lyrics"].arr()?.mapNotNull { it.obj() }?.map { r ->
-            val words = r["syllabus"].arr().orEmpty().mapNotNull { it.obj() }
-                .map { s -> ms(s["time"]).let { t -> Word(t, t + ms(s["duration"]), s["text"].str() ?: "") } }
-                .filter { it.text.isNotEmpty() }
-            val text = if (words.isEmpty()) r["text"].str().orEmpty().trim() else words.joinToString("") { it.text }.trim()
-            Line(ms(r["time"]), text, words, r["translation"].obj()?.get("text").str()?.takeIf { it.isNotBlank() })
-        } ?: return null
-        // The server matched the song on its own: its timing must fit this recording, ending at most 45 s after it and
-        // not before its middle with over 90 s left (LastWave's bounds, LyricsRepository.plausibleDuration).
-        val end = lines.maxOfOrNull { l -> l.words.lastOrNull()?.endMs ?: l.startMs } ?: return null
-        val song = q.durationSec * 1000L
-        if (song >= 60_000 && end > 0 && end !in minOf(song / 2, song - 90_000)..song + 45_000) return null
-        val source = meta?.get("source").str()?.let { "$name · $it" } ?: name
-        return Lyrics(source, lines, lines.any { it.startMs > 0 })
-    }
-}
-
-/**
- * YouTube Music's own lyrics, as the Android app gets them: the lyrics browse ID through the ANDROID_MUSIC client
- * gives line timing (timedLyricsData with cueRange) when there is any, otherwise the plain text from the web client.
- * The source names YTM's own source ("Source: LyricFind").
- */
-object YouTubeLyrics : LyricsProvider {
-    override val id = "youtube"
-    override val name = "YouTube Music"
-    private val mobile = arrayOf("User-Agent" to "com.google.android.apps.youtube.music/7.21.50 (Linux; U; Android 14) gzip")
-
-    override fun fetch(q: LyricsQuery): Lyrics? = runBlocking {
-        val next = YouTube.next(WatchEndpoint(videoId = q.videoId)).getOrThrow()
-        val endpoint = next.lyricsEndpoint ?: return@runBlocking null
-        timed(endpoint.browseId)?.let { return@runBlocking it }
-        val text = YouTube.lyrics(endpoint).getOrThrow() ?: return@runBlocking null
-        Lyrics(name, text.lines().map { Line(0, it) }, false)
-    }
-
-    /** Null when the mobile response has no timedLyricsModel; plain lines when it has text without cueRange. */
-    fun timed(browseId: String): Lyrics? {
-        val body = """{"context":{"client":{"clientName":"ANDROID_MUSIC","clientVersion":"7.21.50","androidSdkVersion":34,"hl":"en"}},"browseId":"$browseId"}"""
-        val root = Json.parseToJsonElement(get("https://music.youtube.com/youtubei/v1/browse?prettyPrint=false", *mobile, "Content-Type" to "application/json", body = body)).obj()
-        val data = listOf("contents", "elementRenderer", "newElement", "type", "componentType", "model", "timedLyricsModel", "lyricsData")
-            .fold(root as JsonElement?) { e, k -> e.obj()?.get(k) }.obj() ?: return null
-        val rows = data["timedLyricsData"].arr()?.mapNotNull { it.obj() } ?: return null
-        val source = data["sourceMessage"].str()?.let { "$name · $it" } ?: name
-        val synced = rows.all { it["cueRange"] != null }
-        val lines = rows.map { Line(if (synced) it["cueRange"].obj()?.get("startTimeMilliseconds").str()?.toLongOrNull() ?: 0 else 0, it["lyricLine"].str() ?: "") }
-        return if (lines.isEmpty()) null else Lyrics(source, lines, synced)
     }
 }
 
@@ -597,7 +404,7 @@ object GoogleTranslate {
     /** One batch: its translations in order, and the language Google detected. */
     private fun translate(texts: List<String>, lang: String): Pair<List<String>, String> {
         val form = "client=gtx&sl=auto&tl=${enc(lang)}&dt=t&q=${enc(texts.joinToString("\n\uE000\n"))}"
-        val root = Json.parseToJsonElement(get("https://translate.googleapis.com/translate_a/single", body = form)).jsonArray
+        val root = Json.parseToJsonElement(lyricsGet("https://translate.googleapis.com/translate_a/single", body = form)).jsonArray
         val text = root[0].arr().orEmpty().joinToString("") { it.arr()?.getOrNull(0).str().orEmpty() }
         val parts = text.split('\uE000').map { it.trim() }
         if (parts.size != texts.size) throw IOException("Google Translate: ${parts.size} lines back for ${texts.size}")

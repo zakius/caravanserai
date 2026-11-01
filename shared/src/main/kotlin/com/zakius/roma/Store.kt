@@ -3,7 +3,6 @@ package com.zakius.roma
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
-import com.metrolist.innertube.YouTube
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -11,7 +10,6 @@ import roma.core.Bans
 import roma.core.Icu
 import roma.core.Item
 import roma.core.LyricsProvider
-import roma.core.LyricsProviders
 import roma.core.Override
 import roma.core.RadioSettings
 import roma.core.RomanizeSettings
@@ -102,16 +100,7 @@ object Store {
         romanizer.cache = Names
         // After the first frame: new names come with network results, well after it, and start-up has enough reads.
         Startup.later { Names.load(File(cache, "names.json")) }
-        cookie = prefs.getString("cookie", null)
-        YouTube.cookie = cookie
-        // InnerTubeX sends the account cookies on browse and next calls (home, radio) only with this on; without it
-        // Home is the anonymous one and never has the personal mixes. Metrolist turns it on too.
-        YouTube.useLoginForBrowse = true
-        // English, as the app is: InnerTubeX would send the phone's language, and in Polish YouTube Music's Songs search
-        // leaves out the original "Youngblood" (5SOS) while English finds it first. The region stays the phone's.
-        YouTube.locale = com.metrolist.innertube.models.YouTubeLocale(gl = java.util.Locale.getDefault().country.ifEmpty { "US" }, hl = "en")
-        prefs.getString("visitorData", null)?.let { YouTube.visitorData = it }
-        prefs.getString("dataSyncId", null)?.let { YouTube.dataSyncId = it }
+        backend.init()
         Startup.later {
             indexThread.execute {
                 index.addAll(runCatching { json.decodeFromString<List<Song>>(File(cache, "index.json").readText()) }.getOrDefault(emptyList()))
@@ -141,23 +130,9 @@ object Store {
             Playback.romanizationChanged() // the notification's title follows
             romanizer.retryDictionary() // Japanese read as written doesn't load the dictionary; romanized again, it does
         }
-        if (key == "cookie") { cookie = value as String?; File(cache, "mixes.json").delete() } // the mixes are the account's
-        if (key.startsWith("rom.") || key == "cookie" || key == "source") dataChanged()
+        if (backend.changes(key) or key.startsWith("rom.")) dataChanged()
         version++
         if (key == "play.ahead" && value == true && Playback.player.isPlaying) Playback.downloadAhead()
-    }
-
-    /** The account's cookie, as saved. YouTube's own copy isn't read on the main thread: that would build its client. */
-    @Volatile var cookie: String? = null
-        private set
-    val signedIn get() = cookie?.contains("SAPISID") == true
-
-    /** Signed out, continuation pages come back empty unless every request carries the same visitor data. */
-    suspend fun ensureVisitorData() {
-        if (YouTube.visitorData != null) return
-        val v = YouTube.visitorData().getOrNull() ?: return
-        YouTube.visitorData = v
-        prefs.edit().putString("visitorData", v).apply() // not set(): that bumps version and reloads every page
     }
 
     /** The pinned row's last known mixes, so it isn't empty while Home loads. Null before the first lookup. */
@@ -315,9 +290,10 @@ object Store {
 
     /** Providers in the user's order. */
     fun lyricsOrder(): List<LyricsProvider> {
-        val ids = str("lyrics.order", LyricsProviders.all.joinToString(",") { it.id }).split(",")
-        val known = ids.mapNotNull { id -> LyricsProviders.all.firstOrNull { it.id == id } }
-        return known + LyricsProviders.all.filter { it !in known }
+        val all = backend.lyricsProviders
+        val ids = str("lyrics.order", all.joinToString(",") { it.id }).split(",")
+        val known = ids.mapNotNull { id -> all.firstOrNull { it.id == id } }
+        return known + all.filter { it !in known }
     }
 
     fun lyricsEnabled(p: LyricsProvider) = bool("lyrics.on.${p.id}", true)

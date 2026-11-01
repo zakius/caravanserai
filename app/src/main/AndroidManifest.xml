@@ -22,7 +22,7 @@
         android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:label="${appLabel}"
-        android:icon="@android:drawable/ic_media_play"
+        android:icon="${appIcon}"
         android:theme="@style/Roma"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true">
@@ -41,7 +41,7 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="roma" android:host="lastfm" />
+                <data android:scheme="${linkScheme}" android:host="lastfm" />
             </intent-filter>
         </activity>
         <service

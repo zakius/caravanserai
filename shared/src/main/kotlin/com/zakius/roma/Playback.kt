@@ -26,15 +26,12 @@ import roma.core.Translation
 import roma.core.Scrobble
 import roma.core.ScrobbleQueue
 import roma.core.Song
-import roma.core.InnerTubeXStreams
 import roma.core.StreamException
-import roma.core.Streams
 import roma.core.again
 import roma.core.filterMix
 import roma.core.filterRadio
 import roma.core.romanizeLyrics
 import roma.core.shouldScrobble
-import roma.core.YouTubeLyrics
 import kotlinx.serialization.Serializable
 import java.io.File
 import kotlin.math.pow
@@ -77,7 +74,6 @@ object Playback {
     /** [p]: the platform's player, set up by the app; the stream tokens' provider is set beside it. */
     fun init(p: AudioPlayer) {
         player = p
-        Streams.refuseVisionOs = BuildConfig.REFUSE_VISIONOS
         Startup.later { scope.launch {
             liked = withContext(Dispatchers.IO) { runCatching { Store.json.decodeFromString<List<String>>(likedFile.readText()).toSet() }.getOrDefault(emptySet()) }
             likeChanged()
@@ -100,20 +96,7 @@ object Playback {
                 online = up
             }
         }
-        Startup.later { SubsonicSource.start() }
-        Startup.later { scope.launch(Dispatchers.IO) {
-            Streams.keepIn(File(Store.cache, "streams.txt"))
-            // The first stream lookup of a run sets up NewPipe and asks YouTube for visitor data. Do it now so the first
-            // tap doesn't pay for it, on the song Play would resume: its URL is then known too (kept 5 hours).
-            val resume = runCatching { positionFile.readText().substringBefore(' ') }.getOrNull()?.takeIf { !player.fullyCached(it) }
-            (resume ?: Store.anySong()?.id)?.let { id -> runCatching { streamUrl(id) } }
-            // A song needed the InnerTubeX fallback in the last week: warm that path too (its player script, cipher
-            // config and the PoToken WebView, a few seconds cold), within the same limits as the guesses below. Later,
-            // not at launch: creating the first WebView blocks the main thread while Home is still coming in.
-            if (thrifty()) return@launch
-            delay(10_000)
-            Streams.recentFallback()?.let { id -> runCatching { streamUrl(id) } }
-        } }
+        Startup.later { backend.start() }
         player.listener = object : AudioPlayer.Listener {
             override fun onEvents(listChanged: Boolean, transition: Boolean, repeatChanged: Boolean, playingChanged: Boolean, discontinuity: Boolean) {
                 tick++
@@ -224,12 +207,15 @@ object Playback {
         scope.launch { for (u in urls) Images.load(u, px) }
     }
 
+    /** Blocking. The song Play would resume, unless it is on disk already; null when there's none. */
+    fun resumeId(): String? = runCatching { positionFile.readText().substringBefore(' ') }.getOrNull()?.takeIf { !player.fullyCached(it) }
+
     /** Blocking, on the player's loader thread. URLs expire after about 6 hours; reuse them for 5. */
     fun streamUrl(id: String): String {
         synchronized(urls) {
             urls[id]?.let { (url, at) -> if (System.currentTimeMillis() - at < 5 * 3600_000) return url }
         }
-        val url = Sources.of(id).streamUrl(id, full = fullLookup.remove(id))
+        val url = backend.streamUrl(id, full = fullLookup.remove(id))
         synchronized(urls) { urls[id] = url to System.currentTimeMillis() }
         postMain { applyLoudness(id) }
         return url
@@ -238,7 +224,7 @@ object Playback {
     // Only turn loud tracks down: volume can't go above 1.
     private fun applyLoudness(id: String) {
         if (current()?.song?.id != id) return
-        val db = Sources.of(id).loudness(id)
+        val db = backend.loudness(id)
         baseVolume = if (db == null || db <= 0f || !Store.bool("play.normalize", true)) 1f else 10f.pow(-db / 20f)
         player.volume = baseVolume
     }
@@ -508,7 +494,7 @@ object Playback {
                     if (fresh.isNotEmpty()) return@repeat
                     // A continuation saved before a restart may have expired: start the radio's pages over (the
                     // songs already queued are filtered out).
-                    val page = Sources.of(seed.id).radio(seed, continuation) ?: run { continuation = null; return@repeat }
+                    val page = backend.radio(seed, continuation) ?: run { continuation = null; return@repeat }
                     continuation = page.next
                     fresh = filterRadio(page.songs, seed, r, already, Store.bans(), settings)
                     if (continuation == null) return@repeat
@@ -541,7 +527,7 @@ object Playback {
         opening = title to thumb
         duck(true)
         pendingJob = scope.launch {
-            val source = Sources.of(id)
+            val source = backend
             val page = withContext(Dispatchers.IO) { source.playlist(id) }
             // Liked music plays as liked: the mix filters (versions, bans) are for what YouTube picks.
             val songs = withContext(Dispatchers.IO) { page?.songs.orEmpty().let { if (id == source.likedId) it else filterMix(it, emptyList(), Store.bans(), Store.radioSettings()) } }
@@ -561,7 +547,7 @@ object Playback {
                 repeat(3) {
                     val c = mixContinuation
                     if (fresh.isNotEmpty() || c == null) return@repeat
-                    val page = Sources.of(id).playlist(id, c) ?: return@repeat
+                    val page = backend.playlist(id, c) ?: return@repeat
                     mixContinuation = page.next
                     fresh = filterMix(page.songs, already, Store.bans(), Store.radioSettings())
                 }
@@ -579,7 +565,7 @@ object Playback {
         }
     }
 
-    private suspend fun relatedArtists(seed: Song) = Sources.of(seed.id).relatedArtists(seed)
+    private suspend fun relatedArtists(seed: Song) = backend.relatedArtists(seed)
 
     // ---- Sleep timer ----
 
@@ -794,11 +780,11 @@ object Playback {
         if (index < player.mediaItemCount && entries()[index].song.id == song.id) player.seekTo(index, 0)
     }
 
-    fun canLike(s: Song?) = s != null && Sources.of(s.id).canLike
+    fun canLike(s: Song?) = s != null && backend.canLike
 
     fun toggleLike(s: Song? = current()?.song) {
         val song = s ?: return
-        val source = Sources.of(song.id)
+        val source = backend
         if (!source.canLike) return
         val like = song.id !in liked
         liked = if (like) liked + song.id else liked - song.id
@@ -834,7 +820,7 @@ object Playback {
      */
     fun checkLike(s: Song?) {
         val id = s?.id ?: return
-        val source = Sources.of(id)
+        val source = backend
         if (!source.canLike || id in toggled || !likeChecked.add(id)) return
         scope.launch {
             val like = withContext(Dispatchers.IO) { source.liked(id) }
@@ -891,10 +877,10 @@ object Playback {
         runCatching { Store.json.decodeFromString<LyricsResult>(file.readText()) }.getOrNull()?.let { return it }
         if (!network) return null
         val q = LyricsQuery(s.id, s.title.original, s.artistOriginal, s.album?.name?.original, s.durationSec)
-        // The source's own lyrics are the reference; YouTube Music's switch in Settings is that slot.
-        val own = Sources.of(s.id).lyrics
+        // The source's own lyrics are the reference; when Settings lists them (YouTube Music's), their switch is that slot.
+        val own = backend.lyrics
         val enabled = Store.lyricsOrder().filter { Store.lyricsEnabled(it) }
-        val providers = if (own === YouTubeLyrics) enabled else enabled.filter { it !== YouTubeLyrics } + listOfNotNull(own)
+        val providers = if (own in backend.lyricsProviders) enabled else enabled + listOfNotNull(own)
         val search = LyricsProviders.find(q, providers, Store.icu, reference = own)
         val r = search.result ?: LyricsResult(Lyrics("", emptyList(), false))
         // "No lyrics" is kept only when every provider answered; after a failure the next play asks again.
@@ -1014,7 +1000,7 @@ object Playback {
         resetPlayCount()
         val s = current()?.song ?: return
         // Each play is reported once, by the side that knows its source (docs/subsonic.md).
-        val source = Sources.of(s.id)
+        val source = backend
         source.nowPlaying(s)
         if (!source.lastFm) return
         val (fm, sk) = lastFm() ?: return
@@ -1029,7 +1015,7 @@ object Playback {
         if (scrobbled || !shouldScrobble(duration, playedHalfSeconds / 2)) return
         scrobbled = true
         Store.played(s)
-        val source = Sources.of(s.id)
+        val source = backend
         source.played(scrobbleOf(s))
         if (!source.lastFm || Store.str("lastfm.session", "").isBlank()) return
         scrobbleQueue.add(scrobbleOf(s))
@@ -1045,16 +1031,9 @@ object Playback {
     }
 }
 
-/**
- * Lists get small thumbnails (60–120 px); the player and the media notification need a large one.
- * Google-hosted art takes its size in the URL; YouTube video stills come in fixed sizes, hqdefault (480 px) always exists.
- */
-fun bigThumb(url: String) = if (url.startsWith("subsonic:")) "$url?size=$BIG_PX" else url.replace(BIG_WH, "=w544-h544").replace(SMALL_STILL, "/hqdefault.jpg")
+/** Lists get small thumbnails (60–120 px); the player and the media notification need a large one. */
+fun bigThumb(url: String) = backend.bigThumb(url)
 
 /** The player's art: bigThumb's size. */
 const val BIG_PX = 544
-
-// Compiled once: a 1,000-song playlist builds 1,000 media items on the main thread when it starts.
-private val BIG_WH = Regex("=w\\d+-h\\d+")
-private val SMALL_STILL = Regex("/(default|mqdefault)\\.jpg")
 

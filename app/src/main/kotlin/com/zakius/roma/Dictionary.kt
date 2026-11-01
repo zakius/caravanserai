@@ -76,7 +76,7 @@ object Dictionary {
         // Asked first: Android's own detour to this switch cancels the install, which would read as a refusal.
         if (!app.packageManager.canRequestPackageInstalls()) {
             askedPermission = true
-            status = "Allow roma to install apps, then come back"
+            status = "Allow ${BuildConfig.APP_NAME} to install apps, then come back"
             c.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:${app.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             return
         }

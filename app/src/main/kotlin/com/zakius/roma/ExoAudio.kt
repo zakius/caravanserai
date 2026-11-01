@@ -31,7 +31,7 @@ import androidx.media3.extractor.mkv.MatroskaExtractor
 import androidx.media3.extractor.mp4.FragmentedMp4Extractor
 import androidx.media3.extractor.mp4.Mp4Extractor
 import androidx.media3.extractor.text.SubtitleParser
-import roma.core.Streams
+import roma.core.StreamException
 import java.io.File
 
 /** A queue entry as ExoPlayer holds it: a media item tagged with its [Entry]. */
@@ -221,7 +221,7 @@ class ExoAudio(c: Context) : AudioPlayer {
 
         private fun noConnection(e: Throwable): Boolean = generateSequence(e) { it.cause }.any {
             it is java.net.UnknownHostException || it is java.net.ConnectException || it is java.net.SocketTimeoutException ||
-                it is java.net.NoRouteToHostException || it is java.net.SocketException || it.message == Streams.NO_CONNECTION
+                it is java.net.NoRouteToHostException || it is java.net.SocketException || (it as? StreamException)?.offline == true
         }
     }
 }

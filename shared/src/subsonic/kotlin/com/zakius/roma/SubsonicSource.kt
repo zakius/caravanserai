@@ -1,5 +1,6 @@
 package com.zakius.roma
 
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -17,16 +18,19 @@ import roma.core.LyricsProvider
 import roma.core.Scrobble
 import roma.core.ScrobbleQueue
 import roma.core.Song
-import roma.core.SubSong
 import roma.core.SubsonicClient
 import roma.core.SubsonicException
 import roma.core.SubsonicIds
 import roma.core.SubsonicIndex
 import roma.core.SubsonicLyrics
 import roma.core.item
+import roma.core.LrcLib
 import roma.core.matchDistance
 import roma.core.song
 import java.io.File
+
+/** The Subsonic app's one source. */
+val backend: Source = SubsonicSource
 
 /**
  * A Subsonic or OpenSubsonic server (docs/subsonic.md). The whole library is synced into cache/subsonic and romanized
@@ -66,6 +70,8 @@ object SubsonicSource : Source {
 
     override val name get() = if (serverType == "oasis") "oasis" else "your server"
     override val account get() = Store.prefs.getString("subsonic.url", null)?.let { it + "\n" + Store.prefs.getString("subsonic.user", "") }
+    // Another server or user: what pages hold is the old one's.
+    override fun changes(key: String) = key == "subsonic.url" || key == "subsonic.user"
 
     // ---- The library ----
 
@@ -144,12 +150,12 @@ object SubsonicSource : Source {
         if (client == null) return
         scope.launch {
             runCatching { lock.withLock { publish(syncLocked()) } }
-            postMain { if (Sources.chosen === this@SubsonicSource) Store.dataChanged() }
+            postMain { Store.dataChanged() }
         }
     }
 
     /** At start: the library into memory, then a sync if the last one is over 6 hours old, and unsent plays out. */
-    fun start() {
+    override fun start() {
         if (client == null) return
         scope.launch {
             val l = runCatching { lib() }.getOrNull()
@@ -158,44 +164,8 @@ object SubsonicSource : Source {
         }
     }
 
-    // ---- oasis: the server's own YouTube Music link for this user ----
-
-    /** The YouTube Music account this server user is linked to, as far as roma linked it; empty when none. */
-    val youTubeAccount get() = Store.str("subsonic.ytm", "")
-    /** A link waits for the YouTube Music sign-in that was opened for it. */
-    var linkAfterSignIn = false
-
-    /**
-     * Hands roma's YouTube Music sign-in to oasis, so the server's mixes, history and plays are this account's.
-     * Without a sign-in yet, the sign-in page opens and the link follows it ([signedIn] calls back).
-     */
-    fun linkYouTubeMusic() {
-        val cookie = Store.cookie
-        if (!Store.signedIn || cookie == null) { linkAfterSignIn = true; Nav.open(Page("login", "")); return }
-        linkAfterSignIn = false
-        val c = client ?: return
-        scope.launch {
-            runCatching { c.linkYouTubeMusic(cookie) }
-                .onSuccess { name ->
-                    postMain { Store.set("subsonic.ytm", name.ifEmpty { "linked" }); toast("YouTube Music linked to the server: $name"); Store.dataChanged() }
-                    CoroutineScope(Dispatchers.IO).launch { followNewMixes() }
-                }
-                .onFailure { e -> postMain { toast(if (e is roma.core.SubsonicException) e.message ?: "The server refused" else plainError(e), long = true) } }
-        }
-    }
-
-    fun unlinkYouTubeMusic() {
-        val c = client ?: return
-        scope.launch {
-            runCatching { c.unlinkYouTubeMusic() }
-                .onSuccess { postMain { Store.set("subsonic.ytm", null); mixTiles = emptyList(); Store.dataChanged() } }
-                .onFailure { e -> postMain { toast(plainError(e), long = true) } }
-        }
-    }
-
     /** The server changed or was removed: its library goes. */
     fun forget() {
-        Store.set("subsonic.ytm", null)
         library = null
         scope.launch { lock.withLock { dir.deleteRecursively() } }
         changes++
@@ -203,31 +173,15 @@ object SubsonicSource : Source {
 
     // ---- Pages ----
 
-    /** The server's mixes (oasis: YouTube Music's personal mixes, marked "oasisMix"), for Home's tiles. */
+    /** The server's mixes (oasis: its streaming services' personal mixes, marked "oasisMix"), for Home's tiles, in the server's order. */
     var mixTiles by mutableStateOf<List<Item>>(emptyList())
         private set
 
     /** Reads the mixes again; returns how many there are. Blocking. */
     private fun refreshMixes(): Int {
-        val mixes = need().playlists().filter { it.mix }
-        val youtubeIds = mixes.associate { SubsonicIds.encode(it.id) to it.youtubeId }
-        val tiles = mixes.map { Store.romanizer.item(it) }.sortedWith(roma.core.mixOrder { youtubeIds[it.id] })
+        val tiles = need().playlists().filter { it.mix }.map { Store.romanizer.item(it) }
         postMain { mixTiles = tiles }
         return tiles.size
-    }
-
-    /**
-     * After a link oasis adds the account's mixes one by one, over a minute or so: read them every 10 s until two
-     * reads in a row find as many, at most 3 minutes.
-     */
-    private suspend fun followNewMixes() {
-        var last = -1
-        repeat(18) {
-            kotlinx.coroutines.delay(10_000)
-            val n = runCatching { refreshMixes() }.getOrNull() ?: return
-            if (n == last && n > 0) return
-            last = n
-        }
     }
 
     override suspend fun home(from: String?): Pair<String?, List<Section>> {
@@ -248,11 +202,12 @@ object SubsonicSource : Source {
         return null to shelves
     }
     override val mixes = false
+    @Composable override fun HomeTiles(mixes: List<Item>?, read: Boolean) = LibraryTiles()
 
     override val searchIsLocal = true
     override suspend fun suggestions(query: String) = emptyList<String>()
 
-    /** The index's matches at once, then the server's own results after them (on oasis, YouTube Music's too). */
+    /** The index's matches at once, then the server's own results after them (on oasis, its streaming services' too). */
     override suspend fun search(query: String, filter: Int, asTyped: String?, partial: suspend (Found) -> Unit): Found {
         val local = searchLocal(query, filter)
         if (filter == 3) return local
@@ -284,6 +239,8 @@ object SubsonicSource : Source {
     }
 
     override val libraryReady get() = client != null
+    override val libraryHint = "Add your server in Settings to see its playlists and albums."
+    override val libraryHintPage = Page("settings", "source")
     override fun libraryKey(tab: Int) = "subsonic-$tab"
 
     override suspend fun library(tab: Int, partial: suspend (List<Item>) -> Unit): List<Item> {
@@ -295,7 +252,7 @@ object SubsonicSource : Source {
         }
     }
 
-    // The mixes live in Home's tiles; Playlists holds the rest (oasis: YouTube Music's library playlists too).
+    // The mixes live in Home's tiles; Playlists holds the rest (oasis: the streaming services' library playlists too).
     private fun playlists() = need().playlists().filter { !it.mix }.map { Store.romanizer.item(it) }
 
     override suspend fun detail(p: Page, partial: suspend (Detail) -> Unit): Detail {
@@ -323,8 +280,8 @@ object SubsonicSource : Source {
             }
             else -> {
                 fun count(n: Int, what: String) = "$n $what" + if (n == 1) "" else "s"
-                // The library's own first, at once; then the server's page, which on oasis holds the whole YouTube Music
-                // discography and top songs. Offline the library's stays.
+                // The library's own first, at once; then the server's page, which on oasis holds the artist's whole
+                // discography and top songs from its streaming services. Offline the library's stays.
                 val a = l.artistById[p.id]
                 val songs = l.artistSongs[p.id].orEmpty()
                 val albums = l.index.albums.filter { it.artistId?.let(SubsonicIds::encode) == p.id }.mapNotNull { l.albumById[SubsonicIds.encode(it.id)] }
@@ -333,7 +290,7 @@ object SubsonicSource : Source {
                 local?.let { partial(it) }
                 val server = runCatching { need().artist(SubsonicIds.decode(p.id)) }.getOrElse { if (local != null) return local else throw it }
                 val (sa, subs) = server
-                // A release the library doesn't hold is labelled as YouTube Music does: Single · 2021.
+                // A release the library doesn't hold is labelled with its type and year: Single · 2021.
                 val all = subs.map { s -> l.albumById[SubsonicIds.encode(s.id)] ?: r.item(s).let { i ->
                     val label = listOfNotNull(s.releaseType?.replace("Ep", "EP"), s.year.takeIf { it > 0 }?.toString()).joinToString(" · ")
                     if (label.isEmpty()) i else Item(i.kind, i.id, i.title, roma.core.Text(label, label), i.thumb)
@@ -349,7 +306,7 @@ object SubsonicSource : Source {
 
     /**
      * Songs like the seed when the server knows any (getSimilarSongs); each next page is seeded from the last song of
-     * the page before, so the radio drifts on as YouTube's does. Otherwise the library at random. The leash applies.
+     * the page before, so the radio drifts on. Otherwise the library at random. The leash applies.
      */
     override suspend fun radio(seed: Song, from: String?): SongPage? {
         val l = runCatching { lib() }.getOrNull() ?: return null
@@ -361,6 +318,7 @@ object SubsonicSource : Source {
     }
 
     override suspend fun relatedArtists(seed: Song) = emptySet<String>()
+    override val freeRadio = "Free: the server's radio as is"
 
     override suspend fun playlist(id: String, from: String?): SongPage? {
         val l = runCatching { lib() }.getOrNull() ?: return null
@@ -394,33 +352,36 @@ object SubsonicSource : Source {
     override fun streamUrl(id: String, full: Boolean) = need().streamUrl(SubsonicIds.decode(id))
     override fun loudness(id: String): Float? = null
 
-    /** The getCoverArt URL for a "subsonic:<id>[?size=N]" cover; null for any other URL. */
-    fun coverUrl(url: String): String? {
-        if (!url.startsWith("subsonic:")) return null
+    // Covers are stored as "subsonic:<id>", sized as "subsonic:<id>?size=N": no credentials in stored songs.
+    override fun thumbAt(url: String, px: Int) = if (url.startsWith("subsonic:")) "$url?size=$px" else url
+    override fun bigThumb(url: String) = thumbAt(url, BIG_PX)
+
+    /** The getCoverArt URL for a "subsonic:<id>[?size=N]" cover, made now with fresh auth. */
+    override fun fetchUrl(url: String): String {
+        if (!url.startsWith("subsonic:")) return url
         val rest = url.removePrefix("subsonic:")
-        return client?.coverUrl(SubsonicIds.decode(SubsonicIds.PREFIX + rest.substringBefore('?')), rest.substringAfter("size=", "").toIntOrNull())
+        return client?.coverUrl(SubsonicIds.decode(SubsonicIds.PREFIX + rest.substringBefore('?')), rest.substringAfter("size=", "").toIntOrNull()) ?: url
     }
 
     private val ownLyrics = SubsonicLyrics(::need)
     override val lyrics: LyricsProvider? get() = ownLyrics.takeIf { library?.index?.extensions?.contains("songLyrics") == true }
+    // oasis gathers lyrics from every provider itself; LRCLIB (free, open) is for other servers and songs it has none for.
+    override val lyricsProviders = listOf<LyricsProvider>(LrcLib)
+    override val lyricsRule = "The server's lyrics are the reference, when it has any: word timing that matches them wins, then their own timing, then matching line timing, then their plain text."
     override val hasComments = false
-    // The song menu asks shareUrl, then origin: one getSong serves both.
-    private var asked: SubSong? = null
-    private fun asked(s: Song) = runCatching { asked?.takeIf { it.id == SubsonicIds.decode(s.id) } ?: need().song(SubsonicIds.decode(s.id)).also { asked = it } }.getOrNull()
+    override fun shareUrl(s: Song): String? = null
 
-    // oasis knows the song on YouTube Music; getSong looks a local file up the first time it's asked.
-    override fun shareUrl(s: Song) = asked(s)?.youtubeId?.let(YouTubeMusic::link)
-
-    // oasis: a file has a path; songs streamed from YouTube have none and ids starting "yt-".
-    override fun origin(s: Song) = asked(s)?.let { a ->
+    // oasis: a file has a path; the songs it streams have none and ids starting "yt-". getSong looks a local file up
+    // the first time it's asked.
+    override fun origin(s: Song) = runCatching { need().song(SubsonicIds.decode(s.id)) }.getOrNull()?.let { a ->
         val format = listOfNotNull(a.suffix?.uppercase(), a.bitRate.takeIf { it > 0 }?.let { "$it kbps" }).joinToString(" ")
-        val from = if (a.path != null) "File ${a.path}" else if (a.id.startsWith("yt-")) "Streamed from YouTube" else "From the server"
+        val from = if (a.path != null) "File ${a.path}" else if (a.id.startsWith("yt-")) "Streamed by the server" else "From the server"
         listOf(from, format).filter { it.isNotEmpty() }.joinToString(" · ")
     }
 
     // ---- Scrobbling: see docs/subsonic.md ----
 
-    override val lastFm get() = roma.core.scrobblesToLastFm(true, serverType, Store.prefs.getBoolean("subsonic.lastfm", false))
+    override val lastFm get() = roma.core.scrobblesToLastFm(serverType, Store.prefs.getBoolean("subsonic.lastfm", false))
 
     override fun nowPlaying(s: Song) {
         val c = client ?: return
@@ -451,4 +412,17 @@ object SubsonicSource : Source {
             }
         }
     }
+
+    // Debug builds tag where a song comes from. oasis ids of the songs it streams start "yt-"; every other song is taken as a file.
+    override fun tag(s: Song) = if (!showDetails) null else if (s.id.startsWith("s.yt-")) "[STREAM]" else "[FILE]"
+
+    override val setUp get() = Store.str("subsonic.url", "").isNotBlank()
+    @Composable override fun Setup() = ServerSetup()
+
+    override val settingsTitle = "Server"
+    @Composable override fun settingsSummary(): String {
+        changes
+        return listOfNotNull(Store.str("subsonic.url", "").ifBlank { "Not set" }, library?.let { "${it.songs.size} songs" }).joinToString(" · ")
+    }
+    @Composable override fun Settings() = ServerSettings()
 }

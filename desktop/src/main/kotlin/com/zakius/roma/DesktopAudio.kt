@@ -365,7 +365,7 @@ class DesktopAudio : AudioPlayer {
 
         private fun noConnection(e: Throwable): Boolean = generateSequence(e) { it.cause }.any {
             it is java.net.UnknownHostException || it is java.net.ConnectException || it is java.net.SocketTimeoutException ||
-                it is java.net.NoRouteToHostException || it is java.net.SocketException || it.message == roma.core.Streams.NO_CONNECTION
+                it is java.net.NoRouteToHostException || it is java.net.SocketException || (it as? roma.core.StreamException)?.offline == true
         }
     }
 

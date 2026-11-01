@@ -9,8 +9,6 @@ import java.io.File
 /** A playable audio URL for one video. */
 class AudioSource(val url: String, val mimeType: String, val bitrate: Int)
 
-/** No path found a stream. The message is the reason in plain words, as YouTube or the extractor gave it. */
-class StreamException(message: String) : java.io.IOException(message)
 
 object Streams {
     /**
@@ -61,7 +59,7 @@ object Streams {
         worked.remove(videoId)
         val why = reason(failures)
         if (why != NO_CONNECTION) refused[videoId] = why to System.currentTimeMillis() // offline: Retry asks again
-        throw StreamException(why)
+        throw StreamException(why, offline = why == NO_CONNECTION)
     }
 
     // YouTube.visitorData goes with the request; without it YouTube answers "Sign in to confirm you're not a bot".

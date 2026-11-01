@@ -1,12 +1,9 @@
 package roma.core
 
-import com.ibm.icu.text.Transliterator
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
-
-val jvmIcu = Icu { id, text -> Transliterator.getInstance(id).transliterate(text) }
 
 class RomanizeTest {
     private val r = Romanizer(jvmIcu)

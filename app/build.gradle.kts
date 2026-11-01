@@ -14,24 +14,47 @@ android {
     buildToolsVersion = "37.0.0"
 
     defaultConfig {
-        // `-Proma.appId=… -Proma.appLabel=…`: a test build installed beside roma, e.g. the Subsonic one.
-        applicationId = (findProperty("roma.appId") as String?) ?: "com.zakius.roma"
-        manifestPlaceholders["appLabel"] = (findProperty("roma.appLabel") as String?) ?: "roma"
+        applicationId = "com.zakius.roma"
         minSdk = 26
         targetSdk = 36
         versionCode = 58
         versionName = "0.1.57"
-        // Testing only: `-Proma.refuseVisionOs=true` acts as if YouTube refused the VISIONOS client (Streams.refuseVisionOs),
-        // so songs play through InnerTubeX's other clients. Never set for a release.
         // `-Proma.details=true`: a release build that shows the debug details too (song origins, Lidarr's progress).
         buildConfigField("boolean", "SHOW_DETAILS", (findProperty("roma.details") == "true").toString())
-        buildConfigField("boolean", "REFUSE_VISIONOS", (findProperty("roma.refuseVisionOs") == "true").toString())
         // The dictionary app, gzipped. `-Proma.dictBase=<url>` points a build at another folder holding it.
         val dictBase = (findProperty("roma.dictBase") as String?) ?: "https://github.com/zakius/roma/releases/download/dict-$dictVersion"
         buildConfigField("String", "DICT_URL", "\"$dictBase/roma-dict-$dictVersion.apk.gz\"")
         buildConfigField("int", "DICT_VERSION", (project(":core").extra["dictCode"] as Int).toString())
         buildConfigField("String", "DICT_PACKAGE", "\"com.zakius.roma.dict\"")
         manifestPlaceholders["dictPackage"] = "com.zakius.roma.dict"
+    }
+
+    // Two apps from one codebase (docs/subsonic.md, Two apps): roma, YouTube Music only, released on GitHub; and the
+    // Subsonic app for Google Play, whose APK carries no YouTube code at all. Each flavor brings its own music source.
+    flavorDimensions += "app"
+    productFlavors {
+        create("youtube") {
+            dimension = "app"
+            buildConfigField("String", "APP_NAME", "\"roma\"")
+            buildConfigField("String", "SLUG", "\"roma\"")
+            // roma updates itself from its GitHub releases (Update.kt).
+            buildConfigField("boolean", "UPDATES", "true")
+            // Testing only: `-Proma.refuseVisionOs=true` acts as if YouTube refused the VISIONOS client (Streams.refuseVisionOs),
+            // so songs play through InnerTubeX's other clients. Never set for a release.
+            buildConfigField("boolean", "REFUSE_VISIONOS", (findProperty("roma.refuseVisionOs") == "true").toString())
+            manifestPlaceholders += mapOf("appLabel" to "roma", "appIcon" to "@android:drawable/ic_media_play", "linkScheme" to "roma")
+        }
+        create("subsonic") {
+            dimension = "app"
+            val name = property("subsonicApp.name") as String
+            val slug = property("subsonicApp.slug") as String
+            applicationId = property("subsonicApp.id") as String
+            buildConfigField("String", "APP_NAME", "\"$name\"")
+            buildConfigField("String", "SLUG", "\"$slug\"")
+            // Google Play updates it.
+            buildConfigField("boolean", "UPDATES", "false")
+            manifestPlaceholders += mapOf("appLabel" to name, "appIcon" to "@drawable/app_icon", "linkScheme" to slug)
+        }
     }
 
     buildTypes {
@@ -52,8 +75,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_21
     }
     buildFeatures { compose = true; buildConfig = true }
-    // The screens and playback logic, shared with the desktop app (:desktop).
+    // The screens and playback logic, shared with the desktop app (:desktop); each flavor adds its source's own.
     sourceSets["main"].kotlin.directories += "../shared/src/main/kotlin"
+    sourceSets["youtube"].kotlin.directories += "../shared/src/youtube/kotlin"
+    sourceSets["subsonic"].kotlin.directories += "../shared/src/subsonic/kotlin"
     // Only the app's languages: libraries bring strings for about 80 locales.
     androidResources { localeFilters += setOf("en", "pl") }
     packaging {
@@ -70,6 +95,8 @@ android {
 
 dependencies {
     implementation(project(":core"))
+    "youtubeImplementation"(project(":youtube"))
+    "subsonicImplementation"(project(":subsonic"))
 
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.compose.ui:ui:1.12.1")

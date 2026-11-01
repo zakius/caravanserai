@@ -60,13 +60,13 @@ fun main() = runBlocking {
         val q = LyricsQuery(s.id, s.title, s.artists.joinToString { it.name }, s.album?.name, s.duration ?: 0)
         println("\n${s.id} ${s.title} / ${q.artist}")
         val ytm = runCatching { YouTubeLyrics.fetch(q) }.getOrNull()
-        for (p in LyricsProviders.all) {
+        for (p in lyricsProviders) {
             val l = runCatching { p.fetch(q) }.onFailure { println("  ${p.name}: failed: ${it.message}") }.getOrNull()
             val sim = if (l != null && ytm != null && p != YouTubeLyrics) " sim=%.2f".format(similarity(l.lines.joinToString("\n") { it.text }, ytm.lines.joinToString("\n") { it.text }, jvmIcu)) else ""
             val tr = l?.lines?.mapNotNull { it.translation }?.let { translationLanguage(it) }
             println("  ${p.name}: " + if (l == null) "none" else "${l.source}, ${l.lines.size} lines, synced=${l.synced}, word=${l.wordLevel}$sim, translation=$tr, first=${l.lines.firstOrNull { it.text.isNotBlank() }?.text}")
         }
-        val r = LyricsProviders.find(q, LyricsProviders.all, jvmIcu)
+        val r = LyricsProviders.find(q, lyricsProviders, jvmIcu, reference = YouTubeLyrics)
         println("  -> rule ${r.result?.rule}: ${r.result?.lyrics?.source}, complete=${r.complete}, translations=${r.result?.translations?.map { "${it.source}:${it.language}" }}")
         // The opt-in machine translation, into Polish: no provider has that language.
         val chosen = r.result?.lyrics ?: continue

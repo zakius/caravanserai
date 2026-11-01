@@ -1,4 +1,5 @@
-// Plain JVM module: no Android imports, so a desktop client could reuse it.
+// Plain JVM module: no Android imports, so a desktop client could reuse it. Both apps' shared core: romanization,
+// lyrics rules, radio filters, scrobbling. Nothing here knows a music service: YouTube Music is :youtube, Subsonic :subsonic.
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.net.URI
 import java.security.MessageDigest
@@ -6,6 +7,7 @@ import java.security.MessageDigest
 plugins {
     id("org.jetbrains.kotlin.jvm")
     id("org.jetbrains.kotlin.plugin.serialization")
+    `java-test-fixtures`
 }
 
 java {
@@ -15,17 +17,15 @@ java {
 kotlin { compilerOptions { jvmTarget = JvmTarget.JVM_21; optIn.add("kotlin.ExperimentalStdlibApi") } }
 
 dependencies {
-    // YouTube Music API: the vendored com.metrolist.innertube sources sit on top of InnerTubeX (vendored too), over
-    // HttpURLConnection (Http.kt).
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+    api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
     // Japanese words and readings. The dictionary isn't in the jar: see sudachiDict below.
     implementation("com.worksap.nlp:sudachi:0.8.2")
     // Sudachi's own trie, for roma's dictionary format (RomaDictionary.kt); the version Sudachi depends on.
     implementation("com.worksap.nlp:jdartsclone:1.2.0")
     api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.12.0")
     testImplementation(kotlin("test"))
-    // Android supplies android.icu; on the JVM the tests use ICU4J.
-    testImplementation("com.ibm.icu:icu4j:78.1")
+    // Android supplies android.icu; on the JVM the tests use ICU4J (jvmIcu, in the test fixtures).
+    testFixturesImplementation("com.ibm.icu:icu4j:78.1")
 }
 
 // SudachiDict "core", downloaded once into the Gradle cache (202 MB unpacked, too big for git). Its slim build ships as
@@ -102,11 +102,4 @@ tasks.test {
             check(built.readText() == committed.readText()) { "$committed is out of date: copy $built over it" }
         }
     }
-}
-
-tasks.register<JavaExec>("networkCheck") {
-    classpath = sourceSets["test"].runtimeClasspath
-    dependsOn(sudachiSlim)
-    systemProperty("roma.sudachi", File(slimDict, "system_core.dic").path)
-    mainClass = (project.findProperty("main") as String?) ?: "roma.core.NetworkCheckKt"
 }

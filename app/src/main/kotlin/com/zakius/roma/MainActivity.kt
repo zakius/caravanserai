@@ -86,7 +86,7 @@ class MainActivity : ComponentActivity() {
     // Last.fm's browser auth returns to roma://lastfm?token=...
     private fun handleLastFm(intent: Intent?) {
         val data = intent?.data ?: return
-        if (data.scheme != "roma" || data.host != "lastfm") return
+        if (data.scheme != BuildConfig.SLUG || data.host != "lastfm") return
         val token = data.getQueryParameter("token") ?: return
         val fm = LastFm(Store.str("lastfm.key", ""), Store.str("lastfm.secret", ""))
         CoroutineScope(Dispatchers.Main).launch {

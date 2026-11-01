@@ -20,7 +20,7 @@ import kotlin.concurrent.thread
  */
 object Dictionary {
     const val DOWNLOAD = "31 MB download, 62 MB on disk"
-    const val HOW = "roma downloads it ($DOWNLOAD)."
+    val HOW = "${BuildConfig.APP_NAME} downloads it ($DOWNLOAD)."
 
     private val file get() = File(Dirs.files, "dict/system_core-${BuildConfig.DICT_VERSION}.dic")
 

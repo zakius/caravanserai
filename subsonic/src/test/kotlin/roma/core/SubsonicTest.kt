@@ -15,13 +15,11 @@ import kotlin.test.assertTrue
 class SubsonicTest {
     private val calls = ArrayList<Pair<String, List<Pair<String, String>>>>()
     private var ignoreOffset = false
-    private var posted = false
     private val songs = (1..7).map { """{"id":"tr-$it","title":"夜に駆ける $it","artist":"YOASOBI","artistId":"ar-1","album":"THE BOOK","albumId":"al-1","track":$it,"duration":${200 + it},"coverArt":"al-1"${if (it == 3) ""","starred":"2026-10-30T10:00:00Z"""" else ""}}""" }
     private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
         createContext("/rest/") { ex ->
             val method = ex.requestURI.path.removePrefix("/rest/")
-            posted = ex.requestMethod == "POST"
-            val query = if (posted) ex.requestBody.readBytes().decodeToString() else ex.requestURI.rawQuery
+            val query = ex.requestURI.rawQuery
             val params = query.split("&").map { it.substringBefore("=") to URLDecoder.decode(it.substringAfter("="), "UTF-8") }
             fun p(k: String) = params.firstOrNull { it.first == k }?.second
             calls += method to params
@@ -36,16 +34,15 @@ class SubsonicTest {
                 "getAlbumList2" -> """"albumList2":{"album":[{"id":"al-1","name":"THE BOOK","artist":"YOASOBI","artistId":"ar-1","songCount":7,"coverArt":"al-1"}]}"""
                 "getArtists" -> """"artists":{"index":[{"name":"Y","artist":[{"id":"ar-1","name":"YOASOBI","albumCount":1}]}]}"""
                 "getLyricsBySongId" -> """"lyricsList":{"structuredLyrics":[{"synced":false,"line":[{"value":"plain"}]},{"synced":true,"offset":-100,"line":[{"start":1000,"value":"沈むように"},{"start":4000,"value":"溶けてゆくように"}]}]}"""
-                "getSong" -> """"song":{"id":"tr-8","title":"Lyra","artist":"Breaking Benjamin","youtubeId":"RSqEs80gkr4","suffix":"flac","bitRate":1411,"path":"Breaking Benjamin/Lyra.flac"}"""
+                "getSong" -> """"song":{"id":"tr-8","title":"Lyra","artist":"Breaking Benjamin","suffix":"flac","bitRate":1411,"path":"Breaking Benjamin/Lyra.flac"}"""
                 "getAlbum" -> """"album":{"id":"al-9","name":"STRAY SHEEP","starred":"2026-10-31T01:00:00Z","oasisWanted":"wanted","oasisWantedError":"searching","artist":"米津玄師","artistId":"ar-9","song":[${songs[0]},${songs[1]}]}"""
                 "getArtist" -> """"artist":{"id":"ar-9","name":"米津玄師","album":[{"id":"al-9","name":"STRAY SHEEP"},{"id":"yt-al-1","name":"Lemon","year":2018,"releaseTypes":["Single"]}]}"""
                 "getTopSongs" -> """"topSongs":{"song":[${songs[2]}]}"""
                 "getSimilarSongs" -> """"similarSongs":{"song":[${songs[4]}]}"""
                 "getPlaylists" -> """"playlists":{"playlist":[{"id":"1","name":"Radio","owner":"admin"},{"id":"2","name":"Liked Music","owner":"YouTube Music"},""" +
-                    """{"id":"3","name":"Replay Mix","owner":"YouTube Music","oasisMix":true,"youtubeId":"RDTMAK5uy_nilrsVWxrKskY0ZUpVZ3zpB0u4LwWTVJ4"},""" +
+                    """{"id":"3","name":"Replay Mix","owner":"YouTube Music","oasisMix":true},""" +
                     """{"id":"4","name":"Archive Mix","owner":"YouTube Music","oasisMix":true},""" +
-                    """{"id":"5","name":"My Supermix","owner":"YouTube Music","oasisMix":true,"youtubeId":"RDTMAK5uy_kset8DisdE7LSD4TNjEVvrKRTmG7a56sY"}]}"""
-                "oasisLinkYouTubeMusic" -> """"youtubeMusic":{"account":"Zakius"}"""
+                    """{"id":"5","name":"My Supermix","owner":"YouTube Music","oasisMix":true}]}"""
                 "scrobble", "star" -> """"x":1"""
                 else -> """"x":1"""
             }
@@ -160,28 +157,24 @@ class SubsonicTest {
         assertEquals("tr-1", calls.last().second.toMap()["id"])
     }
 
-    @Test fun songOnYouTube() {
+    @Test fun songFile() {
         val lyra = SubsonicClient(url, "admin", "secret").song("tr-8")
-        assertEquals("RSqEs80gkr4", lyra.youtubeId)
         assertEquals("Breaking Benjamin/Lyra.flac", lyra.path)
         assertEquals(1411, lyra.bitRate)
-        assertNull(SubsonicClient.song(kotlinx.serialization.json.Json.parseToJsonElement(songs[0]))!!.youtubeId)
+        assertNull(SubsonicClient.song(kotlinx.serialization.json.Json.parseToJsonElement(songs[0]))!!.path)
     }
 
-    @Test fun linkYouTubeMusicPostsTheCookie() {
-        assertEquals("Zakius", SubsonicClient(url, "admin", "secret").linkYouTubeMusic("SAPISID=a; __Secure-3PAPISID=b"))
-        assertTrue(posted)
-        assertEquals("SAPISID=a; __Secure-3PAPISID=b", calls.last().second.toMap()["cookie"])
-    }
-
-    @Test fun mixesMarkedAndOrdered() {
+    @Test fun mixesMarked() {
         val all = SubsonicClient(url, "admin", "secret").playlists()
-        val mixes = all.filter { it.mix }
         assertEquals(listOf("Radio", "Liked Music"), all.filter { !it.mix }.map { it.name })
-        val r = Romanizer(jvmIcu)
-        val ids = mixes.associate { SubsonicIds.encode(it.id) to it.youtubeId }
-        // The known mixes in YouTube Music's order, then the rest by title.
-        assertEquals(listOf("My Supermix", "Replay Mix", "Archive Mix"), mixes.map { r.item(it) }.sortedWith(mixOrder { ids[it.id] }).map { it.title.original })
+        assertEquals(listOf("Replay Mix", "Archive Mix", "My Supermix"), all.filter { it.mix }.map { it.name }) // in the server's order
+    }
+
+    @Test fun scrobbleRule() {
+        // Once, by the side that knows the source: oasis forwards plays itself; other servers only with the switch.
+        assertEquals(false, scrobblesToLastFm(serverType = "oasis", lastFmForServer = true))
+        assertEquals(false, scrobblesToLastFm(serverType = "navidrome", lastFmForServer = false))
+        assertEquals(true, scrobblesToLastFm(serverType = "navidrome", lastFmForServer = true))
     }
 
     @Test fun mediaUrlsCarryAuth() {

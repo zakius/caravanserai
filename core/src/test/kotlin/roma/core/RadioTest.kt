@@ -44,11 +44,6 @@ class RadioTest {
         assertEquals(false, shouldScrobble(30, 30))
         assertEquals(true, shouldScrobble(200, 100))
         assertEquals(false, shouldScrobble(200, 99))
-        // Once, by the side that knows the source: oasis forwards plays itself; other servers only with the switch.
-        assertEquals(true, scrobblesToLastFm(subsonic = false, serverType = null, lastFmForServer = false))
-        assertEquals(false, scrobblesToLastFm(subsonic = true, serverType = "oasis", lastFmForServer = true))
-        assertEquals(false, scrobblesToLastFm(subsonic = true, serverType = "navidrome", lastFmForServer = false))
-        assertEquals(true, scrobblesToLastFm(subsonic = true, serverType = "navidrome", lastFmForServer = true))
         assertEquals(true, shouldScrobble(600, 240))
     }
 

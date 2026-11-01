@@ -15,4 +15,6 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "roma"
-include(":core", ":app", ":dict-app", ":dict-tool", ":desktop")
+include(":core", ":youtube", ":subsonic", ":app", ":dict-app", ":dict-tool", ":desktop", ":desktop-subsonic")
+// The Subsonic app on the desktop: :desktop's build script, for the subsonic flavor (desktop/build.gradle.kts).
+project(":desktop-subsonic").apply { projectDir = file("desktop/subsonic"); buildFileName = "../build.gradle.kts" }

@@ -51,11 +51,9 @@ class SubSong(
     val coverArt: String? = null,
     val starred: Boolean = false,
     val created: String? = null,
-    /** The same song on YouTube Music, when oasis knows it. */
-    val youtubeId: String? = null,
     val suffix: String? = null,
     val bitRate: Int = 0,
-    /** The file under the server's music folder; oasis gives none for songs streamed from YouTube. */
+    /** The file under the server's music folder; oasis gives none for the songs it streams. */
     val path: String? = null,
 )
 
@@ -66,9 +64,9 @@ class SubAlbum(val id: String, val name: String, val artist: String = "", val ar
 @Serializable
 class SubArtist(val id: String, val name: String, val coverArt: String? = null, val albumCount: Int = 0, val starred: Boolean = false, val wanted: String? = null, val wantedError: String? = null)
 
-/** [mix]: one of the account's personal mixes (oasis's "oasisMix"); [youtubeId]: its YouTube playlist id, when the server gives it. */
+/** [mix]: one of the account's personal mixes (oasis's "oasisMix"). */
 @Serializable
-class SubPlaylist(val id: String, val name: String, val owner: String = "", val songCount: Int = 0, val coverArt: String? = null, val mix: Boolean = false, val youtubeId: String? = null)
+class SubPlaylist(val id: String, val name: String, val owner: String = "", val songCount: Int = 0, val coverArt: String? = null, val mix: Boolean = false)
 
 /** The whole library as of [syncedAt], with what the server said about itself. */
 @Serializable
@@ -102,10 +100,9 @@ class SubsonicClient(url: String, val user: String, private val password: String
         return all.joinToString("&") { (k, v) -> enc(k) + "=" + enc(v) }
     }
 
-    /** The answer's "subsonic-response", after checking its status. [post]: the parameters go in a form body, not the URL. */
-    fun call(method: String, params: List<Pair<String, String>> = emptyList(), post: Boolean = false): JsonObject {
-        val (code, body) = if (post) httpCall("$base/rest/$method", query(params).toByteArray(), mapOf("Content-Type" to "application/x-www-form-urlencoded"), 30_000)
-        else httpCall(url(method, params), timeoutMs = 30_000)
+    /** The answer's "subsonic-response", after checking its status. */
+    fun call(method: String, params: List<Pair<String, String>> = emptyList()): JsonObject {
+        val (code, body) = httpCall(url(method, params), timeoutMs = 30_000)
         val root = runCatching { Json.parseToJsonElement(body).obj()?.get("subsonic-response").obj() }.getOrNull()
             ?: throw SubsonicException(0, if (code in 200..299) "Not a Subsonic server: no subsonic-response in the answer" else "The server answered HTTP $code")
         type = root["type"].str() ?: type
@@ -153,7 +150,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
 
     fun playlists() = call("getPlaylists")["playlists"].obj()?.get("playlist").arr().orEmpty().mapNotNull { p ->
         val o = p.obj() ?: return@mapNotNull null
-        SubPlaylist(o["id"].str() ?: return@mapNotNull null, o["name"].str() ?: "", o["owner"].str() ?: "", o["songCount"].str()?.toIntOrNull() ?: 0, o["coverArt"].str(), o["oasisMix"].str() == "true", o["youtubeId"].str())
+        SubPlaylist(o["id"].str() ?: return@mapNotNull null, o["name"].str() ?: "", o["owner"].str() ?: "", o["songCount"].str()?.toIntOrNull() ?: 0, o["coverArt"].str(), o["oasisMix"].str() == "true")
     }
 
     fun playlist(id: String): Pair<SubPlaylist, List<SubSong>> {
@@ -167,7 +164,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
     /** Songs like the song, album or artist [id] (getSimilarSongs takes any of the three). */
     fun similarSongs(id: String, count: Int = 50) = call("getSimilarSongs", listOf("id" to id, "count" to "$count"))["similarSongs"].obj()?.get("song").arr().orEmpty().mapNotNull { song(it) }
 
-    /** An album and its songs, for one the synced lists don't hold (oasis: a YouTube Music album seen in search or radio). */
+    /** An album and its songs, for one the synced lists don't hold (oasis: a streamed album seen in search or radio). */
     fun album(id: String): Pair<SubAlbum, List<SubSong>> {
         val a = call("getAlbum", listOf("id" to id))["album"] ?: throw SubsonicException(70, "No such album")
         return (album(a) ?: throw SubsonicException(70, "No such album")) to a.obj()?.get("song").arr().orEmpty().mapNotNull { song(it) }
@@ -178,8 +175,8 @@ class SubsonicClient(url: String, val user: String, private val password: String
         return (artist(a) ?: throw SubsonicException(70, "No such artist")) to a.obj()?.get("album").arr().orEmpty().mapNotNull { album(it) }
     }
 
-    /** The server's own search, which on oasis reaches YouTube Music too. */
-    /** The artist's top songs (oasis: the most played library songs, then YouTube Music's list). */
+    /** The server's own search, which on oasis reaches its streaming services too. */
+    /** The artist's top songs (oasis: the most played library songs, then its streaming services' list). */
     fun topSongs(artist: String, count: Int = 50) = call("getTopSongs", listOf("artist" to artist, "count" to "$count"))["topSongs"].obj()?.get("song").arr().orEmpty().mapNotNull { song(it) }
 
     fun search(query: String, count: Int = 30): Triple<List<SubSong>, List<SubAlbum>, List<SubArtist>> {
@@ -210,16 +207,6 @@ class SubsonicClient(url: String, val user: String, private val password: String
         call("scrobble", ids.map { "id" to it } + timesMs.map { "time" to "$it" } + listOf("submission" to "$submission"))
     }
 
-    /**
-     * oasis only: hands roma's YouTube Music sign-in (the music.youtube.com Cookie header) to the server for this user,
-     * whose mixes, history and plays then follow that account. Posted, so the cookie stays out of URLs and logs.
-     * Returns the account's name.
-     */
-    fun linkYouTubeMusic(cookie: String): String =
-        call("oasisLinkYouTubeMusic", listOf("cookie" to cookie), post = true)["youtubeMusic"].obj()?.get("account").str() ?: ""
-
-    fun unlinkYouTubeMusic() { call("oasisUnlinkYouTubeMusic", post = true) }
-
     fun streamUrl(id: String) = url("stream", listOf("id" to id))
     fun coverUrl(id: String, size: Int?) = url("getCoverArt", listOf("id" to id) + listOfNotNull(size?.let { "size" to "$it" }))
 
@@ -235,7 +222,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
             return SubSong(
                 o["id"].str() ?: return null, o["title"].str() ?: "", o["artist"].str() ?: "", o["artistId"].str(), o["album"].str(), o["albumId"].str(),
                 o["track"].int(), o["discNumber"].int(), o["year"].int(), o["duration"].int(), o["coverArt"].str(), o["starred"] != null, o["created"].str(),
-                o["youtubeId"].str(), o["suffix"].str(), o["bitRate"].int(), o["path"].str(),
+                o["suffix"].str(), o["bitRate"].int(), o["path"].str(),
             )
         }
 
@@ -281,3 +268,10 @@ class SubsonicLyrics(private val client: () -> SubsonicClient) : LyricsProvider 
     override val name = "Your server"
     override fun fetch(q: LyricsQuery): Lyrics? = client().lyrics(SubsonicIds.decode(q.videoId), name)
 }
+
+/**
+ * Whether the app scrobbles a server's song to Last.fm itself. Each play is reported once, by the side that knows its
+ * real source: the server (which the app always tells), and the app as well only when the user turned that on for a
+ * server other than oasis, since oasis forwards every play itself.
+ */
+fun scrobblesToLastFm(serverType: String?, lastFmForServer: Boolean) = serverType != "oasis" && lastFmForServer

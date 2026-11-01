@@ -320,10 +320,7 @@ fun rememberOpenFile(text: (String) -> Unit): () -> Unit {
 }
 
 /** Last.fm's browser auth; it returns to roma://lastfm?token=… (MainActivity.handleLastFm). */
-fun connectLastFm() = openUrl(roma.core.LastFm(Store.str("lastfm.key", ""), "").authUrl("roma://lastfm"))
-
-/** Signing out: the sign-in page's cookies go too, so the next sign-in starts fresh. */
-fun forgetSignIn() = android.webkit.CookieManager.getInstance().removeAllCookies(null)
+fun connectLastFm() = openUrl(roma.core.LastFm(Store.str("lastfm.key", ""), "").authUrl("${BuildConfig.SLUG}://lastfm"))
 
 /** A comment's HTML as plain text. */
 fun htmlToText(html: String) = androidx.core.text.HtmlCompat.fromHtml(html, androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY).toString()

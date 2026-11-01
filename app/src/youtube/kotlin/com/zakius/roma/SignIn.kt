@@ -32,3 +32,6 @@ fun LoginScreen() {
         }
     }, modifier = Modifier.fillMaxSize())
 }
+
+/** Signing out: the sign-in page's cookies go too, so the next sign-in starts fresh. */
+fun forgetSignIn() = CookieManager.getInstance().removeAllCookies(null)

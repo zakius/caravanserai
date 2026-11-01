@@ -36,10 +36,7 @@ import roma.core.PoTokenResult
 import roma.core.TokenProvider
 
 /** Android's PoTokens: BotGuard in the system WebView (10 s for a cold start: WebView, BotGuard, first token). */
-fun PoTokens(c: Context): PoTokens {
-    val app = c.applicationContext
-    return PoTokens(10_000L) { PoTokenView.create(app) }
-}
+fun platformPoTokens() = PoTokens(10_000L) { PoTokenView.create(appContext) }
 
 private class PoTokenException(message: String) : Exception(message)
 
