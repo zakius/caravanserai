@@ -20,8 +20,6 @@ import android.os.Handler
 import android.os.Looper
 import android.service.media.MediaBrowserService
 import android.view.KeyEvent
-import androidx.media3.common.Player
-import androidx.media3.common.util.Util
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -52,10 +50,6 @@ class PlaybackService : MediaBrowserService() {
         }
     }
 
-    private val listener = object : Player.Listener {
-        override fun onEvents(player: Player, events: Player.Events) = update()
-    }
-
     override fun onCreate() {
         Startup.go() // started without a screen (a headset's Play, the system's resume): nothing waits for a frame
         super.onCreate()
@@ -72,7 +66,7 @@ class PlaybackService : MediaBrowserService() {
         sessionToken = session.sessionToken
         getSystemService(NotificationManager::class.java)
             .createNotificationChannel(NotificationChannel(CHANNEL, "Playback", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) })
-        Playback.exo.addListener(listener)
+        Playback.playerChanged = ::update
         update()
     }
 
@@ -88,15 +82,23 @@ class PlaybackService : MediaBrowserService() {
     }
 
     private inner class Callback : MediaSession.Callback() {
+        // As Media3's buttons do (Util.handlePlayButtonAction, Player.seekToNext and seekToPrevious).
         override fun onPlay() = Playback.afterRestore {
             goForeground()
-            Util.handlePlayButtonAction(Playback.exo)
+            val p = Playback.player
+            if (p.playbackState == AudioPlayer.STATE_IDLE) p.prepare()
+            else if (p.playbackState == AudioPlayer.STATE_ENDED) p.seekTo(p.currentMediaItemIndex, 0)
+            p.play()
         }
-        override fun onPause() { Util.handlePauseButtonAction(Playback.exo) }
-        override fun onStop() { Util.handlePauseButtonAction(Playback.exo) }
-        override fun onSkipToNext() = Playback.exo.seekToNext()
-        override fun onSkipToPrevious() = Playback.exo.seekToPrevious()
-        override fun onSeekTo(pos: Long) = Playback.exo.seekTo(pos)
+        override fun onPause() = Playback.player.pause()
+        override fun onStop() = Playback.player.pause()
+        override fun onSkipToNext() { if (Playback.player.hasNextMediaItem()) Playback.player.seekToNextMediaItem() }
+        override fun onSkipToPrevious() {
+            val p = Playback.player
+            val previous = Playback.neighbour(p.currentMediaItemIndex, -1)
+            if (previous >= 0 && p.currentPosition <= 3_000) p.seekTo(previous, 0) else p.seekTo(0)
+        }
+        override fun onSeekTo(pos: Long) = Playback.player.seekTo(pos)
         override fun onCustomAction(action: String, extras: Bundle?) { if (action == LIKE) Playback.toggleLike() }
 
         // A headset's single button: one press plays or pauses, two quick presses skip to the next song (as Media3 did).
@@ -107,7 +109,7 @@ class PlaybackService : MediaBrowserService() {
             if (key.keyCode != KeyEvent.KEYCODE_HEADSETHOOK && key.keyCode != KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) return super.onMediaButtonEvent(intent)
             if (key.action != KeyEvent.ACTION_DOWN || key.repeatCount > 0) return true
             pressed?.let { main.removeCallbacks(it); pressed = null; onSkipToNext(); return true }
-            pressed = Runnable { pressed = null; if (Playback.exo.playWhenReady) onPause() else onPlay() }.also { main.postDelayed(it, 300) }
+            pressed = Runnable { pressed = null; if (Playback.player.playWhenReady) onPause() else onPlay() }.also { main.postDelayed(it, 300) }
             return true
         }
     }
@@ -118,11 +120,11 @@ class PlaybackService : MediaBrowserService() {
     fun updateLikeButton() = update()
 
     private fun update() {
-        val p = Playback.exo
-        val entry = Playback.current()
-        val liked = entry?.song?.id in Playback.liked
+        val p = Playback.player
+        val song = Playback.current()?.song
+        val liked = song?.id in Playback.liked
         val state = when {
-            p.playbackState == Player.STATE_BUFFERING && p.playWhenReady -> PlaybackState.STATE_BUFFERING
+            p.playbackState == AudioPlayer.STATE_BUFFERING && p.playWhenReady -> PlaybackState.STATE_BUFFERING
             p.isPlaying -> PlaybackState.STATE_PLAYING
             p.mediaItemCount == 0 -> PlaybackState.STATE_NONE
             else -> PlaybackState.STATE_PAUSED
@@ -130,19 +132,17 @@ class PlaybackService : MediaBrowserService() {
         val actions = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_STOP or
             PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SEEK_TO
         val playback = PlaybackState.Builder()
-            .setState(state, p.currentPosition, if (p.isPlaying) p.playbackParameters.speed else 0f)
+            .setState(state, p.currentPosition, if (p.isPlaying) p.speed else 0f)
             .setActions(actions)
         if (Playback.canLike(Playback.current()?.song)) playback.addCustomAction(PlaybackState.CustomAction.Builder(LIKE, if (liked) "Unlike" else "Like", if (liked) R.drawable.thumb_up else R.drawable.thumb_up_outline).build())
         session.setPlaybackState(playback.build())
 
-        val item = p.currentMediaItem
-        val m = item?.mediaMetadata
-        val thumb = m?.artworkUri?.toString()
+        val thumb = song?.thumb?.let(::bigThumb)
         val meta = MediaMetadata.Builder()
-            .putString(MediaMetadata.METADATA_KEY_MEDIA_ID, item?.mediaId)
-            .putText(MediaMetadata.METADATA_KEY_TITLE, m?.title)
-            .putText(MediaMetadata.METADATA_KEY_ARTIST, m?.artist)
-            .putText(MediaMetadata.METADATA_KEY_ALBUM, m?.albumTitle)
+            .putString(MediaMetadata.METADATA_KEY_MEDIA_ID, song?.id)
+            .putText(MediaMetadata.METADATA_KEY_TITLE, song?.let { Store.shown(it.title) })
+            .putText(MediaMetadata.METADATA_KEY_ARTIST, song?.let(::artistLine))
+            .putText(MediaMetadata.METADATA_KEY_ALBUM, song?.album?.name?.let(Store::shown))
             .putLong(MediaMetadata.METADATA_KEY_DURATION, if (p.duration > 0) p.duration else -1)
         art?.takeIf { it.first == thumb }?.let { meta.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, it.second) }
         session.setMetadata(meta.build())
@@ -158,7 +158,7 @@ class PlaybackService : MediaBrowserService() {
         // foreground (not swiped away, not stopped by the system) while it plays.
         val manager = getSystemService(NotificationManager::class.java)
         when {
-            p.mediaItemCount == 0 || p.playbackState == Player.STATE_IDLE && !p.playWhenReady -> {
+            p.mediaItemCount == 0 || p.playbackState == AudioPlayer.STATE_IDLE && !p.playWhenReady -> {
                 if (foreground) stopForeground(STOP_FOREGROUND_REMOVE) else manager.cancel(NOTIFICATION)
                 foreground = false
             }
@@ -178,9 +178,9 @@ class PlaybackService : MediaBrowserService() {
     }
 
     private fun notification(): Notification {
-        val p = Playback.exo
-        val m = p.currentMediaItem?.mediaMetadata
-        val liked = Playback.current()?.song?.id in Playback.liked
+        val p = Playback.player
+        val song = Playback.current()?.song
+        val liked = song?.id in Playback.liked
         fun action(icon: Int, title: String, key: Int) = Notification.Action.Builder(
             android.graphics.drawable.Icon.createWithResource(this, icon), title,
             PendingIntent.getBroadcast(this, key, Intent(Intent.ACTION_MEDIA_BUTTON).setClass(this, MediaButtons::class.java)
@@ -188,8 +188,8 @@ class PlaybackService : MediaBrowserService() {
         ).build()
         val b = Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentTitle(m?.title)
-            .setContentText(m?.artist)
+            .setContentTitle(song?.let { Store.shown(it.title) })
+            .setContentText(song?.let(::artistLine))
             .setContentIntent(session.controller.sessionActivity)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setOnlyAlertOnce(true)
@@ -215,21 +215,21 @@ class PlaybackService : MediaBrowserService() {
     override fun onLoadChildren(parentId: String, result: Result<MutableList<MediaBrowser.MediaItem>>) {
         result.detach()
         Playback.afterRestore {
-            val m = Playback.exo.currentMediaItem
+            val s = Playback.current()?.song
             result.sendResult(
-                if (m == null) mutableListOf()
-                else mutableListOf(MediaBrowser.MediaItem(MediaDescription.Builder().setMediaId(m.mediaId).setTitle(m.mediaMetadata.title).setSubtitle(m.mediaMetadata.artist).build(), MediaBrowser.MediaItem.FLAG_PLAYABLE)),
+                if (s == null) mutableListOf()
+                else mutableListOf(MediaBrowser.MediaItem(MediaDescription.Builder().setMediaId(s.id).setTitle(Store.shown(s.title)).setSubtitle(artistLine(s)).build(), MediaBrowser.MediaItem.FLAG_PLAYABLE)),
             )
         }
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        if (!Playback.exo.isPlaying) stopSelf()
+        if (!Playback.player.isPlaying) stopSelf()
     }
 
     override fun onDestroy() {
         instance = null
-        Playback.exo.removeListener(listener)
+        Playback.playerChanged = null
         scope.cancel()
         session.release()
         super.onDestroy()
@@ -250,3 +250,6 @@ class MediaButtons : BroadcastReceiver() {
         runCatching { c.startForegroundService(start) }
     }
 }
+
+/** The artist line of the notification and the system's controls: the original title too, when it isn't shown above. */
+fun artistLine(s: roma.core.Song) = if (s.title.isLatin || Store.reads(s.title.original)) s.artistLatin else "${s.artistLatin} · ${s.title.original}"

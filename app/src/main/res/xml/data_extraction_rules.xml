@@ -13,5 +13,7 @@
     <device-transfer>
         <include domain="file" path="." />
         <include domain="sharedpref" path="." />
+        <!-- The Subsonic app's Japanese dictionary (62 MB): downloaded again instead. -->
+        <exclude domain="file" path="dict/" />
     </device-transfer>
 </data-extraction-rules>

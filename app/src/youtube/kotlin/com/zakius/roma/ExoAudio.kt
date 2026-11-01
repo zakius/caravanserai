@@ -106,7 +106,6 @@ class ExoAudio(c: Context) : AudioPlayer {
 
     override fun item(e: Entry): MediaItem {
         val s = e.song
-        val artistLine = if (s.title.isLatin || Store.reads(s.title.original)) s.artistLatin else "${s.artistLatin} · ${s.title.original}"
         return MediaItem.Builder()
             .setMediaId(s.id)
             .setUri("roma://${s.id}")
@@ -115,7 +114,7 @@ class ExoAudio(c: Context) : AudioPlayer {
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(Store.shown(s.title))
-                    .setArtist(artistLine)
+                    .setArtist(artistLine(s))
                     .setAlbumTitle(s.album?.name?.let(Store::shown))
                     .setArtworkUri(s.thumb?.let { Uri.parse(bigThumb(it)) })
                     .build(),
@@ -172,37 +171,17 @@ class ExoAudio(c: Context) : AudioPlayer {
         return length > 0 && cache.isCached(id, 0, length)
     }
 
-    // When the headphones went away and paused the song (Media3's "becoming noisy"); 0 otherwise.
-    private var unpluggedAt = 0L
+    // Resumes the song when the headphones that paused it come back (Headphones).
+    private val headphones = Headphones { exo.play() }
 
-    /**
-     * Opt-in: headphones, Bluetooth earbuds or a car that come back within an hour of pausing the song by going away
-     * resume it. Only that pause counts: a song the user paused stays paused. The system calls back on device
-     * changes; nothing polls.
-     */
     private fun watchHeadphones() {
         exo.addListener(object : Player.Listener {
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-                unpluggedAt = if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY) elapsedRealtime() else 0L
+                if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY) headphones.unplugged() else headphones.cleared()
             }
         })
-        val audio = appContext.getSystemService(android.media.AudioManager::class.java)
-        audio.registerAudioDeviceCallback(object : android.media.AudioDeviceCallback() {
-            override fun onAudioDevicesAdded(added: Array<android.media.AudioDeviceInfo>) {
-                if (unpluggedAt == 0L || !Store.bool("play.resumeOnHeadphones", false)) return
-                if (elapsedRealtime() - unpluggedAt > 3600_000) return
-                if (added.none { it.isSink && it.type in HEADPHONES }) return
-                unpluggedAt = 0L
-                exo.play()
-            }
-        }, android.os.Handler(android.os.Looper.getMainLooper()))
+        headphones.watch()
     }
-
-    private val HEADPHONES = setOf(
-        android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET, android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
-        android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, android.media.AudioDeviceInfo.TYPE_USB_HEADSET,
-        26 /* TYPE_BLE_HEADSET */, 27 /* TYPE_BLE_SPEAKER */, 23 /* TYPE_HEARING_AID */,
-    )
 
     /**
      * Without a connection the player keeps playing what it has, then waits, retrying every 2 s for up to 10 min
@@ -286,5 +265,3 @@ private object NoAnalytics : androidx.media3.exoplayer.analytics.AnalyticsCollec
     override fun onBandwidthSample(elapsedMs: Int, bytesTransferred: Long, bitrateEstimate: Long) {}
 }
 
-/** The ExoPlayer itself, for Android's media session (Session.kt). */
-val Playback.exo get() = (player as ExoAudio).exo

@@ -14,15 +14,16 @@ import java.util.zip.ZipInputStream
 import kotlin.concurrent.thread
 
 /**
- * The Japanese dictionary: the same download as Android's dictionary app (roma-dict-<version>.apk.gz, 31 MB), whose
- * system_core.dic is taken out once into roma's data folder (62 MB) and memory-mapped from there. Nothing else of the
- * APK is kept.
+ * The Japanese dictionary on the desktop and in the Subsonic app on Android: the same download as roma's dictionary
+ * app (roma-dict-<version>.apk.gz, 31 MB), whose system_core.dic is taken out once into the app's own storage (62 MB)
+ * and memory-mapped from there. Nothing else of the APK is kept, and nothing is installed: on Google Play an app may
+ * download data but not install apps or run downloaded code.
  */
 object Dictionary {
     const val DOWNLOAD = "31 MB download, 62 MB on disk"
     val HOW = "${BuildConfig.APP_NAME} downloads it ($DOWNLOAD)."
 
-    private val file get() = File(Dirs.files, "dict/system_core-${BuildConfig.DICT_VERSION}.dic")
+    private val file get() = File(Store.files, "dict/system_core-${BuildConfig.DICT_VERSION}.dic")
 
     var installed by mutableStateOf(file.exists())
         private set

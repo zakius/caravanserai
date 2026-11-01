@@ -33,7 +33,7 @@ val dictVersion = project(":core").extra["dictRelease"] as String
 java { sourceCompatibility = JavaVersion.VERSION_21; targetCompatibility = JavaVersion.VERSION_21 }
 kotlin {
     compilerOptions { jvmTarget = JvmTarget.JVM_21 }
-    sourceSets["main"].kotlin.setSrcDirs(listOf("$src/main/kotlin", "$src/$flavor/kotlin", rootProject.file("shared/src/main/kotlin"), rootProject.file("shared/src/$flavor/kotlin")))
+    sourceSets["main"].kotlin.setSrcDirs(listOf("$src/main/kotlin", "$src/$flavor/kotlin", rootProject.file("shared/src/main/kotlin"), rootProject.file("shared/src/$flavor/kotlin"), rootProject.file("shared/src/portable/kotlin")))
     sourceSets["main"].kotlin.srcDir(layout.buildDirectory.dir("generated/buildConfig"))
     sourceSets["test"].kotlin.setSrcDirs(listOfNotNull("$src/test/kotlin", "$src/testYoutube/kotlin".takeIf { youtube }))
 }

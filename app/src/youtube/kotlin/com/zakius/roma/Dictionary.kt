@@ -42,7 +42,7 @@ object Dictionary {
     // Android's confirmation screen, kept in case it couldn't open while roma was in the background.
     private var confirm: Intent? = null
 
-    fun init(app: Context) {
+    fun init(app: Context = appContext) {
         // Two package manager calls, off the main thread; only the UI reads the result.
         kotlin.concurrent.thread(name = "dictionary") {
             val ok = runCatching { verify(app) }.isSuccess
@@ -101,7 +101,7 @@ object Dictionary {
      * Japanese is romanized but the dictionary is missing or older than this roma needs (after an update of roma):
      * roma offers it, once per run. Not now, a refusal or a failure leaves it to Settings.
      */
-    fun ensure(c: Context) {
+    fun ensure(c: Context = appContext) {
         installed = runCatching { verify(c) }.isSuccess
         if (installed || status != null || offer != null || !Store.bool("setup.done", false) || "ja" in Store.readScripts) return
         val present = runCatching { c.packageManager.getPackageInfo(BuildConfig.DICT_PACKAGE, 0) }.isSuccess
@@ -114,7 +114,7 @@ object Dictionary {
     }
 
     /** Back from the "install unknown apps" switch: on, the install goes on; off counts as declining. */
-    fun resumed(c: Context) {
+    fun resumed(c: Context = appContext) {
         if (!askedPermission) return
         askedPermission = false
         if (c.packageManager.canRequestPackageInstalls()) install() else declined()
@@ -150,47 +150,5 @@ object Dictionary {
                 status = "Couldn't install the Japanese dictionary: " + (i.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "unknown reason")
             }
         }
-    }
-}
-
-/**
- * Streams the APK at [url] (gzipped when [gzip]) straight into a PackageInstaller session for [pkg] and commits it;
- * the outcome arrives as a broadcast of [action]. [progress] gets "n%" (or "n MB" without a length). Blocking.
- */
-fun installApk(app: Context, url: String, pkg: String, gzip: Boolean, action: String, userActionNotRequired: Boolean = false, progress: (String) -> Unit) {
-    val installer = app.packageManager.packageInstaller
-    val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-    params.setAppPackageName(pkg)
-    if (userActionNotRequired && Build.VERSION.SDK_INT >= 31) params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
-    val id = installer.createSession(params)
-    try {
-        installer.openSession(id).use { session ->
-            val conn = URL(url).openConnection() as HttpURLConnection
-            conn.connectTimeout = 15_000
-            conn.readTimeout = 30_000 // a stalled download fails instead of keeping the install busy for good
-            check(conn.responseCode == 200) { "The download answered HTTP ${conn.responseCode}" }
-            val total = conn.contentLengthLong
-            var read = 0L
-            var shown = -1L
-            val counted = object : FilterInputStream(conn.inputStream) {
-                override fun read(b: ByteArray, off: Int, len: Int) = super.read(b, off, len).also {
-                    if (it > 0) read += it
-                    val percent = if (total > 0) read * 100 / total else read shr 20
-                    if (percent != shown) {
-                        shown = percent
-                        progress(if (total > 0) "$percent%" else "$percent MB")
-                    }
-                }
-            }
-            session.openWrite("app.apk", 0, -1).use { out ->
-                (if (gzip) GZIPInputStream(counted, 1 shl 16) else counted).use { it.copyTo(out, 1 shl 16) }
-                session.fsync(out)
-            }
-            val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
-            session.commit(PendingIntent.getBroadcast(app, id, Intent(action).setPackage(app.packageName), flags).intentSender)
-        }
-    } catch (e: Exception) {
-        runCatching { installer.abandonSession(id) }
-        throw e
     }
 }

@@ -78,8 +78,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        Dictionary.resumed(this)
-        window.decorView.post { Dictionary.ensure(this) } // package manager calls, and maybe a dialog: after the first frame
+        flavorResumed()
+        window.decorView.post { Dictionary.ensure() } // package manager calls, and maybe a dialog: after the first frame
     }
 
 

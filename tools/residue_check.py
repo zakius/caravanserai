@@ -18,7 +18,8 @@ import zipfile
 ALLOWED = [b"|you|youtube|yun|"]
 
 PATTERNS = {
-    "subsonic": ["innertube", "metrolist", "botguard", "youtube", "googlevideo", "visionos"],
+    # Google Play: no YouTube code, and no installing apps (the Japanese dictionary is downloaded as data).
+    "subsonic": ["innertube", "metrolist", "botguard", "youtube", "googlevideo", "visionos", "packageinstaller", "request_install_packages"],
     "youtube": ["subsonic"],
 }
 

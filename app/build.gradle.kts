@@ -37,8 +37,6 @@ android {
             dimension = "app"
             buildConfigField("String", "APP_NAME", "\"roma\"")
             buildConfigField("String", "SLUG", "\"roma\"")
-            // roma updates itself from its GitHub releases (Update.kt).
-            buildConfigField("boolean", "UPDATES", "true")
             // Testing only: `-Proma.refuseVisionOs=true` acts as if YouTube refused the VISIONOS client (Streams.refuseVisionOs),
             // so songs play through InnerTubeX's other clients. Never set for a release.
             buildConfigField("boolean", "REFUSE_VISIONOS", (findProperty("roma.refuseVisionOs") == "true").toString())
@@ -51,8 +49,6 @@ android {
             applicationId = property("subsonicApp.id") as String
             buildConfigField("String", "APP_NAME", "\"$name\"")
             buildConfigField("String", "SLUG", "\"$slug\"")
-            // Google Play updates it.
-            buildConfigField("boolean", "UPDATES", "false")
             manifestPlaceholders += mapOf("appLabel" to name, "appIcon" to "@drawable/app_icon", "linkScheme" to slug)
         }
     }
@@ -79,6 +75,8 @@ android {
     sourceSets["main"].kotlin.directories += "../shared/src/main/kotlin"
     sourceSets["youtube"].kotlin.directories += "../shared/src/youtube/kotlin"
     sourceSets["subsonic"].kotlin.directories += "../shared/src/subsonic/kotlin"
+    // The player without Media3, the audio cache and the dictionary download, as on the desktop.
+    sourceSets["subsonic"].kotlin.directories += "../shared/src/portable/kotlin"
     // Only the app's languages: libraries bring strings for about 80 locales.
     androidResources { localeFilters += setOf("en", "pl") }
     packaging {
@@ -104,7 +102,8 @@ dependencies {
     implementation("androidx.compose.material:material-icons-core:1.7.8")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
 
-    implementation("androidx.media3:media3-exoplayer:1.11.1")
+    // roma's player; the Subsonic app plays through Android's MediaPlayer (MediaAudio) and is about a fifth smaller.
+    "youtubeImplementation"("androidx.media3:media3-exoplayer:1.11.1")
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
     implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.2") // ASUS FlipFont skip, App.kt

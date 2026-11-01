@@ -100,6 +100,7 @@ object Playback {
         player.listener = object : AudioPlayer.Listener {
             override fun onEvents(listChanged: Boolean, transition: Boolean, repeatChanged: Boolean, playingChanged: Boolean, discontinuity: Boolean) {
                 tick++
+                playerChanged?.invoke()
                 if (listChanged || transition || repeatChanged) saveQueue()
                 if (playingChanged || discontinuity) savePosition()
                 if (player.isPlaying) startSideWork()
@@ -719,6 +720,9 @@ object Playback {
 
     // Pause while buffering (waiting for the network) pauses; Play prepares an idle player and restarts an ended one.
     fun togglePlay() = player.togglePlay()
+
+    /** Told of every change the player reports: the platform's media session (Android's PlaybackService). */
+    var playerChanged: (() -> Unit)? = null
 
     // ---- Network drops ----
 

@@ -40,9 +40,8 @@ class App : Application() {
         showDetails = BuildConfig.DEBUG || BuildConfig.SHOW_DETAILS
         Images.init(cacheDir, picMemory())
         if (Store.prefs.getInt("ui.tab", TAB_HOME) == TAB_HOME) Home.preload()
-        Dictionary.init(this)
-        if (BuildConfig.UPDATES) Update.init(this)
-        Playback.init(ExoAudio(this))
+        flavorInit()
+        Playback.init(platformPlayer(this))
         Startup.later {
             // After an update, the lyrics an older version romanized go: Playback.romanizedFile no longer reads them.
             if (Store.prefs.getInt("lyrics.romanizedBy", 0) != BuildConfig.VERSION_CODE) thread(name = "old lyrics") {
