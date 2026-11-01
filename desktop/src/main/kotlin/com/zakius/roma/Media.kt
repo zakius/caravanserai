@@ -92,6 +92,46 @@ class Decoded(private val d: Demuxer, private val decoder: Decoder, private val 
 }
 
 /**
+ * A child process fed by a thread of its own ([feed] writes its input; its output is [process]'s input stream).
+ * [failure]: why feeding stopped, unless it was closed. [close] never blocks (FedProcessTest).
+ */
+class FedProcess(command: List<String>, name: String, feed: (java.io.OutputStream) -> Unit) : AutoCloseable {
+    val process: Process = ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.DISCARD).start()
+    @Volatile var failure: Throwable? = null
+        private set
+    @Volatile var closed = false
+        private set
+    private val writer = Thread({
+        try {
+            process.outputStream.buffered().use(feed)
+        } catch (t: Throwable) {
+            if (!closed) failure = t
+            process.toHandle().destroyForcibly()
+        }
+    }, name).apply { isDaemon = true; start() }
+    /** The feeding thread is still at it. */
+    val feeding get() = writer.isAlive
+
+    /**
+     * Kills the process and lets go of its pipes, without waiting for anything. Process.destroy would close the input
+     * first, which waits for the feeder's write; with the process stuck writing its output, which nobody reads any more,
+     * that write never ends (roma-aac doesn't end on SIGTERM then): a track change froze the player and the UI. Killed
+     * outright, the process can't hold out, the feeder's write fails, and the pipes close on a thread of their own:
+     * closing the output waits for a read in progress.
+     */
+    override fun close() {
+        closed = true
+        writer.interrupt()
+        process.toHandle().destroyForcibly()
+        Thread({
+            runCatching { process.inputStream.close() }
+            runCatching { process.outputStream.close() }
+            process.waitFor()
+        }, "close ${writer.name}").apply { isDaemon = true; start() }
+    }
+}
+
+/**
  * AAC through roma-aac, a build of ffmpeg's AAC decoder alone (tools/build-ffmpeg.sh): this reader's frames go to its
  * stdin as ADTS, its PCM comes back on stdout. The frames' times say how many samples to drop at the start (the
  * edit list's lead-in, or up to the seek target), so it behaves as [Decoded].
@@ -100,52 +140,41 @@ class AacPcm(private val d: Mp4Demuxer, atMs: Long) : Pcm {
     override val sampleRate get() = d.sampleRate
     override val channels get() = d.channels
     override val durationMs get() = d.durationMs
-    private val process: Process
-    private val pcm: java.io.InputStream
-    private val writer: Thread
-    @Volatile private var failure: Throwable? = null
-    @Volatile private var closed = false
     @Volatile private var drop = -1L // samples per channel still to drop; -1 until the first frame's time is known
     private val bytes = ByteArray(4096 * 2 * d.channels)
+    private val decoder: FedProcess
 
     init {
         if (atMs > 0) d.seek(atMs)
-        process = ProcessBuilder(decoderPath(), "-hide_banner", "-loglevel", "error", "-f", "aac", "-i", "pipe:0",
-            "-f", "s16le", "-ac", "${d.channels}", "-ar", "${d.sampleRate}", "pipe:1").redirectError(ProcessBuilder.Redirect.DISCARD).start()
-        pcm = process.inputStream
         val (profile, rate, ch) = d.adts
-        writer = Thread({
-            try {
-                process.outputStream.buffered().use { o ->
-                    var first = true
-                    while (true) {
-                        val p = d.next() ?: break
-                        if (first) { first = false; drop = samples(maxOf(atMs * 1000, 0) - p.timeUs, d.sampleRate).coerceAtLeast(0) }
-                        val len = p.data.size + 7
-                        o.write(0xFF); o.write(0xF1)
-                        o.write((profile shl 6) or (rate shl 2) or (ch shr 2))
-                        o.write(((ch and 3) shl 6) or (len shr 11))
-                        o.write((len shr 3) and 0xff)
-                        o.write(((len and 7) shl 5) or 0x1F)
-                        o.write(0xFC)
-                        o.write(p.data)
-                    }
-                    if (first) drop = 0
-                }
-            } catch (t: Throwable) {
-                if (!closed) failure = t
-                process.destroy()
+        decoder = FedProcess(listOf(decoderPath(), "-hide_banner", "-loglevel", "error", "-f", "aac", "-i", "pipe:0",
+            "-f", "s16le", "-ac", "${d.channels}", "-ar", "${d.sampleRate}", "pipe:1"), "aac in") { o ->
+            var first = true
+            while (true) {
+                val p = d.next() ?: break
+                if (first) { first = false; drop = samples(maxOf(atMs * 1000, 0) - p.timeUs, d.sampleRate).coerceAtLeast(0) }
+                val len = p.data.size + 7
+                o.write(0xFF); o.write(0xF1)
+                o.write((profile shl 6) or (rate shl 2) or (ch shr 2))
+                o.write(((ch and 3) shl 6) or (len shr 11))
+                o.write((len shr 3) and 0xff)
+                o.write(((len and 7) shl 5) or 0x1F)
+                o.write(0xFC)
+                o.write(p.data)
             }
-        }, "aac in").apply { isDaemon = true; start() }
+            if (first) drop = 0
+        }
     }
+    private val process get() = decoder.process
+    private val pcm get() = decoder.process.inputStream
 
     override fun read(out: ShortArray): Int {
         while (true) {
             val n = readFully(minOf(bytes.size, out.size * 2))
             if (n <= 0) {
-                failure?.let { throw it }
+                decoder.failure?.let { throw it }
                 // roma-aac ended on its own: at the end of the input, or a crash mid-song, which isn't the song's end.
-                if (!closed && process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS) && process.exitValue() != 0) {
+                if (!decoder.closed && process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS) && process.exitValue() != 0) {
                     throw IOException("roma-aac stopped (exit ${process.exitValue()})")
                 }
                 return -1
@@ -168,17 +197,11 @@ class AacPcm(private val d: Mp4Demuxer, atMs: Long) : Pcm {
             if (m < 0) break
             got += m
         }
-        while (drop < 0 && failure == null && process.isAlive) Thread.sleep(1)
+        while (drop < 0 && decoder.failure == null && process.isAlive) Thread.sleep(1)
         return got - got % frame
     }
 
-    // Through its handle: Process.destroy first closes its input, which waits for the writer, stuck in a full pipe while
-    // the player holds its lock, and the reader of the output waits for that lock: a skip froze the player.
-    override fun close() {
-        closed = true
-        writer.interrupt()
-        process.toHandle().destroy()
-    }
+    override fun close() = decoder.close()
 
     companion object {
         /**

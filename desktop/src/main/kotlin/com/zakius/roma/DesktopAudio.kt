@@ -46,12 +46,14 @@ class DesktopAudio : QueuePlayer({ Output(it) }) {
         override fun seek(ms: Long) = synchronized(lock) { wantAt = ms; flush = true; gen++; at(ms); line?.let { it.stop(); it.flush() }; replaced() }
 
         // A newer load or seek: the thread lets go of the old song at once, even when it waits for the network (its
-        // download or roma-aac), instead of when the wait ends.
+        // download or roma-aac), instead of when the wait ends. The old song closes on its own thread: this runs on the
+        // UI thread, under the lock the audio thread takes, so nothing here may wait for a decoder.
         private fun replaced() {
-            source?.close()
+            source?.let { s -> closer.execute(s::close) }
             thread.interrupt()
             lock.notifyAll()
         }
+        private val closer = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "audio close").apply { isDaemon = true } }
 
         // Until the song's first samples go in, the position is where it was asked to start, as Media3 reports a seek.
         private fun at(ms: Long) { fromMs = ms; firstFrame = Long.MAX_VALUE }

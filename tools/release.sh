@@ -24,7 +24,7 @@ app=; buildDict=; test=
 [[ $parts == *" dict "* && ! -f $dict ]] && buildDict=1
 [[ $parts == *" test "* ]] && test=1
 tasks=()
-[ -n "$test" ] && tasks+=(:core:test :youtube:test :subsonic:test)
+[ -n "$test" ] && tasks+=(:core:test :youtube:test :subsonic:test :desktop:test)
 [ -n "$app" ] && tasks+=(:app:assembleYoutubeRelease :app:assembleSubsonicRelease)
 [ -n "$buildDict" ] && tasks+=(:dict-app:assembleRelease)
 ./gradlew -q "${tasks[@]}" ${ROMA_DICT_BASE:+-Proma.dictBase=$ROMA_DICT_BASE}

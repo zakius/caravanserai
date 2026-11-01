@@ -196,6 +196,8 @@ compose.desktop {
 }
 
 dependencies { testImplementation(kotlin("test")) }
+// The unit tests (FedProcessTest); the other test sources are checks run as their own tasks below.
+tasks.test { useJUnitPlatform() }
 tasks.register<JavaExec>("decodeCheck") {
     classpath = sourceSets["test"].runtimeClasspath
     mainClass = "com.zakius.roma.DecodeCheckKt"
