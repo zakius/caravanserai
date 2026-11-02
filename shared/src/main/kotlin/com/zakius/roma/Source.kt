@@ -93,6 +93,10 @@ interface Source {
     fun streamUrl(id: String, full: Boolean): String
     /** dB above the reference level, when known. */
     fun loudness(id: String): Float?
+    /** The source knows songs' loudness: Settings offers to even it out. */
+    val knowsLoudness: Boolean
+    /** The source has music videos as well as songs: Settings offers to prefer the songs in radio. */
+    val hasVideos: Boolean
 
     /** A stored picture URL at [px] pixels, as lists draw it; [url] when the source can't size it. */
     fun thumbAt(url: String, px: Int): String = url
@@ -116,6 +120,8 @@ interface Source {
     @Composable fun Comments() {}
     /** Blocking. A link to the song for Share; null when there's none. */
     fun shareUrl(s: Song): String?
+    /** Songs have links to share: the song menu has Share. */
+    val canShare: Boolean
 
     /** The app scrobbles this source's songs to Last.fm itself; otherwise the source reports them (docs/subsonic.md, Scrobbling). */
     val lastFm: Boolean

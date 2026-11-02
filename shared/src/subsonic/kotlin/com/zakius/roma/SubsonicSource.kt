@@ -90,6 +90,8 @@ object SubsonicSource : Source {
         val artistSongs = songs.groupBy { it.firstArtistId }.mapValues { (_, l) -> l.sortedWith(compareBy({ subById[it.id]?.year ?: 0 }, { it.album?.name?.original ?: "" }, { subById[it.id]?.disc ?: 0 }, { subById[it.id]?.track ?: 0 })) }
         val albumById = albums.associateBy { it.id }
         val artistById = artists.associateBy { it.id }
+        /** The server sends ReplayGain. */
+        val hasGain = index.songs.any { it.gain != null }
         fun sub(id: String) = subById[id]
     }
 
@@ -361,7 +363,10 @@ object SubsonicSource : Source {
     // ---- Streams, covers, lyrics ----
 
     override fun streamUrl(id: String, full: Boolean) = need().streamUrl(SubsonicIds.decode(id))
-    override fun loudness(id: String): Float? = null
+    // ReplayGain (OpenSubsonic's replayGain) is the gain to a -18 LUFS reference; as YouTube's, the dB above -14 LUFS.
+    override fun loudness(id: String): Float? = library?.sub(id)?.gain?.let { -it - 4f }
+    override val knowsLoudness get() = library?.hasGain == true
+    override val hasVideos = false
 
     // Covers are stored as "subsonic:<id>", sized as "subsonic:<id>?size=N": no credentials in stored songs.
     override fun thumbAt(url: String, px: Int) = if (url.startsWith("subsonic:")) "$url?size=$px" else url
@@ -384,6 +389,7 @@ object SubsonicSource : Source {
     override val lyricsRule = "The server's lyrics are the reference, when it has any: word timing that matches them wins, then their own timing, then matching line timing, then their plain text."
     override val hasComments = false
     override fun shareUrl(s: Song): String? = null
+    override val canShare = false
 
     // ---- Scrobbling: see docs/subsonic.md ----
 

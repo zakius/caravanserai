@@ -60,6 +60,8 @@ class SubSong(
     val titleLatin: String? = null,
     val artistLatin: String? = null,
     val albumLatin: String? = null,
+    /** OpenSubsonic replayGain: the track's gain in dB (the album's when the track has none), null when the server sends none. */
+    val gain: Float? = null,
 )
 
 @Serializable
@@ -342,6 +344,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
                 o["id"].str() ?: return null, o["title"].str() ?: "", o["artist"].str() ?: "", o["artistId"].str(), o["album"].str(), o["albumId"].str(),
                 o["track"].int(), o["discNumber"].int(), o["year"].int(), o["duration"].int(), o["coverArt"].str(), o["starred"] != null, o["created"].str(),
                 o["suffix"].str(), o["bitRate"].int(), o["path"].str(), latin(o, "title", latin), latin(o, "artist", latin), latin(o, "album", latin)?.takeIf { o["album"] != null },
+                o["replayGain"].obj()?.let { g -> (g["trackGain"] ?: g["albumGain"]).str()?.toFloatOrNull() },
             )
         }
 

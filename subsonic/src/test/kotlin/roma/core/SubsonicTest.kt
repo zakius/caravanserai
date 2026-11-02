@@ -136,6 +136,13 @@ class SubsonicTest {
         assertEquals(20_000, SubsonicClient(url, "admin", "secret").playlist("big").second.size)
     }
 
+    @Test fun replayGain() {
+        fun gain(json: String) = SubsonicClient.song(kotlinx.serialization.json.Json.parseToJsonElement(songs[0].replace("}", ",$json}")))!!.gain
+        assertEquals(-7.5f, gain(""""replayGain":{"trackGain":-7.5,"albumGain":-6}"""))
+        assertEquals(-6f, gain(""""replayGain":{"albumGain":-6}"""))
+        assertNull(SubsonicClient.song(kotlinx.serialization.json.Json.parseToJsonElement(songs[0]))!!.gain)
+    }
+
     @Test fun wrongPassword() {
         val e = assertFailsWith<SubsonicException> { SubsonicClient(url, "admin", "nope").ping() }
         assertEquals(40, e.code)

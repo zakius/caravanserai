@@ -217,6 +217,8 @@ object YouTubeMusic : Source {
     }
     // YouTube's loudness is relative to its reference level.
     override fun loudness(id: String) = Streams.loudness(id)
+    override val knowsLoudness = true
+    override val hasVideos = true
 
     // Google-hosted art takes its size in the URL: innertube hands over the largest thumbnail (often 544 px or more,
     // 80–115 KB). YouTube video stills come in fixed sizes; for the player, hqdefault (480 px) always exists.
@@ -234,6 +236,7 @@ object YouTubeMusic : Source {
     @Composable override fun Comments() = CommentsView()
 
     override fun shareUrl(s: Song) = link(s.id)
+    override val canShare = true
 
     // The same video ID plays on both: on YouTube a song is its "Topic" upload.
     fun link(videoId: String) = if (Store.str("share.site", "music") == "music") "https://music.youtube.com/watch?v=$videoId" else "https://www.youtube.com/watch?v=$videoId"
