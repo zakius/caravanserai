@@ -129,6 +129,9 @@ internal fun ServerSettings() {
         item { Header("Server") }
         item { ServerForm(if (!configured) "Connect" else "Save") {} }
         if (!configured) return@LazyColumn
+        if (Store.str("subsonic.url", "").startsWith("http://")) item {
+            Text("Not encrypted: plain http sends your music and a token made from your password as they are. Fine on your own network only.", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
         item {
             SubsonicSource.changes
             val l = SubsonicSource.library
@@ -143,7 +146,7 @@ internal fun ServerSettings() {
         item {
             Switch1(
                 "Also scrobble to Last.fm from ${BuildConfig.APP_NAME}", "subsonic.lastfm", SubsonicSource.lastFmDefault,
-                subtitle = "${BuildConfig.APP_NAME} always tells the server. " + if (SubsonicSource.library?.index?.serverScrobbles == true) "The server says it scrobbles to Last.fm itself, so this starts off" else "Turn this off if the server scrobbles to Last.fm itself",
+                subtitle = "${BuildConfig.APP_NAME} always tells the server. " + if (!SubsonicSource.lastFmDefault) "The server says it scrobbles to Last.fm itself, so this starts off" else "Turn this off if the server scrobbles to Last.fm itself",
             )
         }
     }
@@ -161,7 +164,9 @@ internal fun ServerSetup() {
 
 /**
  * A Subsonic server's address, user and password. [action] checks them with the server (ping) before keeping them, then
- * runs [onConnected] and syncs the library. A different server or user drops the old one's library.
+ * runs [onConnected] and syncs the library. A different server or user drops the old one's library. An address without
+ * a scheme is https; when that fails and the same address answers as Subsonic over plain http on the user's own
+ * network, the form says so and connects over http only on a second tap.
  */
 @Composable
 internal fun ServerForm(action: String, onConnected: () -> Unit) {
@@ -170,33 +175,68 @@ internal fun ServerForm(action: String, onConnected: () -> Unit) {
     var password by rememberSaveable { mutableStateOf(Store.str("subsonic.password", "")) }
     var status by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+    // The http address found when https failed, until the user agrees to it or edits the address.
+    var plain by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(url, { url = it }, Modifier.fillMaxWidth(), singleLine = true, label = "Server address", placeholder = "http://192.168.1.10:4533")
+        OutlinedTextField(url, { url = it; plain = null }, Modifier.fillMaxWidth(), singleLine = true, label = "Server address", placeholder = "music.example.com or http://192.168.1.10:4533")
         OutlinedTextField(user, { user = it }, Modifier.fillMaxWidth(), singleLine = true, label = "User")
         OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), singleLine = true, label = "Password", password = true)
         Button(enabled = !busy && url.isNotBlank(), onClick = {
             busy = true
             status = "Connecting…"
             scope.launch {
-                val r = withContext(Dispatchers.IO) { runCatching { roma.core.SubsonicClient(url, user.trim(), password).run { ping(); extensions() } } }
+                val typed = url.trim()
+                val r = withContext(Dispatchers.IO) { runCatching {
+                    plain?.let { return@runCatching connect(it, user.trim(), password) }
+                    try { connect(typed, user.trim(), password) } catch (e: Exception) {
+                        if ("://" in typed || e is roma.core.SubsonicException && e.http == null) throw e
+                        if (!subsonicOverHttp("http://$typed")) throw e
+                        null
+                    }
+                } }
                 busy = false
-                r.onSuccess { extensions ->
-                    Store.set(SubsonicSource.ROMANIZES, roma.core.SubsonicClient.ROMANIZATION in extensions)
-                    val other = url.trim() != Store.str("subsonic.url", "") || user.trim() != Store.str("subsonic.user", "")
-                    Store.set("subsonic.url", url.trim())
+                r.onSuccess { c ->
+                    if (c == null) {
+                        plain = "http://$typed"
+                        status = "This server has no https. Over plain http, your music and a token made from your password cross the network unencrypted: fine on your own network, not elsewhere."
+                        return@onSuccess
+                    }
+                    plain = null
+                    Store.set(SubsonicSource.ROMANIZES, roma.core.SubsonicClient.ROMANIZATION in c.extensions)
+                    Store.set(SubsonicSource.SERVER_SCROBBLES, c.serverScrobbles == true)
+                    val other = c.url != Store.str("subsonic.url", "") || user.trim() != Store.str("subsonic.user", "")
+                    Store.set("subsonic.url", c.url)
                     Store.set("subsonic.user", user.trim())
                     Store.set("subsonic.password", password)
+                    url = c.url
                     if (other) SubsonicSource.forget()
                     status = null
                     onConnected()
                     SubsonicSource.sync()
                 }.onFailure { status = serverError(it) }
             }
-        }) { Text(action) }
+        }) { Text(if (plain != null) "Connect over http" else action) }
         status?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
     }
 }
+
+/** A server that answered: its address with the scheme, its extensions, and whether it scrobbles to Last.fm itself. */
+private class Connected(val url: String, val extensions: Map<String, List<Int>>, val serverScrobbles: Boolean?)
+
+// Blocking. Plain http only to a server on the user's own network (SubsonicClient.localHost).
+private fun connect(url: String, user: String, password: String): Connected = roma.core.SubsonicClient(url, user, password).run {
+    val uri = runCatching { java.net.URI(base) }.getOrNull()
+    if (uri?.host == null || uri.scheme != "https" && uri.scheme != "http") throw roma.core.SubsonicException(0, "That isn't a web address.")
+    if (uri.scheme == "http" && !roma.core.SubsonicClient.localHost(uri.host)) throw roma.core.SubsonicException(0, "Plain http only reaches a server on your own network. Use https:// for this one.")
+    ping()
+    Connected(base, extensions(), scrobblingEnabled())
+}
+
+// Blocking: [url] is a Subsonic server on the user's own network. Asked without the user's password, which mustn't cross
+// the network unencrypted before the user agrees; any Subsonic answer, a refusal included, will do.
+private fun subsonicOverHttp(url: String) = runCatching { java.net.URI(url).host?.let(roma.core.SubsonicClient::localHost) == true }.getOrDefault(false) &&
+    runCatching { roma.core.SubsonicClient(url, "", "").ping() }.exceptionOrNull().let { it == null || it is roma.core.SubsonicException && it.http == null }
 
 private fun serverError(t: Throwable) = when {
     t is roma.core.SubsonicException && t.code == 40 -> "Wrong user or password."
