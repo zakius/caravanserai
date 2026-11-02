@@ -45,12 +45,14 @@ class StreamFile private constructor(val id: String) {
             // A Range on every request: without one some servers throttle the download to a trickle.
             c.setRequestProperty("Range", "bytes=$have-" + if (limit >= 0) "${limit - 1}" else "")
             val code = c.responseCode
-            if (code == 416 && total >= 0) return
+            dir.mkdirs() // before setTotal writes the length beside the file
+            // Asked past the end: whole, if the server's length (Content-Range: bytes */N) is what is here.
+            if (code == 416) c.getHeaderField("Content-Range")?.substringAfter('/')?.toLongOrNull()?.let(::setTotal)
+            if (code == 416 && total in 0..have) return
             if (code !in 200..299) throw StreamRefused(code)
             // A server that ignores Range sends the whole file: it is written from the start, with its length if it says.
             if (code == 200) synchronized(lock) { have = 0; c.contentLengthLong.takeIf { it > 0 }?.let(::setTotal) }
             c.getHeaderField("Content-Range")?.substringAfter('/')?.toLongOrNull()?.let(::setTotal)
-            dir.mkdirs()
             RandomAccessFile(file, "rw").use { out ->
                 out.seek(have)
                 c.inputStream.use { input ->
