@@ -192,12 +192,14 @@ object SubsonicSource : Source {
     // ---- Pages ----
 
     /** The server's mixes (playlists marked "oasisMix" by a server with the extension oasis, which publishes its streaming services' personal mixes so), for Home's tiles, in the server's order. Other servers have none. */
-    var mixTiles by mutableStateOf<List<Item>>(emptyList())
+    var mixTiles by mutableStateOf<List<Item>?>(null)
         private set
 
     /** Reads the mixes again; returns how many there are. Blocking. */
     private fun refreshMixes(): Int {
         val tiles = need().playlists().filter { it.mix }.map { Store.romanizer.item(it) }
+        // Kept for the next start, whose Home shows them before the server answers, as roma's mixes
+        Store.mixes = tiles
         postMain { mixTiles = tiles }
         return tiles.size
     }
@@ -220,7 +222,7 @@ object SubsonicSource : Source {
         return null to shelves
     }
     override val mixes = false
-    @Composable override fun HomeTiles(mixes: List<Item>?, read: Boolean) = LibraryTiles()
+    @Composable override fun HomeTiles(mixes: List<Item>?, read: Boolean) = LibraryTiles(mixTiles ?: mixes.orEmpty())
 
     override val searchIsLocal = true
     override suspend fun suggestions(query: String) = emptyList<String>()

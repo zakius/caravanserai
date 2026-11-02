@@ -94,8 +94,7 @@ import roma.core.song
 
 /** Home's pinned tiles: the server's mixes (oasis only), then the starred songs and the whole library at random, three to a row. */
 @Composable
-internal fun LibraryTiles() {
-    val mixes = SubsonicSource.mixTiles
+internal fun LibraryTiles(mixes: List<Item>) {
     val (cols, _, side) = mixGrid(screenSizeDp().width, mixes.size)
     val tint = MaterialTheme.colorScheme.onSecondaryContainer
     @Composable
