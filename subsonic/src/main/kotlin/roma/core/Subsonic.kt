@@ -252,7 +252,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
             }
             Line(line.startMs, line.text, line.words, latin = p.text.ifBlank { line.text }, wordLatin = wordLatin)
         }
-        return Lyrics(source, lines, synced).takeIf { lines.any { it.text.isNotBlank() } }
+        return Lyrics(source, lines, synced, lang = base["lang"].str()).takeIf { lines.any { it.text.isNotBlank() } }
     }
 
     // One structuredLyrics entry's lines; with cueLine, their timed words.

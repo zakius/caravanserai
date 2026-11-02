@@ -212,7 +212,8 @@ class RomanizeTest {
         val latin = r.parts(words)
         assertEquals(4, latin.size)
         assertEquals("Yoru ni kakeru", latin.joinToString("").trim())
-        assertEquals(listOf("Ni", "hao"), Romanizer(jvmIcu, RomanizeSettings(hanDefault = "zh", chineseTones = false)).parts(listOf("你", "好")))
+        assertEquals(listOf("Ni", " hao"), Romanizer(jvmIcu, RomanizeSettings(hanDefault = "zh", chineseTones = false)).parts(listOf("你", "好")))
+        assertEquals(listOf("an", "nyeong"), Romanizer(jvmIcu).parts(listOf("안", "녕")).map { it.lowercase() }) // Hangul stays joined
     }
 
     @Test fun localSearch() {

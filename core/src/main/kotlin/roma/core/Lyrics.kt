@@ -38,9 +38,9 @@ class Line(
     val pieceLatin: List<String> = emptyList(),
 )
 
-/** translationSource is set by [attachTranslation]. */
+/** translationSource is set by [attachTranslation]. [lang]: the song's language tag (ISO 639) where the provider gives one. */
 @Serializable
-class Lyrics(val source: String, val lines: List<Line>, val synced: Boolean, val translationSource: String? = null) {
+class Lyrics(val source: String, val lines: List<Line>, val synced: Boolean, val translationSource: String? = null, val lang: String? = null) {
     val wordLevel get() = lines.any { it.words.isNotEmpty() }
 }
 
@@ -132,7 +132,7 @@ fun withoutCredits(l: Lyrics, q: LyricsQuery): Lyrics {
         val t = line.text.trim()
         !CREDIT.containsMatchIn(t) && !(i < 3 && " - " in t && sameTitle(t.substringAfter(" - "), q.title))
     }
-    return if (lines.size == l.lines.size) l else Lyrics(l.source, lines, l.synced, l.translationSource)
+    return if (lines.size == l.lines.size) l else Lyrics(l.source, lines, l.synced, l.translationSource, l.lang)
 }
 
 // ---- Choosing ----
@@ -226,17 +226,20 @@ fun attachTranslation(l: Lyrics, t: Translation?): Lyrics {
         },
         l.synced,
         t?.source,
+        l.lang,
     )
 }
 
 /**
  * Lines in sentence case. The language is decided once per song: kana in any line makes every line Japanese, else
- * Chinese evidence in any line ([Romanizer.looksChinese]) makes every Han line Chinese, and the Cyrillic language comes from the whole lyrics, so a line without Kazakh letters in a Kazakh song is Kazakh;
+ * Chinese evidence in any line ([Romanizer.looksChinese]) makes every Han line Chinese, else a Chinese [Lyrics.lang]
+ * (zh, zho, chi, cmn, yue) does, for Han text no clue settles. The Cyrillic language comes from the whole lyrics, so a line without Kazakh letters in a Kazakh song is Kazakh;
  * a line with a letter the song's language lacks uses its own (see Romanizer.cyrillicLanguageOfLine).
  */
 fun Romanizer.romanizeLyrics(l: Lyrics, siblings: List<String>, songId: String): Lyrics {
     val texts = l.lines.map { it.text }
-    val sib = siblings + listOfNotNull(texts.firstOrNull { it.any(Romanizer::isKana) } ?: texts.firstOrNull(::looksChinese))
+    val chineseTag = l.lang.orEmpty().lowercase().substringBefore('-') in listOf("zh", "zho", "chi", "cmn", "yue")
+    val sib = siblings + listOfNotNull(texts.firstOrNull { it.any(Romanizer::isKana) } ?: texts.firstOrNull(::looksChinese) ?: CHINESE_HINT.takeIf { chineseTag })
     val cyr = Romanizer.cyrillicLanguage(l.lines.joinToString("\n") { it.text })
     return Lyrics(
         l.source,
@@ -255,6 +258,7 @@ fun Romanizer.romanizeLyrics(l: Lyrics, siblings: List<String>, songId: String):
         },
         l.synced,
         l.translationSource,
+        l.lang,
     )
 }
 
@@ -429,3 +433,6 @@ object GoogleTranslate {
         return parts to (root.getOrNull(2).str() ?: "")
     }
 }
+
+/** A simplified character outside JIS X 0208: Chinese evidence as a sibling. */
+private const val CHINESE_HINT = "们"

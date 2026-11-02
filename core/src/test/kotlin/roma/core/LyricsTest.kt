@@ -50,6 +50,17 @@ class LyricsTest {
         assertEquals("Huā huǒ", zh.lines[0].latin)
     }
 
+    @Test fun languageTagReadsHanAsChineseWhenTheTextCannotTell() {
+        val r = Romanizer(jvmIcu)
+        fun latin(lrc: String, lang: String?) = r.romanizeLyrics(Lyrics("t", parseLrc(lrc), true, lang = lang), emptyList(), "x").lines.map { it.latin }
+        assertEquals(listOf("Kowane"), latin("[00:01.00]声音", null))
+        assertEquals(listOf("Shēng yīn"), latin("[00:01.00]声音", "zho"))
+        assertEquals(listOf("Shēng yīn"), latin("[00:01.00]声音", "zh-Hans"))
+        assertEquals(listOf("Shēng", " yīn"), r.romanizeLyrics(Lyrics("t", parseLrc("[00:01.00]<00:01.00>声<00:01.50>音<00:02.00>"), true, lang = "chi"), emptyList(), "x").lines[0].wordLatin)
+        assertEquals(listOf("Kowane", "Kokoro"), latin("[00:01.00]声音\n[00:02.00]こころ", "zho")) // kana outweighs the tag
+        assertEquals(listOf("Kowane"), latin("[00:01.00]声音", "eng"))
+    }
+
     @Test fun translationLanguageFromScript() {
         assertEquals("zh", translationLanguage(listOf("你的声音")))
         assertEquals("en", translationLanguage(listOf("your voice")))

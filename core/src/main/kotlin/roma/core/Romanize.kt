@@ -174,7 +174,10 @@ class Romanizer(
         val readings = wordReadings(songId)
         val out: MutableList<String> = if (!isJapanese(line, siblings)) {
             val lang = cyrLang ?: cyrillicLanguage(line)
-            norm.map { if (hasNonLatin(it)) raw(it, siblings, false, lang, readings) else it }.toMutableList()
+            norm.map { if (hasNonLatin(it)) raw(it, siblings, false, lang, readings) else it }.toMutableList().also { out ->
+                // Chinese words are one or two syllables apart ("gù shì de"); Hangul syllables join into their word.
+                for (k in 1 until out.size) if (out[k].firstOrNull()?.isLetterOrDigit() == true && norm[k].isNotEmpty() && hasHan(norm[k].substring(0, Character.charCount(norm[k].codePointAt(0)))) && out.subList(0, k).joinToString("").lastOrNull()?.isLetterOrDigit() == true) out[k] = " " + out[k]
+            }
         } else {
             val words = Array(norm.size) { StringBuilder() }
             val starts = norm.runningFold(0) { acc, p -> acc + p.length }
@@ -346,10 +349,36 @@ class Romanizer(
         return synchronized(t) { t.tokenize(Tokenizer.SplitMode.C, s).map { Token(s.substring(it.begin(), it.end()), it.readingForm(), it.partOfSpeech(), it.begin(), it.end()) } }
     }
 
+    /**
+     * [NAME_READINGS] applied; in [title] case also kana after a surname that Sudachi split into function words and
+     * that runs to the end of the name (幾田|り|ら, 椎名|も|た) made one given name, as a name has no grammar to split.
+     */
+    private fun names(found: List<Token>, title: Boolean): List<Token> {
+        val out = ArrayList<Token>()
+        var i = 0
+        while (i < found.size) {
+            val key = NAME_READINGS.keys.firstOrNull { k -> k == found.subList(i, minOf(i + k.size, found.size)).map { it.surface } }
+            if (key != null) {
+                key.indices.mapTo(out) { k -> found[i + k].let { Token(it.surface, NAME_READINGS.getValue(key)[k], it.pos, it.begin, it.end) } }
+                i += key.size
+                continue
+            }
+            out.add(found[i])
+            var j = i + 1
+            while (title && found[i].pos[3] == "姓" && j < found.size && found[j].surface.all(::isKana) && found[j].pos[0] in NAME_FRAGMENTS) j++
+            if (j - i > 2 && found[i + 1].pos[0] != "接尾辞" && (j == found.size || !found[j].surface.any(::isKana) && !hasHan(found[j].surface))) {
+                val run = found.subList(i + 1, j)
+                out.add(Token(run.joinToString("") { it.surface }, run.joinToString("") { it.reading }, listOf("名詞", "固有名詞", "人名", "名", "*", "*"), run.first().begin, run.last().end))
+                i = j
+            } else i++
+        }
+        return out
+    }
+
     /** (surface, romaji with its leading space) per token. In [title] case every word but a particle is capitalized. */
     private fun japanese(s: String, title: Boolean, words: Map<String, String> = emptyMap()): List<Triple<String, String, String?>> {
         val result = ArrayList<Triple<String, String, String?>>()
-        val tokens = tokens(s)
+        val tokens = names(tokens(s), title)
         var prevWord = false
         var prevClose = false // the previous token was closing punctuation (」, ）, ”): a word after it starts a new one
         var prev: Token? = null
@@ -710,6 +739,9 @@ class Romanizer(
 
     companion object {
         private const val NO_DICTIONARY = "辞書なし"
+        /** Names Sudachi reads wrong, by their tokens: the reading their MusicBrainz sort name gives (Yonezu, Kenshi). */
+        private val NAME_READINGS = mapOf(listOf("米津", "玄師") to listOf("ヨネヅ", "ケンシ"))
+        private val NAME_FRAGMENTS = setOf("助詞", "助動詞", "感動詞", "接尾辞")
         fun isKana(c: Char) = (c in 'ぁ'..'ヺ') || c in 'ㇰ'..'ㇿ' || c in 'ｦ'..'ﾝ'
         private val SHIFT_JIS = charset("Shift_JIS")
 
