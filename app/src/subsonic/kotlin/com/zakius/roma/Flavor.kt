@@ -2,7 +2,9 @@ package com.zakius.roma
 
 import androidx.media3.extractor.Extractor
 import androidx.media3.extractor.flac.FlacExtractor
+import androidx.media3.extractor.mkv.MatroskaExtractor
 import androidx.media3.extractor.mp3.Mp3Extractor
+import androidx.media3.extractor.mp4.FragmentedMp4Extractor
 import androidx.media3.extractor.mp4.Mp4Extractor
 import androidx.media3.extractor.ogg.OggExtractor
 import androidx.media3.extractor.text.SubtitleParser
@@ -15,9 +17,13 @@ fun flavorInit() {}
 
 fun flavorResumed() {}
 
-/** The containers ExoPlayer reads (ExoAudio): what music servers stream as it is stored (MP3, FLAC, Ogg, WAV, M4A, ADTS AAC). */
-fun containers(): Array<Extractor> =
-    arrayOf(Mp3Extractor(), FlacExtractor(), OggExtractor(), WavExtractor(), Mp4Extractor(SubtitleParser.Factory.UNSUPPORTED), AdtsExtractor())
+/**
+ * The containers ExoPlayer reads (ExoAudio): what music servers stream as it is stored (MP3, FLAC, Ogg, WAV, M4A, ADTS
+ * AAC), and the fragmented MP4 and WebM that servers relaying streaming services (oasis's YouTube Music songs) send.
+ */
+fun containers(): Array<Extractor> = SubtitleParser.Factory.UNSUPPORTED.let {
+    arrayOf(Mp3Extractor(), FlacExtractor(), OggExtractor(), WavExtractor(), FragmentedMp4Extractor(it), Mp4Extractor(it), MatroskaExtractor(it), AdtsExtractor())
+}
 
 /** Google Play updates the Subsonic app: it never has an update of its own to offer (Settings asks). */
 object Update {
