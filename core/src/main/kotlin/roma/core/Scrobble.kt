@@ -72,6 +72,9 @@ class ScrobbleQueue(private val file: File) {
     private val flushing = java.util.concurrent.locks.ReentrantLock() // not `this`: add() mustn't wait for the network
     @Synchronized fun add(s: Scrobble) = save(load() + s)
 
+    /** Drops every play, one a running flush is sending included: it won't come back. */
+    @Synchronized fun clear() { file.delete() }
+
     @Synchronized fun load(): List<Scrobble> = if (file.exists()) runCatching { Json.decodeFromString<List<Scrobble>>(file.readText()) }.getOrDefault(emptyList()) else emptyList()
 
     private fun save(list: List<Scrobble>) = file.writeText(Json.encodeToString(list))

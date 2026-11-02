@@ -210,6 +210,8 @@ open class QueuePlayer(engine: (QueuePlayer) -> Engine) : AudioPlayer {
 
     override fun fullyCached(id: String) = StreamFile.of(id).complete
 
+    override fun clearCache() = StreamFile.clear()
+
     private fun changed(list: Boolean = false, transition: Boolean = false, repeat: Boolean = false, playing: Boolean = false, discontinuity: Boolean = false) =
         listener?.onEvents(list, transition, repeat, playing, discontinuity)
 }

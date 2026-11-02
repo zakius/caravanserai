@@ -50,6 +50,8 @@ interface AudioPlayer {
     fun precache(id: String, bytes: Long)
     /** The whole song is in the audio cache: it plays, seeks and repeats without the network. */
     fun fullyCached(id: String): Boolean
+    /** Blocking: drops every song in the audio cache, e.g. another server's songs with the same ids (SubsonicSource.forget). */
+    fun clearCache()
 
     interface Listener {
         /** Something changed: the list, the current item, the repeat mode, playing or not, or a seek. */

@@ -158,6 +158,8 @@ class ExoAudio(c: Context) : AudioPlayer {
         return length > 0 && cache.isCached(id, 0, length)
     }
 
+    override fun clearCache() = cache.keys.forEach(cache::removeResource)
+
     // Resumes the song when the headphones that paused it come back (Headphones).
     private val headphones = Headphones { exo.play() }
 

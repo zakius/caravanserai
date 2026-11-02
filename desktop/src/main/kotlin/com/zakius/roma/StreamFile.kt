@@ -103,6 +103,9 @@ class StreamFile private constructor(val id: String) {
         private val open = ConcurrentHashMap<String, StreamFile>()
         fun of(id: String): StreamFile = open.computeIfAbsent(id) { StreamFile(it) }
 
+        /** Every song out of the cache, on disk and in memory. */
+        fun clear() { open.clear(); dir.deleteRecursively() }
+
         /** ponytail: oldest files out past 1 GB, once per start, as Android's audio cache. */
         fun trim() {
             val files = dir.listFiles { f -> !f.name.endsWith(".len") }.orEmpty().sortedByDescending { it.lastModified() }

@@ -62,7 +62,7 @@ One server at a time: changing the server's URL or user drops the index and the 
 - oasis links a streaming account per user on its own web account page. (From 2026-10-30 to 11-01 roma handed its own sign-in to `oasisLinkYouTubeMusic`; the Subsonic app can't, having no YouTube code.)
 - Prefs (user storage): `subsonic.url`, `subsonic.user`, `subsonic.password` (token auth needs the password itself; it never leaves the device except as `md5(password + salt)`), `subsonic.lastfm`, `subsonic.romanization` (the server lists the `romanization` extension), `subsonic.serverScrobbles` (getUser's `scrobblingEnabled`); the last two set on connecting and by each sync. The extensions with their versions go to the cache with the index (`SubsonicIndex.extensionVersions`). On the desktop the prefs file is 0600 and its folder 0700 on Linux.
 - `getOpenSubsonicExtensions` means "no extensions" only when the server says it doesn't know the call (a Subsonic error, HTTP 404 or 501, an answer that isn't Subsonic's). A timeout, a 503 or any other failure fails the connect or the sync, and the previous index and prefs stay.
-- Another server or user also drops the cached covers and lyrics: the ids of two servers can be the same.
+- Another server or user also drops the cached covers, lyrics and songs (the ids of two servers can be the same) and the plays not yet sent.
 - Another server or user starts Home, Search, Library and the open pages over (`Store.dataChanged`).
 
 ## Index sync

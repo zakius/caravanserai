@@ -177,11 +177,15 @@ object SubsonicSource : Source {
         }
     }
 
-    /** The server changed or was removed: its library, covers and lyrics go (another server's ids can be the same). */
+    /**
+     * The server changed or was removed: its library, covers, lyrics and cached songs go (another server's ids can be the
+     * same), and its unsent plays, before a flush sends them to the new one.
+     */
     fun forget() {
         library = null
         Images.clear()
-        scope.launch { lock.withLock { dir.deleteRecursively(); File(Store.cache, "lyrics").deleteRecursively() } }
+        plays.clear()
+        scope.launch { lock.withLock { dir.deleteRecursively(); File(Store.cache, "lyrics").deleteRecursively() }; Playback.player.clearCache() }
         changes++
     }
 

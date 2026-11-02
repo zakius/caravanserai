@@ -15,4 +15,14 @@ class ScrobbleQueueTest {
         assertEquals(listOf(50, 10), sent)
         assertEquals((53..60).map { "s.$it" }, q.load().map { it.id })
     }
+
+    @Test fun clearedPlaysDontComeBack() {
+        val q = ScrobbleQueue(kotlin.io.path.createTempFile().toFile().also { it.delete() })
+        (1..60).forEach { q.add(play(it)) }
+        // Another server meanwhile: the batch being sent mustn't put the rest back.
+        q.flush { q.clear(); 0 }
+        assertEquals(emptyList(), q.load())
+        q.add(play(61))
+        assertEquals(listOf("s.61"), q.load().map { it.id })
+    }
 }
