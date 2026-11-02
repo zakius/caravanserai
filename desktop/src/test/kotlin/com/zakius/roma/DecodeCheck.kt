@@ -2,14 +2,16 @@ package com.zakius.roma
 
 import java.io.File
 
-// ./gradlew :desktop:decodeCheck -Pfiles=a.webm,b.m4a: decodes each file the way the player does (Media.kt's pcm),
-// from the start and from 60 s, and compares the PCM with ffmpeg's: the sample count and the signal-to-noise ratio.
+// ./gradlew :desktop:decodeCheck -Pfiles=a.webm,b.m4a,c.mp3,d.flac: decodes each file the way the player does (Media.kt's pcm),
+// from the start and from 60 s, and compares the PCM with ffmpeg's (seeking after decoding, which is exact for every
+// format, where -ss before -i isn't for MP3): the sample count and the signal-to-noise ratio.
 // Needs ffmpeg on the PATH.
 fun main(args: Array<String>) {
     var ok = true
+    Store.cache = kotlin.io.path.createTempDirectory("decode-check").toFile() // the audio cache's folder, nothing else
     for (path in args) {
         val src = File(path)
-        val id = "check-" + src.nameWithoutExtension
+        val id = "check-" + src.name.replace('.', '-') // a.mp3 and a.flac apart
         StreamFile.dir.mkdirs()
         src.copyTo(File(StreamFile.dir, id), true)
         File(StreamFile.dir, "$id.len").writeText("${src.length()}")
@@ -24,7 +26,7 @@ fun main(args: Array<String>) {
                 }
                 p.sampleRate to p.channels
             }
-            val ref = ProcessBuilder(listOf("ffmpeg", "-v", "error") + (if (at > 0) listOf("-ss", "${at / 1000.0}") else emptyList()) + listOf("-i", path, "-f", "s16le", "-ac", "$channels", "-ar", "$rate", "-")).start().inputStream.readBytes()
+            val ref = ProcessBuilder(listOf("ffmpeg", "-v", "error", "-i", path) + (if (at > 0) listOf("-ss", "${at / 1000.0}") else emptyList()) + listOf("-f", "s16le", "-ac", "$channels", "-ar", "$rate", "-")).start().inputStream.readBytes()
             val a = ours.toByteArray()
             if (at == 0L) System.getProperty("dump")?.let { File(it, src.name + ".roma.raw").writeBytes(a) } // for a closer look
             fun s(b: ByteArray, i: Int) = ((b[2 * i + 1].toInt() shl 8) or (b[2 * i].toInt() and 0xff)).toDouble()

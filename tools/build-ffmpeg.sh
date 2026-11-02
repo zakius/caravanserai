@@ -1,7 +1,8 @@
 #!/bin/bash
-# The audio-only ffmpeg the desktop app runs for songs YouTube has only in AAC (about 1 in 150; desktop/Media.kt,
-# AacPcm): ffmpeg's own AAC decoder reading ADTS frames on stdin and writing 16-bit PCM to stdout, nothing else.
-# A static binary of about 1.3 MB, LGPL (no GPL or non-free parts). Pinned sources, checked against their sha256.
+# The audio-only ffmpeg the desktop apps run for what they don't decode in Java (desktop/Media.kt): roma ytm's songs
+# YouTube has only in AAC (about 1 in 150; AacPcm, ADTS frames on stdin, 16-bit PCM on stdout), and caravan's files
+# from a Subsonic server (FilePcm: MP3, FLAC, Ogg Vorbis or Opus, WAV, ADTS AAC on stdin, a 16-bit WAV on stdout).
+# Nothing else: no network, no video. A static binary, LGPL (no GPL or non-free parts). Pinned sources, checked against their sha256.
 # Linux's links musl (musl-tools), not glibc: half the size, and static either way, so it runs on any distribution.
 # Usage: build-ffmpeg.sh linux|windows <out dir>; writes <out dir>/roma-aac (roma-aac.exe for Windows).
 # Windows is cross-built with llvm-mingw, so Linux and CI build both the same way.
@@ -28,8 +29,9 @@ cd "$work/ffmpeg-$FFMPEG"
 flags=(
   --disable-everything --disable-autodetect --disable-doc --disable-debug --disable-network
   --disable-ffplay --disable-ffprobe --disable-avdevice --disable-swscale --disable-x86asm --enable-small
-  --enable-protocol=pipe --enable-demuxer=aac --enable-parser=aac --enable-decoder=aac
-  --enable-muxer=pcm_s16le --enable-encoder=pcm_s16le --enable-filter=aformat,anull,aresample
+  --enable-protocol=pipe --enable-demuxer=aac,mp3,flac,ogg,wav --enable-parser=aac,mpegaudio,flac,vorbis,opus
+  --enable-decoder=aac,mp3float,flac,vorbis,opus,pcm_u8,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le
+  --enable-muxer=pcm_s16le,wav --enable-encoder=pcm_s16le --enable-filter=aformat,anull,aresample
   --enable-lto --extra-cflags="-ffunction-sections -fdata-sections" --extra-ldflags="-static -Wl,--gc-sections"
 )
 case $target in

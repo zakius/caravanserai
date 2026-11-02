@@ -49,12 +49,19 @@ object Images {
         }
     }
 
+    /** Drops every cover, in memory and on disk: another server's covers have the same names (SubsonicSource.forget). */
+    fun clear() {
+        memory.clear()
+        scope.launch { dir.deleteRecursively() }
+    }
+
     /** The decoded covers, least recently used out first past [max] bytes. */
     private class Lru {
         var max = Runtime.getRuntime().maxMemory() / 8
         private val map = LinkedHashMap<String, Pic>(64, 0.75f, true)
         private var size = 0L
         @Synchronized fun get(k: String) = map[k]
+        @Synchronized fun clear() { map.clear(); size = 0 }
         @Synchronized fun put(k: String, v: Pic) {
             map.put(k, v)?.let { size -= picBytes(it) }
             size += picBytes(v)

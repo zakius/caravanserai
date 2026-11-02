@@ -19,7 +19,6 @@ import roma.core.Scrobble
 import roma.core.ScrobbleQueue
 import roma.core.Song
 import roma.core.SubsonicClient
-import roma.core.SubsonicException
 import roma.core.SubsonicIds
 import roma.core.SubsonicIndex
 import roma.core.SubsonicLyrics
@@ -59,7 +58,7 @@ object SubsonicSource : Source {
             val user = Store.prefs.getString("subsonic.user", "") ?: ""
             val password = Store.prefs.getString("subsonic.password", "") ?: ""
             val key = "$url\n$user\n$password"
-            if (key != clientKey) { clientKey = key; cachedClient = SubsonicClient(url, user, password).also { it.romanization = romanizes } }
+            if (key != clientKey) { clientKey = key; cachedClient = SubsonicClient(url, user, password).also { it.romanization = romanizes; it.oasis = library?.index?.supports(SubsonicClient.OASIS) == true } }
             return cachedClient
         }
 
@@ -91,6 +90,8 @@ object SubsonicSource : Source {
         val artistSongs = songs.groupBy { it.firstArtistId }.mapValues { (_, l) -> l.sortedWith(compareBy({ subById[it.id]?.year ?: 0 }, { it.album?.name?.original ?: "" }, { subById[it.id]?.disc ?: 0 }, { subById[it.id]?.track ?: 0 })) }
         val albumById = albums.associateBy { it.id }
         val artistById = artists.associateBy { it.id }
+        /** The server sends ReplayGain. */
+        val hasGain = index.songs.any { it.gain != null }
         fun sub(id: String) = subById[id]
     }
 
@@ -119,6 +120,7 @@ object SubsonicSource : Source {
 
     private fun publish(l: Library) {
         library = l
+        client?.oasis = l.index.supports(SubsonicClient.OASIS)
         Playback.markLiked(l.index.songs.filter { it.starred }.map { SubsonicIds.encode(it.id) })
         postMain { changes++ }
     }
@@ -141,9 +143,10 @@ object SubsonicSource : Source {
         postMain { syncing = true; syncError = null }
         try {
             val index = need().sync()
-            val romanizing = SubsonicClient.ROMANIZATION in index.extensions
+            val romanizing = SubsonicClient.ROMANIZATION in index.extensionVersions
             // The server gained or lost the extension: names come from the new index; lyrics and the queue start over.
             if (romanizing != romanizes) postMain { Store.set(ROMANIZES, romanizing); Playback.romanizationChanged() }
+            postMain { Store.set(SERVER_SCROBBLES, index.serverScrobbles == true) }
             dir.mkdirs()
             File(dir, "index.json").writeText(Store.json.encodeToString(index))
             return romanize(index)
@@ -174,16 +177,17 @@ object SubsonicSource : Source {
         }
     }
 
-    /** The server changed or was removed: its library goes. */
+    /** The server changed or was removed: its library, covers and lyrics go (another server's ids can be the same). */
     fun forget() {
         library = null
-        scope.launch { lock.withLock { dir.deleteRecursively() } }
+        Images.clear()
+        scope.launch { lock.withLock { dir.deleteRecursively(); File(Store.cache, "lyrics").deleteRecursively() } }
         changes++
     }
 
     // ---- Pages ----
 
-    /** The server's mixes (playlists marked "oasisMix"; oasis publishes its streaming services' personal mixes so), for Home's tiles, in the server's order. Other servers have none. */
+    /** The server's mixes (playlists marked "oasisMix" by a server with the extension oasis, which publishes its streaming services' personal mixes so), for Home's tiles, in the server's order. Other servers have none. */
     var mixTiles by mutableStateOf<List<Item>>(emptyList())
         private set
 
@@ -343,7 +347,7 @@ object SubsonicSource : Source {
     override fun like(id: String, like: Boolean) = runCatching { need().star(SubsonicIds.decode(id), like) }.isSuccess
     override fun liked(id: String) = runCatching { need().song(SubsonicIds.decode(id)).starred }.getOrNull()
 
-    // A starred album or artist is in the library. A server that then fetches what's missing (oasis) says how that goes.
+    // A starred album or artist is in the library. A server that then fetches what's missing (extension oasis) says how that goes.
     override fun saved(p: Page) = runCatching {
         val id = SubsonicIds.decode(p.id)
         val (starred, wanted, why) = when (p.kind) {
@@ -359,7 +363,10 @@ object SubsonicSource : Source {
     // ---- Streams, covers, lyrics ----
 
     override fun streamUrl(id: String, full: Boolean) = need().streamUrl(SubsonicIds.decode(id))
-    override fun loudness(id: String): Float? = null
+    // ReplayGain (OpenSubsonic's replayGain) is the gain to a -18 LUFS reference; as YouTube's, the dB above -14 LUFS.
+    override fun loudness(id: String): Float? = library?.sub(id)?.gain?.let { -it - 4f }
+    override val knowsLoudness get() = library?.hasGain == true
+    override val hasVideos = false
 
     // Covers are stored as "subsonic:<id>", sized as "subsonic:<id>?size=N": no credentials in stored songs.
     override fun thumbAt(url: String, px: Int) = if (url.startsWith("subsonic:")) "$url?size=$px" else url
@@ -372,21 +379,26 @@ object SubsonicSource : Source {
         return client?.coverUrl(SubsonicIds.decode(SubsonicIds.PREFIX + rest.substringBefore('?')), rest.substringAfter("size=", "").toIntOrNull()) ?: url
     }
 
-    // The layers the lyrics show, with the extension: original only asks "main", romanization only "pronunciation".
-    private val lyricsKinds get() = if (!romanizes) null else listOfNotNull("main".takeIf { Store.bool("lyrics.layer.original", true) }, "pronunciation".takeIf { Store.bool("lyrics.layer.latin", true) })
+    // The layers the lyrics show, with the extension and songLyrics v2 (enhanced lyrics): original only asks "main", romanization only "pronunciation".
+    private val lyricsKinds get() = if (!romanizes || library?.index?.supports(SubsonicClient.SONG_LYRICS, 2) != true) null else listOfNotNull("main".takeIf { Store.bool("lyrics.layer.original", true) }, "pronunciation".takeIf { Store.bool("lyrics.layer.latin", true) })
     override val lyricsVariant get() = lyricsKinds?.joinToString("+", prefix = ".") ?: ""
     private val ownLyrics = SubsonicLyrics(::need) { lyricsKinds }
-    override val lyrics: LyricsProvider? get() = ownLyrics.takeIf { library?.index?.extensions?.contains("songLyrics") == true }
+    override val lyrics: LyricsProvider? get() = ownLyrics.takeIf { library?.index?.supports(SubsonicClient.SONG_LYRICS) == true }
     // LRCLIB (free, open) for songs the server has no lyrics for.
     override val lyricsProviders = listOf<LyricsProvider>(LrcLib)
     override val lyricsRule = "The server's lyrics are the reference, when it has any: word timing that matches them wins, then their own timing, then matching line timing, then their plain text."
     override val hasComments = false
     override fun shareUrl(s: Song): String? = null
+    override val canShare = false
 
     // ---- Scrobbling: see docs/subsonic.md ----
 
-    /** "Also scrobble to Last.fm" until the user sets it: on unless the server says it scrobbles to Last.fm itself (getUser's scrobblingEnabled). */
-    val lastFmDefault get() = library?.index?.serverScrobbles != true
+    /**
+     * "Also scrobble to Last.fm" until the user sets it: on unless the server says it scrobbles to Last.fm itself
+     * (getUser's scrobblingEnabled). Kept in prefs by connecting and every sync, so it holds before the library is read.
+     */
+    val lastFmDefault get() = !Store.bool(SERVER_SCROBBLES, false)
+    const val SERVER_SCROBBLES = "subsonic.serverScrobbles"
     override val lastFm get() = Store.prefs.getBoolean("subsonic.lastfm", lastFmDefault)
 
     override fun nowPlaying(s: Song) {
@@ -406,17 +418,7 @@ object SubsonicSource : Source {
     /** Sends the plays that couldn't go yet, 50 to a call, each with its start time in ms. */
     private fun flushPlays() {
         val c = client ?: return
-        fun send(batch: List<Scrobble>) = c.scrobble(batch.map { SubsonicIds.decode(it.id!!) }, batch.map { it.timestamp * 1000 }, submission = true)
-        // A song the server no longer has fails the whole batch, which would stay
-        // queued for good: then the plays go one by one, and the missing songs' are dropped.
-        runCatching {
-            plays.flush { batch ->
-                try { send(batch) } catch (e: SubsonicException) {
-                    if (e.code != 70) throw e
-                    batch.forEach { one -> try { send(listOf(one)) } catch (e: SubsonicException) { if (e.code != 70) throw e } }
-                }
-            }
-        }
+        runCatching { plays.flush { batch -> c.submit(batch.map { SubsonicIds.decode(it.id!!) }, batch.map { it.timestamp * 1000 }) } }
     }
 
 

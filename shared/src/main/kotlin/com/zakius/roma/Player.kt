@@ -170,7 +170,9 @@ fun PlayerScreen() {
                 val slots: List<@Composable RowScope.() -> Unit> = listOf(
                     { Slot(rememberVectorPainter(Icons.Default.MoreVert), "More", entry != null, label = "More") { menuOpen = true } },
                     { Spacer(Modifier.weight(1f)) }, // deliberately empty: no icon, no label, not tappable
-                    { Slot(rememberVectorPainter(CommentsIcon), "Comments", entry != null && backend.hasComments, view == "comments", label = "Comments", state = if (view == "comments") "shown" else null) { view = if (view == "comments") "song" else "comments" } },
+                    // A source without comments leaves the slot empty, as the one above.
+                    if (!backend.hasComments) { { Spacer(Modifier.weight(1f)) } }
+                    else { { Slot(rememberVectorPainter(CommentsIcon), "Comments", entry != null, view == "comments", label = "Comments", state = if (view == "comments") "shown" else null) { view = if (view == "comments") "song" else "comments" } } },
                     { Slot(rememberVectorPainter(LyricsIcon), "Lyrics", hasLyrics || view == "lyrics", view == "lyrics", label = "Lyrics", state = if (view == "lyrics") "shown" else null) { view = if (view == "lyrics") "song" else "lyrics" } },
                     { Slot(rememberVectorPainter(Icons.AutoMirrored.Filled.List), "Queue", entry != null, view == "queue", label = "Queue", state = if (view == "queue") "shown" else null) { view = if (view == "queue") "song" else "queue" } },
                     {

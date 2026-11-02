@@ -206,7 +206,7 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
             MenuItem(if (liked) "Unlike" else "Like", backend.canLike) { Playback.toggleLike(s); onClose() }
             MenuItem("Go to artist", s.firstArtistId != null) { Nav.open(Page("artist", s.firstArtistId!!)); onClose() }
             MenuItem("Go to album", s.album?.id != null) { Nav.open(Page("album", s.album!!.id!!)); onClose() }
-            MenuItem("Share…", link != null) {
+            if (backend.canShare) MenuItem("Share…", link != null) {
                 share(link!!, "${s.title.latin} · ${s.artistLatin}")
                 onClose()
             }
@@ -930,7 +930,7 @@ fun SettingsScreen() {
         item { Category("source", backend.settingsTitle, backend.settingsSummary()) }
         item { Category("romanization", "Romanization", "Placement: $place · schemes · ${count(corrections, "correction") ?: "0 corrections"}$dictionary") }
         item { Category("lyrics", "Lyrics", "Providers · original, romanization and translation lines") }
-        item { Category("playback", "Queue and radio", "Radio drift · filters · loudness · downloading ahead") }
+        item { Category("playback", "Queue and radio", "Radio drift · filters · " + if (backend.knowsLoudness) "loudness · downloading ahead" else "downloading ahead") }
         item { Category("appearance", "Appearance", "Left-handed controls · true black · accent colour") }
         item { Category("banned", "Banned", if (bannedSongs + bannedArtists == 0) "Nothing banned" else listOfNotNull(count(bannedSongs, "song"), count(bannedArtists, "artist")).joinToString(" · ")) }
         item { Category("lastfm", "Last.fm", if (lastFm) "Scrobbling" else "Not connected") }
@@ -1072,12 +1072,12 @@ private fun LyricsSettings() = LazyColumn(Modifier.fillMaxSize()) {
 private fun PlaybackSettings() = LazyColumn(Modifier.fillMaxSize()) {
     item { Header("Queue and radio") }
     item { Options("Radio may drift", "radio.leash", "free", listOf("close" to "Close: same and related artists", "medium" to "Medium: at most half other artists", "free" to backend.freeRadio)) }
-    item { Switch1("Prefer audio tracks over music videos", "radio.preferAudio", true) }
+    if (backend.hasVideos) item { Switch1("Prefer audio tracks over music videos", "radio.preferAudio", true) }
     item { Switch1("Hide live, sped up, nightcore, slowed", "radio.hideVersions", true) }
     item { Switch1("Skip banned songs and artists", "radio.skipBanned", true) }
     item { Switch1("Stop when the queue ends", "queue.stopAtEnd", false) }
     item { Header("Playback") }
-    item { Switch1("Even out loudness", "play.normalize", true) }
+    if (backend.knowsLoudness) item { Switch1("Even out loudness", "play.normalize", true) }
     item { Switch1("Download songs ahead", "play.ahead", false, subtitle = "This song and the next 3, so playback goes on without a network. About 4 MB per song you skip") }
     item { Switch1("Resume when headphones reconnect", "play.resumeOnHeadphones", false, subtitle = "Within an hour of disconnecting") }
     item { Switch1("Preload on mobile data", "prepare.always", false, subtitle = "And in Battery Saver: the first second of songs you'll likely tap, so they start at once. At most 3 MB an hour") }

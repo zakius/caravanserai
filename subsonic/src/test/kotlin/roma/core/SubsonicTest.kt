@@ -17,6 +17,12 @@ class SubsonicTest {
     private var ignoreOffset = false
     // The extension romanization: listed, and with romanization=both the Latin forms where they differ (none for song 2).
     private var romanizing = false
+    // The extension oasis listed: playlists' oasisMix and albums' oasisWanted count.
+    private var oasisListed = false
+    // getOpenSubsonicExtensions answers this HTTP status with no Subsonic body (a proxy's 503, a plain server's 404).
+    private var extensionsHttp: Int? = null
+    // An empty search3 finds nothing, as on Airsonic.
+    private var emptySearch = false
     private val songs = (1..7).map { """{"id":"tr-$it","title":"夜に駆ける $it","artist":"YOASOBI","artistId":"ar-1","album":"THE BOOK","albumId":"al-1","track":$it,"duration":${200 + it},"coverArt":"al-1"${if (it == 3) ""","starred":"2026-10-30T10:00:00Z"""" else ""}}""" }
     private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
         createContext("/rest/") { ex ->
@@ -26,11 +32,19 @@ class SubsonicTest {
             fun p(k: String) = params.firstOrNull { it.first == k }?.second
             calls += method to params
             val authed = p("u") == "admin" && SubsonicClient.md5("secret" + p("s")) == p("t")
-            val body = if (!authed) """"status":"failed","error":{"code":40,"message":"Wrong username or password"}""" else """"status":"ok",""" + when (method) {
+            if (method == "getOpenSubsonicExtensions" && extensionsHttp != null) { ex.sendResponseHeaders(extensionsHttp!!, -1); ex.close(); return@createContext }
+            val ids = params.filter { it.first == "id" }.map { it.second }
+            fun failed(code: Int, message: String) = """"status":"failed","error":{"code":$code,"message":"$message"}"""
+            // Scrobbling: a song the server no longer has (tr-gone) fails with 70, a busy database (tr-boom) with 0.
+            val body = if (!authed) failed(40, "Wrong username or password")
+                else if (method == "scrobble" && "tr-gone" in ids) failed(70, "Song not found")
+                else if (method == "scrobble" && "tr-boom" in ids) failed(0, "Database busy")
+                else """"status":"ok",""" + when (method) {
                 "ping" -> """"x":1"""
-                "getOpenSubsonicExtensions" -> """"openSubsonicExtensions":[{"name":"formPost","versions":[1]},{"name":"songLyrics","versions":[1]}${if (romanizing) """,{"name":"romanization","versions":[1]}""" else ""}]"""
+                "getOpenSubsonicExtensions" -> """"openSubsonicExtensions":[{"name":"formPost","versions":[1]},{"name":"songLyrics","versions":[1,2]}""" +
+                    (if (oasisListed) """,{"name":"oasis","versions":[1]}""" else "") + (if (romanizing) """,{"name":"romanization","versions":[1]}""" else "") + "]"
                 "search3" -> {
-                    val offset = if (ignoreOffset) 0 else p("songOffset")!!.toInt()
+                    val offset = if (emptySearch) songs.size else if (ignoreOffset) 0 else p("songOffset")!!.toInt()
                     val latin = p("romanization") == "both"
                     """"searchResult3":{"song":[${songs.drop(offset).take(p("songCount")!!.toInt()).map { if (latin && "駆ける 2" !in it) it.replace("}", ""","titleLatin":"Yoru ni Kakeru","albumLatin":"za bukku"}""") else it }.joinToString(",")}]}"""
                 }
@@ -39,9 +53,11 @@ class SubsonicTest {
                 // songLyrics v2 for tr-1, every layer whatever kinds says (a server that ignores it); tr-2 has no pronunciation.
                 "getLyricsBySongId" -> if (p("enhanced") == "true") enhancedLyrics(p("id")!!) else """"lyricsList":{"structuredLyrics":[{"synced":false,"line":[{"value":"plain"}]},{"synced":true,"offset":-100,"line":[{"start":1000,"value":"沈むように"},{"start":4000,"value":"溶けてゆくように"}]}]}"""
                 "getSong" -> """"song":{"id":"tr-8","title":"Lyra","artist":"Breaking Benjamin","suffix":"flac","bitRate":1411,"path":"Breaking Benjamin/Lyra.flac"}"""
-                "getAlbum" -> """"album":{"id":"al-9","name":"STRAY SHEEP","starred":"2026-10-31T01:00:00Z","oasisWanted":"wanted","oasisWantedError":"searching","artist":"米津玄師","artistId":"ar-9","song":[${songs[0]},${songs[1]}]}"""
+                "getAlbum" -> if (p("id") == "al-1") """"album":{"id":"al-1","name":"THE BOOK","song":[${songs.joinToString(",")}]}""" else """"album":{"id":"al-9","name":"STRAY SHEEP","starred":"2026-10-31T01:00:00Z","oasisWanted":"wanted","oasisWantedError":"searching","artist":"米津玄師","artistId":"ar-9","song":[${songs[0]},${songs[1]}]}"""
                 "getArtist" -> """"artist":{"id":"ar-9","name":"米津玄師","album":[{"id":"al-9","name":"STRAY SHEEP"},{"id":"al-10","name":"Lemon","year":2018,"releaseTypes":["Single"]}]}"""
-                "getUser" -> """"user":{"username":"${p("username")}","scrobblingEnabled":true,"adminRole":true}"""
+                // Over 5 MB of JSON, as a big library's playlist.
+                "getPlaylist" -> """"playlist":{"id":"big","name":"Everything","entry":[${(1..20_000).joinToString(",") { songs[0].replace("tr-1", "tr-$it") }}]}"""
+                "getUser" ->""""user":{"username":"${p("username")}","scrobblingEnabled":true,"adminRole":true}"""
                 "getTopSongs" -> """"topSongs":{"song":[${songs[2]}]}"""
                 "getSimilarSongs" -> """"similarSongs":{"song":[${songs[4]}]}"""
                 "getPlaylists" -> """"playlists":{"playlist":[{"id":"1","name":"Radio","owner":"admin"},{"id":"2","name":"Favourites","owner":"admin"},""" +
@@ -87,7 +103,44 @@ class SubsonicTest {
         assertEquals("caravan", ps["c"])
         assertEquals("json", ps["f"])
         assertTrue("p" !in ps) // the password itself never goes out
-        assertEquals(listOf("formPost", "songLyrics"), c.extensions())
+        assertEquals(mapOf("formPost" to listOf(1), "songLyrics" to listOf(1, 2)), c.extensions())
+    }
+
+    @Test fun extensionsOnlyEmptyWhenTheServerSaysSo() {
+        val c = SubsonicClient(url, "admin", "secret")
+        // A plain Subsonic server: a 404 or a Subsonic error is "no extensions".
+        extensionsHttp = 404
+        assertEquals(emptyMap(), c.extensions())
+        extensionsHttp = null
+        assertEquals(emptyMap(), SubsonicClient(url, "admin", "nope").extensions())
+        // A proxy's 503 is no answer: the sync fails rather than drop the extensions.
+        extensionsHttp = 503
+        assertEquals(503, assertFailsWith<SubsonicException> { c.extensions() }.http)
+        assertFailsWith<SubsonicException> { c.sync() }
+        assertFailsWith<java.io.IOException> { SubsonicClient("http://127.0.0.1:1", "admin", "secret").extensions() }
+    }
+
+    @Test fun addressWithoutSchemeIsHttps() {
+        assertEquals("https://music.example.com", SubsonicClient("music.example.com/", "a", "b").base)
+        assertEquals("http://192.168.1.10:4533", SubsonicClient("http://192.168.1.10:4533", "a", "b").base)
+    }
+
+    @Test fun plainHttpOnlyOnTheOwnNetwork() {
+        for (h in listOf("localhost", "127.0.0.1", "192.168.1.10", "10.0.0.2", "172.20.1.1", "100.101.102.103", "[::1]", "fd12::1", "fe80::1", "nas", "nas.local", "music.lan", "box.home.arpa"))
+            assertTrue(SubsonicClient.localHost(h), h)
+        for (h in listOf("8.8.8.8", "172.32.0.1", "100.128.0.1", "2001:4860:4860::8888", ""))
+            assertTrue(!SubsonicClient.localHost(h), h)
+    }
+
+    @Test fun bigAnswers() {
+        assertEquals(20_000, SubsonicClient(url, "admin", "secret").playlist("big").second.size)
+    }
+
+    @Test fun replayGain() {
+        fun gain(json: String) = SubsonicClient.song(kotlinx.serialization.json.Json.parseToJsonElement(songs[0].replace("}", ",$json}")))!!.gain
+        assertEquals(-7.5f, gain(""""replayGain":{"trackGain":-7.5,"albumGain":-6}"""))
+        assertEquals(-6f, gain(""""replayGain":{"albumGain":-6}"""))
+        assertNull(SubsonicClient.song(kotlinx.serialization.json.Json.parseToJsonElement(songs[0]))!!.gain)
     }
 
     @Test fun wrongPassword() {
@@ -103,7 +156,7 @@ class SubsonicTest {
     }
 
     @Test fun syncPagesThroughEverything() {
-        val index = SubsonicClient(url.removePrefix("http://"), "admin", "secret").sync(page = 3) // no scheme: http
+        val index = SubsonicClient(url, "admin", "secret").sync(page = 3)
         assertEquals((1..7).map { "tr-$it" }, index.songs.map { it.id })
         // 3 + 3 + 1: the short page ends it.
         assertEquals(listOf("0", "3", "6"), calls.filter { it.first == "search3" }.map { it.second.toMap()["songOffset"] })
@@ -113,6 +166,13 @@ class SubsonicTest {
         assertEquals("YOASOBI", index.artists.single().name)
         assertEquals(203, index.songs[2].duration)
         assertEquals(true, index.serverScrobbles)
+    }
+
+    @Test fun syncAlbumByAlbumWhenTheEmptySearchFindsNothing() {
+        emptySearch = true
+        val index = SubsonicClient(url, "admin", "secret").sync(page = 3)
+        assertEquals((1..7).map { "tr-$it" }, index.songs.map { it.id })
+        assertEquals("al-1", calls.single { it.first == "getAlbum" }.second.toMap()["id"])
     }
 
     @Test fun syncStopsWhenOffsetIsIgnored() {
@@ -129,6 +189,16 @@ class SubsonicTest {
         assertEquals("沈むように", l.lines[0].text)
         assertEquals(l.lines.size, SubsonicLyrics({ SubsonicClient(url, "admin", "secret") }, { null }).fetch(LyricsQuery("s.tr-1", "", "", null, 0))!!.lines.size)
         assertEquals("tr-1", calls.last().second.toMap()["id"])
+    }
+
+    @Test fun submitDropsMissingSongsAndStopsAtOtherFailures() {
+        val c = SubsonicClient(url, "admin", "secret")
+        assertEquals(2, c.submit(listOf("tr-1", "tr-2"), listOf(1L, 2L)))
+        // The batch fails for tr-gone: one by one, tr-gone is dropped and every play is done with.
+        assertEquals(3, c.submit(listOf("tr-1", "tr-gone", "tr-2"), listOf(1L, 2L, 3L)))
+        // tr-boom fails otherwise: the two before it are done with, it and the rest stay queued.
+        assertEquals(2, c.submit(listOf("tr-1", "tr-gone", "tr-boom", "tr-2"), listOf(1L, 2L, 3L, 4L)))
+        assertEquals(0, assertFailsWith<SubsonicException> { c.submit(listOf("tr-boom"), listOf(1L)) }.code)
     }
 
     @Test fun scrobbleSendsIdsAndTimes() {
@@ -153,6 +223,8 @@ class SubsonicTest {
 
     @Test fun pagesOnDemand() {
         val c = SubsonicClient(url, "admin", "secret")
+        assertNull(c.album("al-9").first.wanted) // oasisWanted counts only with the extension oasis
+        c.oasis = true
         val (album, tracks) = c.album("al-9")
         assertEquals("STRAY SHEEP", album.name)
         assertTrue(album.starred)
@@ -177,7 +249,13 @@ class SubsonicTest {
     }
 
     @Test fun mixesMarked() {
-        val all = SubsonicClient(url, "admin", "secret").playlists()
+        val c = SubsonicClient(url, "admin", "secret")
+        // oasisMix without the extension oasis is just a field: no mixes.
+        c.sync()
+        assertTrue(c.playlists().none { it.mix })
+        oasisListed = true
+        assertTrue(c.sync().supports(SubsonicClient.OASIS))
+        val all = c.playlists()
         assertEquals(listOf("Radio", "Favourites"), all.filter { !it.mix }.map { it.name })
         assertEquals(listOf("Replay Mix", "Archive Mix"), all.filter { it.mix }.map { it.name }) // in the server's order
     }
@@ -193,7 +271,7 @@ class SubsonicTest {
 
     @Test fun romanizationOnlyWithTheExtension() {
         val plain = SubsonicClient(url, "admin", "secret").sync(page = 10)
-        assertTrue(SubsonicClient.ROMANIZATION !in plain.extensions)
+        assertTrue(SubsonicClient.ROMANIZATION !in plain.extensionVersions)
         assertTrue(calls.none { it.second.toMap()["romanization"] != null })
         assertNull(plain.songs[0].titleLatin)
         romanizing = true
@@ -201,7 +279,7 @@ class SubsonicTest {
         val c = SubsonicClient(url, "admin", "secret")
         val index = c.sync(page = 10)
         assertTrue(c.romanization)
-        assertTrue(SubsonicClient.ROMANIZATION in index.extensions) // what keeps the Japanese dictionary away (SubsonicSource.romanizes)
+        assertTrue(SubsonicClient.ROMANIZATION in index.extensionVersions) // what keeps the Japanese dictionary away (SubsonicSource.romanizes)
         assertTrue(calls.filter { it.first != "getOpenSubsonicExtensions" }.all { it.second.toMap()["romanization"] == "both" })
         val r = Romanizer(jvmIcu, dictionary = { error("no dictionary") })
         // The server's Latin forms, not the device's
@@ -225,7 +303,7 @@ class SubsonicTest {
         val ps = calls.last().second.toMap()
         assertEquals("true", ps["enhanced"])
         assertEquals("main,pronunciation", ps["kinds"])
-        // The translation sent anyway is left out; the pronunciation pairs by start time (4010 with 4000).
+        // The translation sent anyway is left out; the pronunciation pairs line by line (4010 with 4000).
         assertEquals(listOf("君の声", "花火"), l.lines.map { it.text })
         assertEquals(listOf("kimi no koe", "hanabi"), l.lines.map { it.latin })
         assertEquals(listOf("君", "の", "声"), l.lines[0].words.map { it.text })
@@ -263,5 +341,18 @@ class SubsonicTest {
         calls.clear()
         assertEquals("Hello", c.lyrics("tr-2", "Your server", listOf("pronunciation"))!!.lines[0].text)
         assertEquals(listOf("pronunciation", "main"), calls.map { it.second[0].second })
+    }
+
+    @Test fun layersPairLineByLine() {
+        server.createContext("/pairs/rest/") { ex ->
+            // Same count, start times far apart (a server that timed the romaji itself) and two lines starting together.
+            val main = """{"kind":"main","synced":true,"line":[{"start":1000,"value":"一"},{"start":1000,"value":"二"},{"start":5000,"value":"三"}]}"""
+            val pron = """{"kind":"pronunciation","synced":true,"line":[{"start":1000,"value":"ichi"},{"start":1000,"value":"ni"},{"start":9000,"value":"san"}]}"""
+            val json = """{"subsonic-response":{"status":"ok","lyricsList":{"structuredLyrics":[$main,$pron]}}}""".toByteArray()
+            ex.sendResponseHeaders(200, json.size.toLong())
+            ex.responseBody.use { it.write(json) }
+        }
+        val l = SubsonicClient(url + "pairs", "admin", "secret").lyrics("tr-1", "Your server", listOf("main", "pronunciation"))!!
+        assertEquals(listOf("ichi", "ni", "san"), l.lines.map { it.latin })
     }
 }
