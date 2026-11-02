@@ -52,17 +52,26 @@ object Dirs {
 
     val files: File = File(
         if (windows) env("APPDATA") ?: "$home/AppData/Roaming" else env("XDG_DATA_HOME") ?: "$home/.local/share", BuildConfig.SLUG,
-    ).also { it.mkdirs() }
+    ).also { it.mkdirs(); ownerOnly(it, "rwx------") }
     val cache: File = (if (windows) File(env("LOCALAPPDATA") ?: "$home/AppData/Local", "${BuildConfig.SLUG}/cache") else File(env("XDG_CACHE_HOME") ?: "$home/.cache", BuildConfig.SLUG))
         .also { it.mkdirs() }
 }
 
 /**
- * Android's SharedPreferences, as much of it as roma uses, in a properties file. Edits are applied in memory at once
+ * On POSIX systems, [f] for the user alone ([mode] as ls shows it): user storage holds a server's password and sign-ins.
+ * Windows keeps a profile's folders to its user already.
+ */
+fun ownerOnly(f: File, mode: String = "rw-------") {
+    if ("posix" in java.nio.file.FileSystems.getDefault().supportedFileAttributeViews())
+        runCatching { java.nio.file.Files.setPosixFilePermissions(f.toPath(), java.nio.file.attribute.PosixFilePermissions.fromString(mode)) }
+}
+
+/**
+ * Android's SharedPreferences, as much of it as roma uses, in a properties file (the user's alone, [ownerOnly]). Edits are applied in memory at once
  * and written in order on their own thread, beside the file and renamed over it.
  */
 class Prefs(private val file: File) {
-    private val values = Properties().also { p -> runCatching { file.inputStream().use { p.load(it) } } }
+    private val values = Properties().also { p -> runCatching { file.inputStream().use { p.load(it) } }; if (file.exists()) ownerOnly(file) }
 
     fun getString(key: String, def: String?): String? = values.getProperty(key) ?: def
     fun getBoolean(key: String, def: Boolean) = values.getProperty(key)?.toBooleanStrictOrNull() ?: def
@@ -81,6 +90,9 @@ class Prefs(private val file: File) {
             writer.execute {
                 val tmp = File(file.path + ".tmp")
                 runCatching {
+                    tmp.delete()
+                    tmp.createNewFile()
+                    ownerOnly(tmp) // before anything is in it
                     synchronized(values) { tmp.outputStream().use { values.store(it, null) } }
                     java.nio.file.Files.move(tmp.toPath(), file.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
                 }
