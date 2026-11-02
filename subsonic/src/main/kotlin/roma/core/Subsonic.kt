@@ -103,7 +103,10 @@ class SubsonicClient(url: String, val user: String, private val password: String
      * (romanization=both), and the names parsed carry them. [sync] sets it from the server's extensions.
      */
     @Volatile var romanization = false
-    /** The server has the extension oasis v1: its playlists say which are mixes, its albums and artists what is on its way. [sync] sets it. */
+    /**
+     * The server has the extension oasis v1: every request opts in (oasis=1), so its playlists say which are mixes and
+     * its albums and artists what is on its way. [sync] sets it.
+     */
     @Volatile var oasis = false
     /** An address without a scheme is https. */
     val base = url.trim().trimEnd('/').let { if ("://" in it) it else "https://$it" }
@@ -113,7 +116,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
     private fun query(params: List<Pair<String, String>>): String {
         val salt = ByteArray(8).also { random.nextBytes(it) }.joinToString("") { "%02x".format(it) }
         val token = md5(password + salt)
-        val all = listOf("u" to user, "t" to token, "s" to salt, "v" to API, "c" to "caravan", "f" to "json") + params
+        val all = listOf("u" to user, "t" to token, "s" to salt, "v" to API, "c" to "caravan", "f" to "json") + params + if (oasis) listOf("oasis" to "1") else emptyList()
         return all.joinToString("&") { (k, v) -> enc(k) + "=" + enc(v) }
     }
 

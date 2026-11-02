@@ -269,6 +269,20 @@ class SubsonicTest {
         assertNull(q["p"])
     }
 
+    @Test fun oasisOnlyWithTheExtension() {
+        val plain = SubsonicClient(url, "admin", "secret")
+        plain.sync(page = 10)
+        plain.streamUrl("tr-1").let { assertTrue("oasis=" !in it, it) }
+        assertTrue(calls.none { it.second.toMap()["oasis"] != null })
+        oasisListed = true
+        calls.clear()
+        val c = SubsonicClient(url, "admin", "secret")
+        c.sync(page = 10)
+        c.playlists()
+        assertTrue(calls.filter { it.first != "getOpenSubsonicExtensions" }.all { it.second.toMap()["oasis"] == "1" })
+        assertTrue("oasis=1" in c.coverUrl("al-1", 96))
+    }
+
     @Test fun romanizationOnlyWithTheExtension() {
         val plain = SubsonicClient(url, "admin", "secret").sync(page = 10)
         assertTrue(SubsonicClient.ROMANIZATION !in plain.extensionVersions)
