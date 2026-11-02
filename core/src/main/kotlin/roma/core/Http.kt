@@ -64,9 +64,9 @@ suspend fun http(
     } } ?: throw SocketTimeoutException("$url took over $totalMs ms")
 }
 
-/** A blocking request: the status code and the body, an error's body included. */
-fun httpCall(url: String, body: ByteArray? = null, headers: Map<String, String> = emptyMap(), timeoutMs: Int = 20_000): Pair<Int, String> {
-    val r = exchange(open(url, headers, if (body == null) "GET" else "POST", timeoutMs, true), body, 4 shl 20, true, null)
+/** A blocking request: the status code and the body, an error's body included, up to [maxBytes]. */
+fun httpCall(url: String, body: ByteArray? = null, headers: Map<String, String> = emptyMap(), timeoutMs: Int = 20_000, maxBytes: Int = 4 shl 20): Pair<Int, String> {
+    val r = exchange(open(url, headers, if (body == null) "GET" else "POST", timeoutMs, true), body, maxBytes, true, null)
     return r.status to r.text()
 }
 

@@ -76,19 +76,23 @@ class ScrobbleQueue(private val file: File) {
 
     private fun save(list: List<Scrobble>) = file.writeText(Json.encodeToString(list))
 
-    /** Sends everything in batches of 50, dropping each batch once Last.fm accepted it. Stops at the first failure. */
-    fun flush(send: (List<Scrobble>) -> Unit) {
+    /**
+     * Sends everything in batches of 50. [send] returns how many of the batch's first plays are done with (accepted, or
+     * dropped for good), which leave the queue; fewer than the batch, or a throw, stops the flush.
+     */
+    fun flush(send: (List<Scrobble>) -> Int) {
         // Two flushes at once would send a batch twice; the running one also sends what was added meanwhile.
         if (!flushing.tryLock()) return
         try { flushOnce(send) } finally { flushing.unlock() }
     }
 
-    private fun flushOnce(send: (List<Scrobble>) -> Unit) {
+    private fun flushOnce(send: (List<Scrobble>) -> Int) {
         while (true) {
             val batch = synchronized(this) { load().take(50) }
             if (batch.isEmpty()) return
-            send(batch)
-            synchronized(this) { save(load().drop(batch.size)) }
+            val done = send(batch).coerceIn(0, batch.size)
+            synchronized(this) { save(load().drop(done)) }
+            if (done < batch.size) return
         }
     }
 }

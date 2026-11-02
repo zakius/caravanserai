@@ -1032,7 +1032,7 @@ object Playback {
 
     fun flushScrobbles() {
         val (fm, sk) = lastFm() ?: return
-        scope.launch(Dispatchers.IO) { runCatching { scrobbleQueue.flush { fm.scrobble(sk, it) } } }
+        scope.launch(Dispatchers.IO) { runCatching { scrobbleQueue.flush { fm.scrobble(sk, it); it.size } } }
     }
 }
 
