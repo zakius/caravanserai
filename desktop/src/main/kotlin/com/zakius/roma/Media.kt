@@ -7,9 +7,9 @@ import java.net.HttpURLConnection
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 
-// The desktop's audio, below DesktopAudio: YouTube's stream of a song kept on disk as it downloads (StreamFile),
-// read packet by packet (WebM with Opus, MP4 with AAC: the two containers and codecs YouTube serves audio in) and
-// decoded to 16-bit PCM in pure Java.
+// The desktop's audio, below DesktopAudio: a song's stream kept on disk as it downloads (StreamFile), read packet by
+// packet (WebM with Opus, MP4 with AAC: the two containers and codecs YouTube serves audio in) and decoded to 16-bit
+// PCM in pure Java. Any other file (a Subsonic server's MP3, FLAC, Ogg, WAV) goes whole to roma-aac ([FilePcm]).
 
 /** A position in a [StreamFile], read forward. */
 class Cursor(private val f: StreamFile, var pos: Long) {
@@ -62,11 +62,11 @@ interface Pcm : AutoCloseable {
     override fun close() {}
 }
 
-/** [f] as PCM from [atMs]: Opus decoded here, AAC by roma-aac ([AacPcm]). */
+/** [f] as PCM from [atMs]: Opus in WebM decoded here, AAC in MP4 by roma-aac ([AacPcm]), any other file by roma-aac whole ([FilePcm]). */
 fun pcm(f: StreamFile, atMs: Long): Pcm = when (val d = demuxer(f)) {
     is WebmDemuxer -> Decoded(d, d.decoder(), atMs)
     is Mp4Demuxer -> AacPcm(d, atMs)
-    else -> error("No decoder")
+    else -> FilePcm(f, atMs)
 }
 
 /** Packets decoded in this process, from [atMs]. */
@@ -223,15 +223,90 @@ class AacPcm(private val d: Mp4Demuxer, atMs: Long) : Pcm {
     }
 }
 
+/**
+ * A file roma-aac reads itself (MP3, FLAC, Ogg Vorbis or Opus, WAV, ADTS AAC: what a Subsonic server sends without
+ * transcoding): its bytes to stdin from the start, a 16-bit WAV back at the file's own rate and channels. A seek
+ * decodes from the start and drops the samples before [atMs], which takes milliseconds for a song. The length comes
+ * from the song, not from here.
+ */
+class FilePcm(private val f: StreamFile, atMs: Long) : Pcm {
+    @Volatile private var decoderClosed = false
+    private val decoder = FedProcess(listOf(AacPcm.decoderPath(), "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
+        "-map", "0:a:0", "-map_metadata", "-1", "-bitexact", "-f", "wav", "-c:a", "pcm_s16le", "pipe:1"), "file in") { o ->
+        val buf = ByteArray(1 shl 16)
+        var pos = 0L
+        while (true) {
+            val n = f.read(pos, buf, 0, buf.size) { decoderClosed }
+            if (n <= 0) break
+            o.write(buf, 0, n)
+            pos += n
+        }
+    }
+    private val pcm = java.io.DataInputStream(decoder.process.inputStream.buffered(1 shl 16))
+    override val sampleRate: Int
+    override val channels: Int
+    override val durationMs = -1L
+    private var drop: Long
+    private val bytes: ByteArray
+
+    init {
+        // RIFF, then chunks up to "data", whose size (unknown on a pipe) runs to the end.
+        try {
+            pcm.readFully(ByteArray(12))
+            var rate = 0
+            var ch = 0
+            while (true) {
+                val id = ByteArray(4).also(pcm::readFully).toString(Charsets.US_ASCII)
+                val size = Integer.reverseBytes(pcm.readInt()).toLong() and 0xffffffffL
+                if (id == "data") break
+                val body = ByteArray(size.toInt() + (size and 1).toInt()).also(pcm::readFully)
+                if (id == "fmt ") { ch = (body[2].toInt() and 0xff) or ((body[3].toInt() and 0xff) shl 8); rate = java.nio.ByteBuffer.wrap(body, 4, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int }
+            }
+            check(rate > 0 && ch > 0) { "No audio format" }
+            sampleRate = rate
+            channels = ch
+        } catch (e: java.io.EOFException) {
+            close()
+            throw decoder.failure ?: IOException("Not an audio stream ${BuildConfig.APP_NAME} can read")
+        }
+        drop = samples(atMs * 1000, sampleRate)
+        bytes = ByteArray(4096 * 2 * channels)
+    }
+
+    override fun read(out: ShortArray): Int {
+        val frame = 2 * channels
+        while (true) {
+            var got = 0
+            val max = minOf(bytes.size, out.size * 2) / frame * frame
+            while (got < frame || got % frame != 0) { val m = pcm.read(bytes, got, max - got); if (m < 0) break; got += m }
+            val frames = got / frame
+            if (frames == 0) {
+                decoder.failure?.let { throw it }
+                val p = decoder.process
+                if (!decoder.closed && p.waitFor(2, java.util.concurrent.TimeUnit.SECONDS) && p.exitValue() != 0) throw IOException("roma-aac stopped (exit ${p.exitValue()})")
+                return -1
+            }
+            val from = minOf(drop, frames.toLong()).toInt()
+            drop -= from
+            if (from >= frames) continue
+            for (i in from * channels until frames * channels) out[i - from * channels] = ((bytes[2 * i + 1].toInt() shl 8) or (bytes[2 * i].toInt() and 0xff)).toShort()
+            return frames - from
+        }
+    }
+
+    override fun close() { decoderClosed = true; decoder.close() }
+}
+
 /** [us] microseconds at [rate], to the nearest sample. */
 fun samples(us: Long, rate: Int) = Math.round(us * rate / 1e6)
 
-fun demuxer(f: StreamFile): Demuxer {
+/** The container's reader for WebM and MP4; null for any other file. */
+fun demuxer(f: StreamFile): Demuxer? {
     val head = Cursor(f, 0).bytes(8)
     return when {
         head[0] == 0x1A.toByte() && head[1] == 0x45.toByte() -> WebmDemuxer(f)
         String(head, 4, 4, Charsets.ISO_8859_1) == "ftyp" -> Mp4Demuxer(f)
-        else -> throw IOException("Not an audio stream ${BuildConfig.APP_NAME} can read")
+        else -> null
     }
 }
 
