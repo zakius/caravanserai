@@ -394,8 +394,9 @@ object SubsonicSource : Source {
     override val lyricsProviders = listOf<LyricsProvider>(LrcLib)
     override val lyricsRule = "The server's lyrics are the reference, when it has any: word timing that matches them wins, then their own timing, then matching line timing, then their plain text."
     override val hasComments = false
-    override fun shareUrl(s: Song): String? = null
-    override val canShare = false
+    // The server's link for the song (extension shareUrl), shared as is.
+    override fun shareUrl(s: Song) = runCatching { need().song(SubsonicIds.decode(s.id)).shareUrl }.getOrNull()
+    override val canShare get() = library?.index?.supports(SubsonicClient.SHARE_URL) == true
 
     // ---- Scrobbling: see docs/subsonic.md ----
 

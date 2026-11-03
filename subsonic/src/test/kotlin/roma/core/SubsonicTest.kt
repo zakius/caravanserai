@@ -8,6 +8,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -19,6 +20,7 @@ class SubsonicTest {
     private var romanizing = false
     // The extension oasis listed: playlists' oasisMix and albums' oasisWanted count.
     private var oasisListed = false
+    private var shareListed = false
     // getOpenSubsonicExtensions answers this HTTP status with no Subsonic body (a proxy's 503, a plain server's 404).
     private var extensionsHttp: Int? = null
     // An empty search3 finds nothing, as on Airsonic.
@@ -42,7 +44,7 @@ class SubsonicTest {
                 else """"status":"ok",""" + when (method) {
                 "ping" -> """"x":1"""
                 "getOpenSubsonicExtensions" -> """"openSubsonicExtensions":[{"name":"formPost","versions":[1]},{"name":"songLyrics","versions":[1,2]}""" +
-                    (if (oasisListed) """,{"name":"oasis","versions":[1]}""" else "") + (if (romanizing) """,{"name":"romanization","versions":[1]}""" else "") + "]"
+                    (if (oasisListed) """,{"name":"oasis","versions":[1]}""" else "") + (if (shareListed) """,{"name":"shareUrl","versions":[1]}""" else "") + (if (romanizing) """,{"name":"romanization","versions":[1]}""" else "") + "]"
                 "search3" -> {
                     val offset = if (emptySearch) songs.size else if (ignoreOffset) 0 else p("songOffset")!!.toInt()
                     val latin = p("romanization") == "both"
@@ -52,7 +54,7 @@ class SubsonicTest {
                 "getArtists" -> """"artists":{"index":[{"name":"Y","artist":[{"id":"ar-1","name":"YOASOBI","albumCount":1}]}]}"""
                 // songLyrics v2 for tr-1, every layer whatever kinds says (a server that ignores it); tr-2 has no pronunciation.
                 "getLyricsBySongId" -> if (p("enhanced") == "true") enhancedLyrics(p("id")!!) else """"lyricsList":{"structuredLyrics":[{"synced":false,"line":[{"value":"plain"}]},{"synced":true,"offset":-100,"line":[{"start":1000,"value":"沈むように"},{"start":4000,"value":"溶けてゆくように"}]}]}"""
-                "getSong" -> """"song":{"id":"tr-8","title":"Lyra","artist":"Breaking Benjamin","suffix":"flac","bitRate":1411,"path":"Breaking Benjamin/Lyra.flac"}"""
+                "getSong" -> """"song":{"id":"tr-8","title":"Lyra","artist":"Breaking Benjamin","suffix":"flac","bitRate":1411,"path":"Breaking Benjamin/Lyra.flac","shareUrl":"https://example.org/s/tr-8"}"""
                 "getAlbum" -> if (p("id") == "al-1") """"album":{"id":"al-1","name":"THE BOOK","song":[${songs.joinToString(",")}]}""" else """"album":{"id":"al-9","name":"STRAY SHEEP","starred":"2026-10-31T01:00:00Z","oasisWanted":"wanted","oasisWantedError":"searching","artist":"米津玄師","artistId":"ar-9","song":[${songs[0]},${songs[1]}]}"""
                 "getArtist" -> """"artist":{"id":"ar-9","name":"米津玄師","album":[{"id":"al-9","name":"STRAY SHEEP"},{"id":"al-10","name":"Lemon","year":2018,"releaseTypes":["Single"]}]}"""
                 // Over 5 MB of JSON, as a big library's playlist.
@@ -267,6 +269,14 @@ class SubsonicTest {
         assertEquals("96", q["size"])
         assertEquals(SubsonicClient.md5("secret" + q["s"]), q["t"])
         assertNull(q["p"])
+    }
+
+    @Test fun shareUrl() {
+        assertEquals("https://example.org/s/tr-8", SubsonicClient(url, "admin", "secret").song("tr-8").shareUrl)
+        assertNull(SubsonicClient.song(kotlinx.serialization.json.Json.parseToJsonElement(songs[0]))!!.shareUrl)
+        assertFalse(SubsonicClient(url, "admin", "secret").sync(page = 10).supports(SubsonicClient.SHARE_URL))
+        shareListed = true
+        assertTrue(SubsonicClient(url, "admin", "secret").sync(page = 10).supports(SubsonicClient.SHARE_URL))
     }
 
     @Test fun oasisOnlyWithTheExtension() {

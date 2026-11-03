@@ -62,6 +62,8 @@ class SubSong(
     val albumLatin: String? = null,
     /** OpenSubsonic replayGain: the track's gain in dB (the album's when the track has none), null when the server sends none. */
     val gain: Float? = null,
+    /** A public link to the song, shared as is (OpenSubsonic extension shareUrl); null when the server has none. */
+    val shareUrl: String? = null,
 )
 
 @Serializable
@@ -318,6 +320,8 @@ class SubsonicClient(url: String, val user: String, private val password: String
         const val OASIS = "oasis"
         /** OpenSubsonic songLyrics v2: enhanced lyrics, with their kinds (main, pronunciation, translation) and cueLine. */
         const val SONG_LYRICS = "songLyrics"
+        /** Songs carry shareUrl, a public link to share as is. */
+        const val SHARE_URL = "shareUrl"
 
         /**
          * Plain http only to a server on the user's own network: localhost, a private, link-local or CGNAT (Tailscale)
@@ -347,7 +351,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
                 o["id"].str() ?: return null, o["title"].str() ?: "", o["artist"].str() ?: "", o["artistId"].str(), o["album"].str(), o["albumId"].str(),
                 o["track"].int(), o["discNumber"].int(), o["year"].int(), o["duration"].int(), o["coverArt"].str(), o["starred"] != null, o["created"].str(),
                 o["suffix"].str(), o["bitRate"].int(), o["path"].str(), latin(o, "title", latin), latin(o, "artist", latin), latin(o, "album", latin)?.takeIf { o["album"] != null },
-                o["replayGain"].obj()?.let { g -> (g["trackGain"] ?: g["albumGain"]).str()?.toFloatOrNull() },
+                o["replayGain"].obj()?.let { g -> (g["trackGain"] ?: g["albumGain"]).str()?.toFloatOrNull() }, o["shareUrl"].str(),
             )
         }
 
