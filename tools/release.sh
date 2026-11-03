@@ -1,8 +1,9 @@
 #!/bin/bash
 # Release APKs, signed with the key named in keystore.properties (outside git):
 #   dist/roma-ytm-<version>.apk: roma ytm (the youtube flavor), R8-shrunk, Zopfli-recompressed (tools/repack_apk.py),
-#     zipaligned (arm64 and x86_64 in one). caravan's APK (the subsonic flavor, for Google Play) builds beside it, unsigned: tools/residue_check.py
-#     checks neither carries the other's code, and fails the run when one does.
+#     zipaligned (arm64 and x86_64 in one).
+#   dist/caravan-<version>.apk: caravan (the subsonic flavor), made the same way. tools/residue_check.py checks neither
+#     carries the other's code, and fails the run when one does.
 #   dist/roma-dict-<dictionary version>.zip: the Japanese dictionary with its notices (:core:dictZip), only when that
 #     file is missing. Data, not an app: nothing to sign.
 # roma fetches the dictionary from its GitHub release (dict-<version>), or from ROMA_DICT_BASE if set.
@@ -46,8 +47,10 @@ sign() { "$tools/apksigner" sign --v1-signing-enabled false --ks "$storeFile" --
 mkdir -p dist
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-out="dist/roma-ytm-$version.apk"
-python3 tools/repack_apk.py $apks/youtube/release/app-youtube-release-unsigned.apk "$tmp/repacked.apk"
-"$tools/zipalign" -f -P 16 4 "$tmp/repacked.apk" "$tmp/aligned.apk"
-sign "$tmp/aligned.apk" "$out"
-ls -l "$out"
+for flavor in youtube:roma-ytm subsonic:caravan; do
+  out="dist/${flavor#*:}-$version.apk"
+  python3 tools/repack_apk.py $apks/${flavor%:*}/release/app-${flavor%:*}-release-unsigned.apk "$tmp/repacked.apk"
+  "$tools/zipalign" -f -P 16 4 "$tmp/repacked.apk" "$tmp/aligned.apk"
+  sign "$tmp/aligned.apk" "$out"
+  ls -l "$out"
+done

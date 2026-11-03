@@ -1,8 +1,8 @@
 # Every push to master builds and tests. When app/build.gradle.kts has a versionName with no release yet, the run also
 # signs (tools/release.sh) and publishes roma ytm, the YouTube Music app, as a GitHub release, tagged v<version> on that
-# commit: a merge that bumps the version is the release. caravan, the Subsonic app (for Google Play; docs/subsonic.md, Two
-# apps), builds in the same jobs, Android and Linux desktop, and is checked for YouTube code (tools/residue_check.py)
-# but not published. The desktop app (:desktop) ships in the same release: a .deb and an .rpm built on Linux, an
+# commit: a merge that bumps the version is the release. caravan, the Subsonic app (docs/subsonic.md, Two apps), builds
+# in the same jobs, Android and Linux desktop, and is checked for YouTube code (tools/residue_check.py); its signed APK
+# ships in the same release. The desktop app (:desktop) ships in the same release: a .deb and an .rpm built on Linux, an
 # .msi on Windows, with roma-aac (tools/build-ffmpeg.sh) built for both on Linux. The Japanese dictionary (data, a zip)
 # gets its own release, dict-<version>, the first time its version ships; the apps download it from there. The app and the dictionary build in parallel jobs, and the core tests (which need the
 # slim dictionary) in a third; roma's release is published only once its dictionary release exists and the tests pass.
@@ -70,7 +70,7 @@ jobs:
       - run: tools/release.sh app
       - if: env.RELEASE
         uses: actions/upload-artifact@v7
-        with: { name: app, path: dist/roma-ytm-*.apk }
+        with: { name: app, path: "dist/*.apk" }
       # Unsigned, for trying it; the residue check above has passed.
       - uses: actions/upload-artifact@v7
         with: { name: subsonic-app, path: app/build/outputs/apk/subsonic/release/app-subsonic-release-unsigned.apk }
@@ -212,5 +212,5 @@ jobs:
           sha=$(sed -n 's/^FFMPEG_SHA=//p' tools/build-ffmpeg.sh)
           curl -sfL -o "dist/ffmpeg-$ffmpeg.tar.xz" "https://ffmpeg.org/releases/ffmpeg-$ffmpeg.tar.xz"
           echo "$sha  dist/ffmpeg-$ffmpeg.tar.xz" | sha256sum -c -
-          gh release create "v$V" dist/roma-ytm-$V.apk "$json" dist/roma-ytm_${V}_amd64.deb dist/roma-ytm-$V-1.x86_64.rpm dist/roma-ytm-$V-x64.msi \
-            dist/roma-ytm-$V-x64-full.msi dist/roma-ytm-$V-windows-x64.zip dist/proguard-mapping.txt "dist/ffmpeg-$ffmpeg.tar.xz" --target "$GITHUB_SHA" --title "roma ytm $V" --notes-file "$RUNNER_TEMP/notes.md" --latest
+          gh release create "v$V" dist/roma-ytm-$V.apk dist/caravan-$V.apk "$json" dist/roma-ytm_${V}_amd64.deb dist/roma-ytm-$V-1.x86_64.rpm dist/roma-ytm-$V-x64.msi \
+            dist/roma-ytm-$V-x64-full.msi dist/roma-ytm-$V-windows-x64.zip dist/proguard-mapping.txt "dist/ffmpeg-$ffmpeg.tar.xz" --target "$GITHUB_SHA" --title "roma ytm and caravan $V" --notes-file "$RUNNER_TEMP/notes.md" --latest

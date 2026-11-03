@@ -53,6 +53,8 @@ Its first build also builds roma-aac (`tools/build-ffmpeg.sh`, needs musl-gcc: D
 
 Get `roma-ytm-<version>.apk` from [Releases](https://github.com/zakius/roma/releases). If you want Japanese romanized, roma ytm offers to download its Japanese dictionary on the first start (32 MB, 62 MB on the phone), kept apart so its own updates stay small. The "roma Japanese dictionary" app that roma ytm 0.1.57 and earlier installed is no longer used: you can uninstall it.
 
+`caravan-<version>.apk`, in the same release, is caravan, the app for a Subsonic server (docs/subsonic.md).
+
 ### Linux
 
 [Releases](https://github.com/zakius/roma/releases) has two packages for x86_64, which run on your distribution's Java (21 or newer):
