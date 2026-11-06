@@ -136,7 +136,7 @@ fun PlayerScreen() {
                                     if (lyricsState != null && lyrics != null) {
                                         LyricsView(lyricsState, lyrics, Playback.shown()?.id)
                                     } else {
-                                        Centered("Looking for lyrics…")
+                                        Loading("Looking for lyrics…")
                                     }
                                 }
                                 "queue" -> QueueView()
@@ -369,7 +369,7 @@ private fun SleepChip(modifier: Modifier, onClick: () -> Unit) {
         else -> return
     }
     // One line, at most about 60% of a phone's width: with a large font it ends in "…" rather than reaching Translate.
-    Chip(text, enabled = true, modifier.widthIn(max = 256.dp), onClick)
+    Chip(text, enabled = true, modifier.widthIn(max = 256.dp), onClick = onClick)
 }
 
 /**
@@ -377,7 +377,7 @@ private fun SleepChip(modifier: Modifier, onClick: () -> Unit) {
  * tall touch target that fills [CHIP_STRIP].
  */
 @Composable
-private fun Chip(text: String, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
+internal fun Chip(text: String, enabled: Boolean, modifier: Modifier, selected: Boolean = false, onClick: () -> Unit) {
     Box(
         modifier
             .heightIn(min = 48.dp)
@@ -389,9 +389,9 @@ private fun Chip(text: String, enabled: Boolean, modifier: Modifier, onClick: ()
         Text(
             text,
             Modifier
-                .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(50))
+                .background(if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(50))
                 .padding(horizontal = 12.dp, vertical = 6.dp),
-            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer,
             style = MaterialTheme.typography.labelLarge,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -509,7 +509,8 @@ private fun RowScope.Slot(
     // unavailable control (0.3).
     val offAlpha = if (state != null && label == null) 0.6f else 1f
     val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = offAlpha)
-    // A rounded background only when selected, not a rounded clip on every slot: one GPU program less.
+    // A rounded background only when selected, not a rounded clip on every slot: one GPU program less. It is 64 dp
+    // wide in both rows, so the five-slot row's pill is no wider than the six-slot row's.
     val selectedBackground = if (selected) {
         Modifier.background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(12.dp))
     } else {
@@ -521,7 +522,6 @@ private fun RowScope.Slot(
             .widthIn(min = 48.dp)
             .fillMaxHeight()
             .padding(horizontal = 2.dp)
-            .then(selectedBackground)
             .combinedClickable(
                 enabled = enabled,
                 onClickLabel = description,
@@ -534,6 +534,7 @@ private fun RowScope.Slot(
             .dim(if (enabled) 1f else 0.3f),
         contentAlignment = Alignment.Center,
     ) {
+        Box(Modifier.fillMaxHeight().widthIn(max = 64.dp).fillMaxWidth().then(selectedBackground))
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             // With a label, the icon has no description, because the label is read instead.
             Icon(icon, if (label != null) null else description, Modifier.size(iconSize.dp), tint = color)
@@ -789,10 +790,11 @@ private fun OpeningPage(title: String, thumb: String?) {
 
 @Composable
 private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
+    // The names sit at the bottom, next to the controls, and the art is centred in the space above them, so a tall
+    // screen's spare height falls evenly around the art rather than in one band.
     Column(
-        modifier.fillMaxSize().padding(24.dp),
+        modifier.fillMaxSize().padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
     ) {
         // Until the large art arrives, the list's thumbnail of this song (row or card size) stands in, if it's in memory.
         val density = androidx.compose.ui.platform.LocalDensity.current
@@ -803,16 +805,17 @@ private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
         }
         val thumb = s.thumb
         val big = if (thumb == null) null else bigThumb(thumb)
-        ThumbPx(
-            big,
-            BIG_PX,
-            Modifier
-                .weight(1f, fill = false)
-                .aspectRatio(1f)
-                .clip(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-            placeholder = placeholder,
-        )
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            ThumbPx(
+                big,
+                BIG_PX,
+                Modifier
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                placeholder = placeholder,
+            )
+        }
         Spacer(Modifier.height(16.dp))
         // Tapping the title opens its album, the artist their page (as More → Go to album / artist). Long-pressing either
         // opens the correction dialog, the same as More → Correct romanization.
@@ -841,7 +844,8 @@ private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
         val namesHeight = with(LocalDensity.current) {
             (title.fontSize * 1.25f * 2).toDp() + small.lineHeight.toDp() * 3 + (artistStyle.fontSize * 1.25f).toDp() + 4.dp
         }
-        Column(Modifier.heightIn(min = namesHeight), horizontalAlignment = Alignment.CenterHorizontally) {
+        // Bottom-aligned in it, so the names always sit against the seek bar.
+        Column(Modifier.heightIn(min = namesHeight), Arrangement.Bottom, Alignment.CenterHorizontally) {
             Column(Modifier.goTo("album", s.album?.id)) {
                 Name(s.title, Store.playerMode, style = title, center = true)
             }
@@ -931,8 +935,8 @@ private fun QueueView() {
                     Header(header)
                 } else {
                     val e = all[i]
-                    // "offline" means the whole song is on the phone, so it plays with no network.
-                    val saved = if (Playback.player.fullyCached(e.song.id)) "offline" else null
+                    // "downloaded" means the whole song is on the phone, so it plays with no network.
+                    val saved = if (Playback.player.fullyCached(e.song.id)) "downloaded" else null
                     val extra = listOfNotNull(e.song.reason, saved).joinToString(" · ").ifEmpty { null }
                     SongRow(e.song, highlight = i == cur, extra = extra, onMenu = { menuFor = i }) { Playback.skipTo(i) }
                 }
@@ -1030,9 +1034,12 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
                         .padding(vertical = 8.dp),
                 ) {
                     val wordIndex = if (active) currentWord else -1
+                    // A line timed as a whole (no word timing) is in the accent colour while it plays, as a karaoke
+                    // line's sung words are.
+                    val lineColor = if (active && synced && line.words.isEmpty()) MaterialTheme.colorScheme.primary else Color.Unspecified
                     // Every line has the same weight, because bolding the active line would widen it and re-wrap long
                     // lines mid-song.
-                    val big = MaterialTheme.typography.titleLarge.copy(lineBreak = LYRIC_BREAK)
+                    val big = MaterialTheme.typography.titleLarge.copy(lineBreak = LYRIC_BREAK, color = lineColor)
                     val seek = { if (synced) Playback.player.seekTo(line.startMs) }
                     // Karaoke lines show their timed words; other lines their words as romanization splits them.
                     val karaoke = line.words.isNotEmpty()
@@ -1058,7 +1065,7 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
                         // A line with no romanization shown (Latin, or a script the user reads) shows its original, because
                         // it is the only text there is.
                         if ((showOriginal || !latinShown) && line.text.isNotBlank()) WordsText(units, line.text, wordIndex, big, seek, fix)
-                        if (latinShown) WordsText(unitLatin, line.latin, latinIndex, MaterialTheme.typography.bodyLarge, seek, fix)
+                        if (latinShown) WordsText(unitLatin, line.latin, latinIndex, MaterialTheme.typography.bodyLarge.copy(color = lineColor), seek, fix)
                     }
                     val translation = line.translation
                     if (!translation.isNullOrBlank()) {
@@ -1135,7 +1142,7 @@ private fun pieceAt(line: Line, units: List<String>, unit: Int): Int {
 
 /**
  * Ruby layout: each word's romaji sits right above it, so the eye never has to match the two lines up. Karaoke
- * lights the current word in both, in the accent colour, as the lines layout does. Words wrap as wholes. Without
+ * fills the words sung so far in the accent colour, in both, as the lines layout does. Words wrap as wholes. Without
  * [onTap] the words take no touches, so a row around them stays clickable.
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
@@ -1154,8 +1161,8 @@ fun RubyLine(
     val on = MaterialTheme.colorScheme.onSurface
     val hi = MaterialTheme.colorScheme.primary
     fun color(i: Int, base: Color) = when {
-        current < 0 || i < current -> base
-        i == current -> hi
+        current < 0 -> base
+        i <= current -> hi
         else -> on.copy(alpha = UPCOMING)
     }
     val latest by rememberUpdatedState(onTap to onLongPress)
@@ -1186,7 +1193,7 @@ fun RubyLine(
 }
 
 /**
- * A lyric layer. In karaoke mode (current >= 0) sung words are full colour, the current word is in the accent colour,
+ * A lyric layer. In karaoke mode (current >= 0) the words sung so far and the current one fill in the accent colour,
  * and words still to come are dimmed as much as the lines that aren't being sung. Long-pressing a word offers to fix its reading.
  */
 @Composable
@@ -1199,7 +1206,7 @@ private fun WordsText(
     onLongPressUnit: (Int) -> Unit,
 ) {
     val hi = MaterialTheme.colorScheme.primary
-    val sung = SpanStyle(color = MaterialTheme.colorScheme.onSurface)
+    val sung = SpanStyle(color = hi)
     val now = SpanStyle(color = hi)
     val coming = SpanStyle(color = MaterialTheme.colorScheme.onSurface.copy(alpha = UPCOMING))
     val ranges = ArrayList<IntRange>()
@@ -1254,10 +1261,41 @@ internal val CHIP_STRIP: androidx.compose.ui.unit.Dp
         return maxOf(48.dp, chip)
     }
 
+/** A message in the middle of an empty screen. Its lines are balanced, so no word is left alone on the last one. */
 @Composable
 fun Centered(text: String) {
     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-        Text(text, textAlign = TextAlign.Center)
+        Text(text, textAlign = TextAlign.Center, style = LocalTextStyle.current.copy(lineBreak = LineBreak.Heading))
+    }
+}
+
+/** Loading, the same everywhere: a spinner in the middle, with what is loading under it when that helps. */
+@Composable
+fun Loading(text: String? = null) {
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        CircularProgressIndicator()
+        if (text != null) {
+            Spacer(Modifier.height(12.dp))
+            Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        }
+    }
+}
+
+/** A failure, the same everywhere: what failed, why and what to do, and Retry. */
+@Composable
+fun Failed(title: String, detail: String, onRetry: () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(title, textAlign = TextAlign.Center)
+        Text(detail, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        TextButton(onClick = onRetry) { Text("Retry") }
     }
 }
 

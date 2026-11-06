@@ -37,17 +37,19 @@ class MainActivity : ComponentActivity() {
         // Back on Home leaves roma in the background instead of closing it, as Android 12 and later do by default. The
         // next start then finds the activity and its UI still there.
         if (Build.VERSION.SDK_INT < 31) onBackPressedDispatcher.addCallback(this) { moveTaskToBack(true) }
-        // The media notification matters once something plays, so the permission is asked for then, and only once.
-        // Asking at every start opens the system's permission activity over ours, even after the user refused for good.
+        // The media notification matters for playing, so the permission is asked for once the first start's questions
+        // are answered, before the first song: asked at the first tap on a song, it covered the player as it opened.
+        // It is asked only once, because asking at every start opens the system's permission activity over ours, even
+        // after the user refused for good.
         val notify = android.Manifest.permission.POST_NOTIFICATIONS
         val canAskToNotify = Build.VERSION.SDK_INT >= 33 && !Store.bool("notify.asked", false)
         if (canAskToNotify && checkSelfPermission(notify) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             lifecycleScope.launch {
-                // Reading Playback.tick makes the flow re-check isPlaying on every tick.
+                // Reading Store.version makes the flow re-check the setting whenever one changes.
                 snapshotFlow {
-                    Playback.tick
-                    Playback.player.isPlaying
-                }.first { playing -> playing }
+                    Store.version
+                    Store.bool("setup.done", false)
+                }.first { done -> done }
                 Store.set("notify.asked", true)
                 requestPermissions(arrayOf(notify), 0)
             }
