@@ -108,9 +108,15 @@ internal fun MixTiles(mixes: List<Item>?, read: Boolean) {
         Modifier.padding(horizontal = 16.dp, vertical = 8.dp).dim(0.5f),
         style = MaterialTheme.typography.bodyMedium,
     )
+    // Signed out: the same hint and button as the Library tab's.
     if (!YouTubeMusic.signedIn) {
-        TextButton(onClick = { Nav.open(SIGN_IN) }, Modifier.padding(horizontal = 4.dp)) {
-            Text("Sign in to see your mixes")
+        Column(
+            Modifier.fillMaxWidth().padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text("Sign in to YouTube Music to see your mixes.", textAlign = TextAlign.Center)
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = { Nav.open(SIGN_IN) }) { Text("Sign in") }
         }
         return
     }
@@ -205,7 +211,6 @@ fun signedIn(cookie: String, visitorData: String?, dataSyncId: String?) {
 
 @Composable
 internal fun YouTubeSettings() = LazyColumn(Modifier.fillMaxSize()) {
-    item { Header("YouTube") }
     item {
         if (YouTubeMusic.signedIn) {
             Row1("Signed in to YouTube Music", "Tap to sign out") {

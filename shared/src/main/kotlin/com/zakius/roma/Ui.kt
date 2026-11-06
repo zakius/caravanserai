@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -249,18 +250,22 @@ private fun ButtonBase(
     padding: PaddingValues,
     content: @Composable RowScope.() -> Unit,
 ) {
+    // A disabled button takes Material's disabled colours, not an alpha layer: toggling a layer between the fill and the
+    // label left an enabled button with no fill on some GPUs, white text on the page.
+    val s = MaterialTheme.colorScheme
+    val fill = if (enabled || bg == Color.Transparent) bg else s.onSurface.copy(alpha = 0.12f)
+    val ink = if (enabled) fg else s.onSurface.copy(alpha = DISABLED_ALPHA)
     Row(
         modifier
             .defaultMinSize(minHeight = 40.dp)
             .clip(RoundedCornerShape(50))
-            .background(bg)
+            .background(fill)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-            .alpha(if (enabled) 1f else DISABLED_ALPHA)
             .padding(padding),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        CompositionLocalProvider(LocalContentColor provides fg, LocalTextStyle provides MaterialTheme.typography.labelLarge) {
+        CompositionLocalProvider(LocalContentColor provides ink, LocalTextStyle provides MaterialTheme.typography.labelLarge) {
             content()
         }
     }
@@ -481,11 +486,11 @@ fun FilterChip(selected: Boolean, onClick: () -> Unit, label: @Composable () -> 
     val shape = RoundedCornerShape(8.dp)
     Box(
         Modifier
-            .height(32.dp)
+            .heightIn(min = 32.dp)
             .clip(shape)
             .then(if (selected) Modifier.background(s.secondaryContainer) else Modifier.border(1.dp, s.outlineVariant, shape))
             .selectable(selected, role = Role.Checkbox, onClick = onClick)
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 16.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
         CompositionLocalProvider(

@@ -9,8 +9,20 @@ import roma.core.Song
 @Serializable
 class Section(val title: roma.core.Text, val items: List<Item>)
 
+/**
+ * An album, playlist or artist page. On an album, [discs] and [tracks] give each song's disc and track number where
+ * the source knows them (0 or missing: unknown).
+ */
 @Serializable
-class Detail(val title: roma.core.Text, val subtitle: String, val thumb: String?, val songs: List<Song>, val items: List<Item>)
+class Detail(
+    val title: roma.core.Text,
+    val subtitle: String,
+    val thumb: String?,
+    val songs: List<Song>,
+    val items: List<Item>,
+    val discs: List<Int> = emptyList(),
+    val tracks: List<Int> = emptyList(),
+)
 
 /**
  * Search results. [corrected], [autoCorrected] and [originalParams] describe the source's spelling correction, and
@@ -68,10 +80,14 @@ interface Source {
 
     /** The Library tab has something to show. For YouTube Music that means signed in. */
     val libraryReady: Boolean
+    /** The Library tab's tabs, in order. [library], [libraryKey] and [libraryEmpty] take an index into it. */
+    val libraryTabs: List<String> get() = listOf("Playlists", "Albums", "Artists")
+    /** What an empty Library tab [tab] says. */
+    fun libraryEmpty(tab: Int): String
     /** What the Library tab says until it is [libraryReady]. A tap on it opens [libraryHintPage]. */
     val libraryHint: String
     val libraryHintPage: Page
-    /** The key under which Library tab [tab] (Playlists, Albums or Artists) keeps its copy. */
+    /** The key under which Library tab [tab] keeps its copy. */
     fun libraryKey(tab: Int): String
     suspend fun library(tab: Int, partial: suspend (List<Item>) -> Unit): List<Item>
 
@@ -92,6 +108,11 @@ interface Source {
     val likedId: String
 
     val canLike: Boolean
+    /**
+     * The source's word for a liked song is a star (Subsonic), so Like reads Star and shows a star, and adding an
+     * album or artist to the library reads Star too.
+     */
+    val stars: Boolean get() = false
     /** Blocking. Returns whether the server accepted it. */
     fun like(id: String, like: Boolean): Boolean
     /** Blocking. Null when the server couldn't say. */
@@ -169,3 +190,12 @@ interface Source {
 
 /** [note] reports the download progress on servers that fetch what's added (oasis), and is null elsewhere. */
 class InLibrary(val saved: Boolean, val note: String? = null)
+
+/** Like, or Star on a source that stars ([Source.stars]). */
+val likeWord get() = if (backend.stars) "Star" else "Like"
+
+/** The action on a song that is [liked] or not: Like or Unlike, Star or Unstar. */
+fun likeAction(liked: Boolean) = when {
+    backend.stars -> if (liked) "Unstar" else "Star"
+    else -> if (liked) "Unlike" else "Like"
+}

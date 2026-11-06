@@ -294,9 +294,12 @@ fun OutlinedTextField(
                     val textClass = android.text.InputType.TYPE_CLASS_TEXT
                     if (password) {
                         inputType = textClass or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+                    } else if (singleLine) {
+                        // Searches, addresses and names: no spell check, which underlines every word in another
+                        // language (Кино) or a server name.
+                        inputType = textClass or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
                     } else {
-                        val multiLine = if (singleLine) 0 else android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
-                        inputType = textClass or android.text.InputType.TYPE_TEXT_FLAG_AUTO_CORRECT or multiLine
+                        inputType = textClass or android.text.InputType.TYPE_TEXT_FLAG_AUTO_CORRECT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
                     }
                     if (singleLine) maxLines = 1
                     imeOptions = when {
@@ -346,8 +349,10 @@ fun OutlinedTextField(
                     e.setSelection(value.length)
                 }
                 e.setTextColor(s.onSurface.toArgb())
-                e.setHintTextColor(s.onSurfaceVariant.toArgb())
-                e.hint = placeholder
+                // The placeholder is fainter than typed text, and under a label it shows only while the field has
+                // focus, so an empty field never looks filled in.
+                e.setHintTextColor(s.onSurfaceVariant.copy(alpha = 0.6f).toArgb())
+                e.hint = if (label == null || focused) placeholder else null
                 e.highlightColor = s.primary.copy(alpha = 0.4f).toArgb()
                 if (Build.VERSION.SDK_INT >= 29) {
                     e.textCursorDrawable = android.graphics.drawable.GradientDrawable().apply {

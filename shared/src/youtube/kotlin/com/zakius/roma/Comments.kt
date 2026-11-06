@@ -7,6 +7,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.graphics.Brush
@@ -345,15 +346,22 @@ private fun CommentRow(s: ShownComment, list: CommentList, avatar: androidx.comp
                         onTextLayout = { layout -> folds = folds || layout.hasVisualOverflow },
                     )
                 }
-                if (folds) Text(if (s.unfolded) "Show less" else "Read more", Modifier.padding(top = 2.dp), style = type.labelMedium, color = muted)
+                if (folds) {
+                    val label = if (s.unfolded) "Show less" else "Read more"
+                    Text(label, Modifier.padding(top = 2.dp), style = type.labelLarge, color = MaterialTheme.colorScheme.primary)
+                }
             }
             if (c.likes.isNotBlank() || onReplies != null) {
                 val rowModifier = if (onReplies != null) Modifier.heightIn(min = 40.dp) else Modifier.padding(top = 6.dp)
                 Row(rowModifier, verticalAlignment = Alignment.CenterVertically) {
+                    // With a replies button and no likes, the empty slot still holds the button's place.
+                    if (c.likes.isBlank() && onReplies != null) Spacer(Modifier.width(72.dp))
                     if (c.likes.isNotBlank()) {
                         val likesLabel = if (c.likes == "1") "1 like" else "${c.likes} likes"
+                        // A fixed width, so the replies button after it starts at the same place on every comment.
                         Row(
                             Modifier
+                                .widthIn(min = 64.dp)
                                 .padding(end = 8.dp)
                                 .clearAndSetSemantics { contentDescription = likesLabel },
                             verticalAlignment = Alignment.CenterVertically,

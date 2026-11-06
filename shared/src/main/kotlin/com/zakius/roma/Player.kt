@@ -49,8 +49,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.outlined.ThumbUp
 import androidx.compose.runtime.Composable
@@ -233,7 +233,7 @@ fun PlayerScreen() {
                         },
                         {
                             Slot(
-                                rememberVectorPainter(Icons.AutoMirrored.Filled.List),
+                                rememberVectorPainter(QueueIcon),
                                 "Queue",
                                 entry != null,
                                 view == "queue",
@@ -245,12 +245,12 @@ fun PlayerScreen() {
                         },
                         {
                             Slot(
-                                rememberVectorPainter(if (liked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp),
-                                "Like",
+                                rememberVectorPainter(likeIcon(liked)),
+                                likeWord,
                                 Playback.canLike(entry?.song),
                                 liked,
-                                label = "Like",
-                                state = if (liked) "liked" else "not liked",
+                                label = likeWord,
+                                state = if (liked) "${likeWord.lowercase()}d" else "not ${likeWord.lowercase()}d",
                             ) {
                                 haptic.performHapticFeedback(if (liked) HapticFeedbackType.ToggleOff else HapticFeedbackType.ToggleOn)
                                 Playback.toggleLike()
@@ -369,17 +369,30 @@ private fun SleepChip(modifier: Modifier, onClick: () -> Unit) {
         else -> return
     }
     // One line, at most about 60% of a phone's width: with a large font it ends in "…" rather than reaching Translate.
-    Surface(
-        modifier.padding(4.dp).widthIn(max = 240.dp),
-        shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.secondaryContainer,
+    Chip(text, enabled = true, modifier.widthIn(max = 256.dp), onClick)
+}
+
+/**
+ * A chip over the top of the upper area (the sleep timer, Translate): a pill on the content's 16 dp edge, in a 48 dp
+ * tall touch target that fills [CHIP_STRIP].
+ */
+@Composable
+private fun Chip(text: String, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier
+            .heightIn(min = 48.dp)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .padding(horizontal = 16.dp)
+            .dim(if (enabled) 1f else 0.38f),
+        contentAlignment = Alignment.Center,
     ) {
         Text(
             text,
             Modifier
-                .clickable(onClick = onClick)
-                .padding(horizontal = 12.dp, vertical = 4.dp),
-            style = MaterialTheme.typography.labelMedium,
+                .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(50))
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            style = MaterialTheme.typography.labelLarge,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -387,33 +400,29 @@ private fun SleepChip(modifier: Modifier, onClick: () -> Unit) {
 }
 
 /**
- * Top right of the lyrics, always there: Translate asks Google for this song's lyrics in the first translation
- * language. Dimmed while it works, once the song has a translation in that language, when it has no lyrics, or when
- * translations are switched off. Settings → Search lyrics again drops it.
+ * Top right of the lyrics, always there. Translate asks Google for this song's lyrics in the first translation
+ * language. Once the song has a translation in that language, it reads Original and hides the translation, and then
+ * Translate again shows it. Dimmed while it works, when the song has no lyrics, or when translations are switched
+ * off. Settings → Search lyrics again drops a Google translation.
  */
 @Composable
-private fun TranslateChip(found: LyricsState, lyricsShown: Boolean, modifier: Modifier) {
+private fun TranslateChip(found: LyricsState, lyricsShown: Boolean, translated: Boolean, hidden: Boolean, onHide: (Boolean) -> Unit, modifier: Modifier) {
     var busy by remember(found.songId) { mutableStateOf(false) }
-    val lang = Store.translationLanguages().first()
-    val enabled = !busy && lyricsShown && found.translations.none { it.language == lang }
-    Surface(
-        modifier.padding(4.dp).dim(if (enabled) 1f else 0.38f),
-        shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.secondaryContainer,
-    ) {
-        Text(
-            if (busy) "Translating…" else "Translate",
-            Modifier
-                .clickable(enabled) {
-                    busy = true
-                    Playback.googleTranslate(found.songId) { msg ->
-                        busy = false
-                        if (msg != null) toast(msg, long = true)
-                    }
-                }
-                .padding(horizontal = 12.dp, vertical = 4.dp),
-            style = MaterialTheme.typography.labelMedium,
-        )
+    val text = when {
+        busy -> "Translating…"
+        translated && !hidden -> "Original"
+        else -> "Translate"
+    }
+    Chip(text, !busy && lyricsShown, modifier) {
+        if (translated) {
+            onHide(!hidden)
+        } else {
+            busy = true
+            Playback.googleTranslate(found.songId) { msg ->
+                busy = false
+                if (msg != null) toast(msg, long = true)
+            }
+        }
     }
 }
 
@@ -458,6 +467,7 @@ private fun SleepDialog(onDone: () -> Unit) {
                                 onDone()
                             }
                             .padding(vertical = 12.dp),
+                        style = MaterialTheme.typography.bodyLarge,
                     )
                 }
                 Text(
@@ -469,6 +479,7 @@ private fun SleepDialog(onDone: () -> Unit) {
                             onDone()
                         }
                         .padding(vertical = 12.dp),
+                    style = MaterialTheme.typography.bodyLarge,
                 )
             }
         },
@@ -619,7 +630,8 @@ private fun SeekBar(onPreview: (Long) -> Unit) {
     }
 }
 
-private fun time(ms: Long): String {
+/** A length or position as m:ss. */
+internal fun time(ms: Long): String {
     val s = ms / 1000
     return "%d:%02d".format(s / 60, s % 60)
 }
@@ -714,12 +726,11 @@ private fun SongView() {
                             settle()
                             return@detectDragGestures
                         }
-                        scope.launch {
-                            animate(dx, if (toNext) -width.toFloat() else width.toFloat()) { x, _ -> dx = x }
-                            // The target is shown at once (as pending), so the page snaps back under it.
-                            Playback.skipTo(target)
-                            dx = 0f
-                        }
+                        // The skip starts on release, so the seek bar, the lyrics and the queue switch with it. The page that
+                        // was peeking becomes the current one where it is, and slides the rest of the way in.
+                        Playback.skipTo(target)
+                        dx += if (toNext) width.toFloat() else -width.toFloat()
+                        scope.launch { animate(dx, 0f) { x, _ -> dx = x } }
                     },
                 )
             },
@@ -744,7 +755,7 @@ private fun SongView() {
         })
         if (pop.value > 0f) {
             Icon(
-                Icons.Filled.ThumbUp,
+                likeIcon(true),
                 null,
                 Modifier
                     .align(Alignment.Center)
@@ -798,7 +809,8 @@ private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
             Modifier
                 .weight(1f, fill = false)
                 .aspectRatio(1f)
-                .clip(RoundedCornerShape(8.dp)),
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
             placeholder = placeholder,
         )
         Spacer(Modifier.height(16.dp))
@@ -818,12 +830,38 @@ private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
                 if (id != null) Nav.open(Page(kind, id))
             }
         }
-        Column(Modifier.goTo("album", s.album?.id)) {
-            Name(s.title, Store.playerMode, style = MaterialTheme.typography.headlineSmall, center = true)
+        // The names' block keeps the height of the longest it can be (a two-line title with its original, the artist with
+        // theirs, the album), so the art above stays put from song to song.
+        val title = MaterialTheme.typography.headlineSmall
+        val artistStyle = MaterialTheme.typography.titleMedium.copy(
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        val small = MaterialTheme.typography.bodySmall
+        val namesHeight = with(LocalDensity.current) {
+            (title.fontSize * 1.25f * 2).toDp() + small.lineHeight.toDp() * 3 + (artistStyle.fontSize * 1.25f).toDp() + 4.dp
         }
-        Spacer(Modifier.height(4.dp))
-        Column(Modifier.goTo("artist", s.firstArtistId)) {
-            Name(s.artistText, Store.playerMode, style = MaterialTheme.typography.titleMedium, center = true)
+        Column(Modifier.heightIn(min = namesHeight), horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(Modifier.goTo("album", s.album?.id)) {
+                Name(s.title, Store.playerMode, style = title, center = true)
+            }
+            Spacer(Modifier.height(4.dp))
+            Column(Modifier.goTo("artist", s.firstArtistId)) {
+                Name(s.artistText, Store.playerMode, style = artistStyle, center = true, maxLines = 1)
+            }
+            // The album, when it isn't the song's own title (a single).
+            val album = s.album?.name
+            if (album != null && album.latin.isNotBlank() && album.original != s.title.original) {
+                Text(
+                    Store.shown(album),
+                    Modifier.fillMaxWidth().goTo("album", s.album?.id),
+                    style = small,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         if (fixing) CorrectDialog(s) { fixing = false }
         if (current && Playback.waitingForNetwork) {
@@ -871,7 +909,7 @@ private fun QueueView() {
     val queued = (cur + 1 until all.size).filter { all[it].section == "queued" }
     val radio = (cur + 1 until all.size).filter { all[it].section == "radio" }
     if (queued.isNotEmpty()) {
-        rows.add("You queued" to -1)
+        rows.add("Up next" to -1)
         for (i in queued) rows.add(null to i)
     }
     if (radio.isNotEmpty()) {
@@ -885,19 +923,16 @@ private fun QueueView() {
     val list = androidx.compose.foundation.lazy.rememberLazyListState()
     PrefetchCovers(all.drop(cur + 1).map { it.song.thumb }, 48.dp, list)
     Box {
-        LazyColumn(Modifier.fillMaxSize().padding(top = CHIP_STRIP), list) {
+        // The strip is kept for the sleep timer's chip only while it runs.
+        val sleeping = Playback.sleepAt != 0L || Playback.sleepAfterSong
+        LazyColumn(Modifier.fillMaxSize().padding(top = if (sleeping) CHIP_STRIP else 0.dp), list) {
             itemsIndexed(rows, contentType = { _, (header, _) -> header == null }) { _, (header, i) ->
                 if (header != null) {
-                    Text(
-                        header,
-                        Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                    Header(header)
                 } else {
                     val e = all[i]
-                    // "saved" means the whole song is on the phone, so it plays with no network.
-                    val saved = if (Playback.player.fullyCached(e.song.id)) "saved" else null
+                    // "offline" means the whole song is on the phone, so it plays with no network.
+                    val saved = if (Playback.player.fullyCached(e.song.id)) "offline" else null
                     val extra = listOfNotNull(e.song.reason, saved).joinToString(" · ").ifEmpty { null }
                     SongRow(e.song, highlight = i == cur, extra = extra, onMenu = { menuFor = i }) { Playback.skipTo(i) }
                 }
@@ -916,8 +951,10 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
     // KuGou and NetEase translate into Chinese: attach a translation layer only in the chosen language.
     val showTranslation = Store.bool("lyrics.layer.translation", true)
     val wantedLang = Store.str("lyrics.translationLang", "device")
-    val shown = remember(found, showTranslation, wantedLang) {
-        val translation = if (showTranslation) {
+    // Translate's chip hides a translation for this song and shows it again.
+    var translationHidden by remember(songId) { mutableStateOf(false) }
+    val shown = remember(found, showTranslation, wantedLang, translationHidden) {
+        val translation = if (showTranslation && !translationHidden) {
             pickTranslation(bare, found.translations, Store.translationLanguages())
         } else {
             null
@@ -980,7 +1017,9 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
         LazyColumn(Modifier.fillMaxSize().padding(start = 20.dp, end = 20.dp, top = CHIP_STRIP), state = state) {
             itemsIndexed(lines) { i, line ->
                 val active = i == current
-                val alpha = if (!synced || active) 1f else 0.45f
+                // The other lines keep about 5:1 contrast. The words still to come in the current line have the same
+                // opacity (WordsText), so the line being sung is never lighter than its neighbours.
+                val alpha = if (!synced || active) 1f else UPCOMING
                 Column(
                     Modifier
                         .fillMaxWidth()
@@ -1037,8 +1076,28 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
                 }
             }
         }
+        // Lines fade out at the bottom edge, and under the chips' strip at the top, as the backdrop does.
+        val bg = MaterialTheme.colorScheme.surface
+        val fade = 24.dp
+        Box(
+            Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = CHIP_STRIP)
+                .fillMaxWidth()
+                .height(fade)
+                .background(Brush.verticalGradient(listOf(bg, Color.Transparent))),
+        )
+        Box(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(fade)
+                .background(Brush.verticalGradient(listOf(Color.Transparent, bg))),
+        )
         val hasText = lines.any { it.text.isNotBlank() }
-        TranslateChip(found, hasText && showTranslation, Modifier.align(Alignment.TopEnd))
+        val lang = Store.translationLanguages().first()
+        val translated = found.translations.any { it.language == lang }
+        TranslateChip(found, hasText && showTranslation, translated, translationHidden, { translationHidden = it }, Modifier.align(Alignment.TopEnd))
     }
     val fixing = fixWord
     if (fixing != null && songId != null) {
@@ -1076,7 +1135,7 @@ private fun pieceAt(line: Line, units: List<String>, unit: Int): Int {
 
 /**
  * Ruby layout: each word's romaji sits right above it, so the eye never has to match the two lines up. Karaoke
- * lights the current word in both, on the same tinted background as the lines layout. Words wrap as wholes. Without
+ * lights the current word in both, in the accent colour, as the lines layout does. Words wrap as wholes. Without
  * [onTap] the words take no touches, so a row around them stays clickable.
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
@@ -1097,7 +1156,7 @@ fun RubyLine(
     fun color(i: Int, base: Color) = when {
         current < 0 || i < current -> base
         i == current -> hi
-        else -> on.copy(alpha = 0.35f)
+        else -> on.copy(alpha = UPCOMING)
     }
     val latest by rememberUpdatedState(onTap to onLongPress)
     androidx.compose.foundation.layout.FlowRow(
@@ -1116,13 +1175,7 @@ fun RubyLine(
                     )
                 }
             }
-            val highlight = if (i == current) Modifier.background(hi.copy(alpha = 0.18f)) else Modifier
-            Column(
-                Modifier
-                    .then(taps)
-                    .then(highlight),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
+            Column(taps, horizontalAlignment = Alignment.CenterHorizontally) {
                 // An empty slot (punctuation, a word already in Latin letters) keeps the words on one baseline.
                 val romaji = if (Romanizer.hasNonLatin(u)) latin[i].trim() else ""
                 Text(romaji.ifEmpty { " " }, style = latinStyle, color = color(i, latinStyle.color.takeOrElse { on }))
@@ -1133,8 +1186,8 @@ fun RubyLine(
 }
 
 /**
- * A lyric layer. In karaoke mode (current >= 0) sung words are full colour, the current word is accent-coloured on a
- * tinted background, and words still to come are dimmed. Long-pressing a word offers to fix its reading.
+ * A lyric layer. In karaoke mode (current >= 0) sung words are full colour, the current word is in the accent colour,
+ * and words still to come are dimmed as much as the lines that aren't being sung. Long-pressing a word offers to fix its reading.
  */
 @Composable
 private fun WordsText(
@@ -1147,8 +1200,8 @@ private fun WordsText(
 ) {
     val hi = MaterialTheme.colorScheme.primary
     val sung = SpanStyle(color = MaterialTheme.colorScheme.onSurface)
-    val now = SpanStyle(color = hi, background = hi.copy(alpha = 0.18f))
-    val coming = SpanStyle(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f))
+    val now = SpanStyle(color = hi)
+    val coming = SpanStyle(color = MaterialTheme.colorScheme.onSurface.copy(alpha = UPCOMING))
     val ranges = ArrayList<IntRange>()
     val text: AnnotatedString = if (words.isEmpty()) {
         AnnotatedString(whole)
@@ -1191,15 +1244,28 @@ private fun WordsText(
     )
 }
 
-/** The top of the lyrics, comments and queue, where the Translate and sleep chips sit: a chip's height, which grows with the font. */
+/**
+ * The top of the lyrics, comments and queue, where the Translate and sleep chips sit: a chip's 48 dp touch target, or
+ * more when a large font makes the chip taller.
+ */
 internal val CHIP_STRIP: androidx.compose.ui.unit.Dp
-    @Composable get() = with(LocalDensity.current) { MaterialTheme.typography.labelMedium.lineHeight.toDp() } + 20.dp
+    @Composable get() {
+        val chip = with(LocalDensity.current) { MaterialTheme.typography.labelLarge.lineHeight.toDp() } + 12.dp
+        return maxOf(48.dp, chip)
+    }
 
 @Composable
 fun Centered(text: String) {
     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
         Text(text, textAlign = TextAlign.Center)
     }
+}
+
+/** The like button's icon: a thumb, or a star on a source that stars. */
+fun likeIcon(liked: Boolean): ImageVector = when {
+    backend.stars -> if (liked) Icons.Filled.Star else StarOutlineIcon
+    liked -> Icons.Filled.ThumbUp
+    else -> Icons.Outlined.ThumbUp
 }
 
 /** A speech-bubble-like lyrics icon; material-icons-core has none. */
@@ -1227,3 +1293,6 @@ val CommentsIcon: ImageVector by lazy {
 }
 
 private val LYRIC_BREAK = lyricBreak
+
+/** The opacity of lyrics not being sung: other lines, and the current line's words still to come. About 5:1 contrast. */
+private const val UPCOMING = 0.65f

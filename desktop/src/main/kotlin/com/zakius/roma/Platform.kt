@@ -396,7 +396,10 @@ fun OutlinedTextField(
             keyboardActions = KeyboardActions(onSearch = { onSearch?.invoke() }, onDone = { onSearch?.invoke() }),
             decorationBox = { inner ->
                 androidx.compose.foundation.layout.Box {
-                    if (value.isEmpty() && placeholder != null) Text(placeholder, color = s.onSurfaceVariant, style = style)
+                    // Fainter than typed text, and under a label only while the field has focus.
+                    if (value.isEmpty() && placeholder != null && (label == null || focused)) {
+                        Text(placeholder, color = s.onSurfaceVariant.copy(alpha = 0.6f), style = style)
+                    }
                     inner()
                 }
             },

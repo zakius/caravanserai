@@ -214,6 +214,8 @@ class RomanizeTest {
         assertEquals("Yoru ni kakeru", latin.joinToString("").trim())
         assertEquals(listOf("Ni", " hao"), Romanizer(jvmIcu, RomanizeSettings(hanDefault = "zh", chineseTones = false)).parts(listOf("你", "好")))
         assertEquals(listOf("an", "nyeong"), Romanizer(jvmIcu).parts(listOf("안", "녕")).map { it.lowercase() }) // Hangul stays joined
+        // A 、 ending one part is followed by a space; an opening bracket timed alone doesn't take the line's capital.
+        assertEquals("\"Kotae wa, itsu?\"", r.parts(listOf("「", "答えは、", "いつ?", "」")).joinToString("").trim())
     }
 
     @Test fun localSearch() {
