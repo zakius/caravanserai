@@ -459,7 +459,7 @@ fun CorrectDialog(song: Song, onDone: () -> Unit) {
             }) { Text("Save") }
         },
         dismissButton = {
-            Row {
+            run {
                 TextButton(onClick = {
                     val id = when (scope) {
                         "song" -> s.id
@@ -522,7 +522,7 @@ fun WordDialog(word: String, inContext: String?, songId: String, onDone: () -> U
         },
         confirmButton = { Button(onClick = { save(latin) }) { Text("Save") } },
         dismissButton = {
-            Row {
+            run {
                 TextButton(onClick = { save(word) }) { Text("Keep original") }
                 TextButton(onClick = onDone) { Text("Cancel") }
             }

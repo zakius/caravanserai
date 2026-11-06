@@ -550,7 +550,13 @@ fun AlertDialog(
                     )
                 }
                 Spacer(Modifier.height(24.dp))
-                Row(Modifier.align(Alignment.End), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // The buttons wrap onto another line when a large font makes them wider than the dialog, so none is
+                // pushed out of sight.
+                androidx.compose.foundation.layout.FlowRow(
+                    Modifier.align(Alignment.End),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     dismissButton()
                     confirmButton()
                 }
