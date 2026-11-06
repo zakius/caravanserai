@@ -32,42 +32,56 @@ import java.io.File
 /** A queue entry as ExoPlayer holds it: a media item tagged with its [Entry]. */
 typealias QueueItem = MediaItem
 
-/**
- * Playback's player on Android: Media3 ExoPlayer, audio only, over a 1 GB disk cache. Media items carry
- * roma://<videoId>; the stream URL is looked up ([Playback.streamUrl]) only when bytes are needed and not cached.
- */
+/** Playback's player on Android: Media3 ExoPlayer, audio only, over a 1 GB disk cache. */
 class ExoAudio(c: Context) : AudioPlayer {
     val exo: ExoPlayer
     private val cache: SimpleCache
     private val cached: CacheDataSource.Factory
 
     init {
-        cache = SimpleCache(File(c.cacheDir, "audio"), LeastRecentlyUsedCacheEvictor(1L shl 30), StandaloneDatabaseProvider(c))
+        val cacheBytes = 1024L * 1024 * 1024
+        cache = SimpleCache(File(c.cacheDir, "audio"), LeastRecentlyUsedCacheEvictor(cacheBytes), StandaloneDatabaseProvider(c))
         val http = DefaultHttpDataSource.Factory()
-        // Media items carry roma://<videoId>; the stream URL is looked up only when bytes are needed and not cached.
+        // Media items carry roma://<videoId>. The stream URL is looked up (Playback.streamUrl) only when bytes are
+        // needed and not cached.
         val resolving = ResolvingDataSource.Factory(http) { spec ->
-            if (spec.uri.scheme != "roma") spec else spec.withUri(Uri.parse(Playback.streamUrl(spec.uri.host!!)))
+            if (spec.uri.scheme != "roma") {
+                spec
+            } else {
+                val streamUrl = Playback.streamUrl(spec.uri.host!!)
+                spec.withUri(Uri.parse(streamUrl))
+            }
         }
         val source = CacheDataSource.Factory().setCache(cache).setUpstreamDataSourceFactory(resolving)
         cached = source
-        // Start after 0.5 s of audio instead of ExoPlayer's 2.5 s; audio downloads far faster than it plays. It buffers
-        // 50 s ahead, or with "Download songs ahead" the whole song (at most 10 min).
-        val load = DefaultLoadControl.Builder().setBufferDurationsMs(15_000, 10 * 60_000, 500, 2_000).build()
-        // Audio only, in the containers the app's source serves (the flavor's containers()): the default factories
-        // bring video, text and other containers that R8 can't remove.
+        // Playback starts after 0.5 s of audio instead of ExoPlayer's default 2.5 s, because audio downloads far faster
+        // than it plays. AheadLoadControl stops at 50 s ahead, unless "Download songs ahead" lets it fetch the whole
+        // song, up to the 10 minute maximum.
+        val minBufferMs = 15_000
+        val maxBufferMs = 10 * 60 * 1000
+        val startAfterMs = 500
+        val restartAfterStallMs = 2_000
+        val load = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(minBufferMs, maxBufferMs, startAfterMs, restartAfterStallMs)
+            .build()
+        // Audio only, in the containers the flavor's source serves (containers()). The default factories bring video,
+        // text and other containers that R8 can't remove.
         val audio = RenderersFactory { handler, _, listener, _, _ ->
-            arrayOf(MediaCodecAudioRenderer(c, MediaCodecSelector.DEFAULT, handler, listener, DefaultAudioSink.Builder(c).build()))
+            val sink = DefaultAudioSink.Builder(c).build()
+            arrayOf(MediaCodecAudioRenderer(c, MediaCodecSelector.DEFAULT, handler, listener, sink))
         }
         val containers = ExtractorsFactory(::containers)
-        // NoBandwidthMeter and no diagnostics: neither is used for one audio stream at a time, and both cost binder calls
-        // during the launch: the default bandwidth meter watches the network type and asks telephony for the country,
-        // the diagnostics report each playback session to MediaMetrics. The constructor that takes every component
-        // also keeps the default bandwidth meter out of the APK.
-        exo = ExoPlayer.Builder(
-            c, audio, ProgressiveMediaSource.Factory(source, containers).setLoadErrorHandlingPolicy(WaitForNetwork),
-            FirstAudioTrack, AheadLoadControl(load), NoBandwidthMeter, NoAnalytics,
-        )
-            .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
+        val mediaSource = ProgressiveMediaSource.Factory(source, containers).setLoadErrorHandlingPolicy(WaitForNetwork)
+        // There is no bandwidth meter and no platform diagnostics. Neither is useful for one audio stream at a time, and
+        // both cost binder calls during launch: the default bandwidth meter watches the network type and asks telephony
+        // for the country, and the diagnostics report each playback session to MediaMetrics. The constructor that takes
+        // every component also keeps the default bandwidth meter out of the APK.
+        val attributes = AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+            .build()
+        exo = ExoPlayer.Builder(c, audio, mediaSource, FirstAudioTrack, AheadLoadControl(load), NoBandwidthMeter, NoAnalytics)
+            .setAudioAttributes(attributes, true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .setUsePlatformDiagnostics(false)
@@ -75,15 +89,25 @@ class ExoAudio(c: Context) : AudioPlayer {
         exo.addListener(object : Player.Listener {
             override fun onEvents(p: Player, events: Player.Events) {
                 listener?.onEvents(
-                    events.contains(Player.EVENT_TIMELINE_CHANGED), events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION),
-                    events.contains(Player.EVENT_REPEAT_MODE_CHANGED), events.contains(Player.EVENT_IS_PLAYING_CHANGED),
+                    events.contains(Player.EVENT_TIMELINE_CHANGED),
+                    events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION),
+                    events.contains(Player.EVENT_REPEAT_MODE_CHANGED),
+                    events.contains(Player.EVENT_IS_PLAYING_CHANGED),
                     events.contains(Player.EVENT_POSITION_DISCONTINUITY),
                 )
             }
-            override fun onMediaItemTransition(item: MediaItem?, reason: Int) { listener?.onMediaItemTransition() }
-            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) { listener?.onPlayWhenReadyChanged(playWhenReady, reason) }
+
+            override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
+                listener?.onMediaItemTransition()
+            }
+
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                listener?.onPlayWhenReadyChanged(playWhenReady, reason)
+            }
+
             override fun onPlayerError(e: PlaybackException) {
-                listener?.onPlayerError(e, (e.cause as? HttpDataSource.InvalidResponseCodeException)?.responseCode, e.errorCodeName)
+                val httpCode = (e.cause as? HttpDataSource.InvalidResponseCodeException)?.responseCode
+                listener?.onPlayerError(e, httpCode, e.errorCodeName)
             }
         })
         Startup.later { watchHeadphones() }
@@ -146,10 +170,12 @@ class ExoAudio(c: Context) : AudioPlayer {
     override fun togglePlay() { androidx.media3.common.util.Util.handlePlayPauseButtonAction(exo) }
     override val showPlayButton get() = androidx.media3.common.util.Util.shouldShowPlayButton(exo)
 
-    // The key is the media item's cache key (the video ID): under the roma:// URI the player wouldn't find the bytes
-    // and would download them again.
+    // The key is the media item's cache key (the video ID). Cached under the roma:// URI instead, the bytes would not be
+    // found by the player, which would download them again.
     override fun precache(id: String, bytes: Long) {
-        val spec = DataSpec.Builder().setUri("roma://$id").setKey(id).apply { if (bytes >= 0) setPosition(0).setLength(bytes) }.build()
+        val builder = DataSpec.Builder().setUri("roma://$id").setKey(id)
+        if (bytes >= 0) builder.setPosition(0).setLength(bytes)
+        val spec = builder.build()
         CacheWriter(cached.createDataSource(), spec, null, null).cache()
     }
 
@@ -166,41 +192,55 @@ class ExoAudio(c: Context) : AudioPlayer {
     private fun watchHeadphones() {
         exo.addListener(object : Player.Listener {
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-                if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY) headphones.unplugged() else headphones.cleared()
+                val unplugged = !playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY
+                if (unplugged) headphones.unplugged() else headphones.cleared()
             }
         })
         headphones.watch()
     }
 
     /**
-     * Without a connection the player keeps playing what it has, then waits, retrying every 2 s for up to 10 min
-     * (an attempt with no network fails at once and costs nothing), and goes on by itself once a retry succeeds. Other
-     * errors keep Media3's usual 3 retries. ponytail: fixed 2 s; a nudge from the network callback would save up to 2 s.
+     * Without a connection the player keeps playing what it has buffered, then waits, retrying every 2 s for up to
+     * 10 minutes, and carries on by itself once a retry succeeds. An attempt with no network fails at once, so the
+     * retries cost nothing. Other errors keep Media3's usual 3 retries.
+     * ponytail: the delay is a fixed 2 s; a nudge from the network callback would save up to 2 s.
      */
     private object WaitForNetwork : androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy() {
+        private const val OFFLINE_RETRY_MS = 2_000L
+        private const val OFFLINE_RETRIES = 300 // 10 minutes of 2 s retries
+
         override fun getRetryDelayMsFor(info: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo): Long = when {
-            noConnection(info.exception) -> if (info.errorCount <= 300) 2_000 else C.TIME_UNSET
+            noConnection(info.exception) -> if (info.errorCount <= OFFLINE_RETRIES) OFFLINE_RETRY_MS else C.TIME_UNSET
             info.errorCount > DEFAULT_MIN_LOADABLE_RETRY_COUNT -> C.TIME_UNSET
             else -> super.getRetryDelayMsFor(info)
         }
 
-        // The error reaches the player only once retrying gives up (above), not after a fixed count.
+        // The error reaches the player only when getRetryDelayMsFor gives up, not after a fixed count.
         override fun getMinimumLoadableRetryCount(dataType: Int) = Int.MAX_VALUE
 
-        private fun noConnection(e: Throwable): Boolean = generateSequence(e) { it.cause }.any {
-            it is java.net.UnknownHostException || it is java.net.ConnectException || it is java.net.SocketTimeoutException ||
-                it is java.net.NoRouteToHostException || it is java.net.SocketException || (it as? StreamException)?.offline == true
+        private fun noConnection(e: Throwable): Boolean {
+            val causes = generateSequence(e) { error -> error.cause }
+            return causes.any { cause ->
+                cause is java.net.UnknownHostException ||
+                    cause is java.net.ConnectException ||
+                    cause is java.net.SocketTimeoutException ||
+                    cause is java.net.NoRouteToHostException ||
+                    cause is java.net.SocketException ||
+                    (cause as? StreamException)?.offline == true
+            }
         }
     }
 }
 
 /**
- * [load] as is, except that it stops 50 s ahead unless "Download songs ahead" is on. Kotlin's `by` doesn't forward
- * Java's default methods, so the ones the player calls are forwarded by hand.
+ * Behaves like [load], except that it stops loading 50 s ahead unless "Download songs ahead" is on. Kotlin's `by`
+ * doesn't forward Java's default methods, so the ones the player calls are forwarded by hand.
  */
 private class AheadLoadControl(val load: DefaultLoadControl) : androidx.media3.exoplayer.LoadControl {
+    private val aheadUs = 50 * 1_000_000L
+
     override fun shouldContinueLoading(p: androidx.media3.exoplayer.LoadControl.Parameters) =
-        load.shouldContinueLoading(p) && (p.bufferedDurationUs < 50_000_000 || Store.prefs.getBoolean("play.ahead", false))
+        load.shouldContinueLoading(p) && (p.bufferedDurationUs < aheadUs || Store.prefs.getBoolean("play.ahead", false))
     override fun getAllocator(id: androidx.media3.exoplayer.analytics.PlayerId) = load.getAllocator(id)
     override fun onPrepared(id: androidx.media3.exoplayer.analytics.PlayerId) = load.onPrepared(id)
     override fun onStopped(id: androidx.media3.exoplayer.analytics.PlayerId) = load.onStopped(id)
@@ -214,19 +254,19 @@ private class AheadLoadControl(val load: DefaultLoadControl) : androidx.media3.e
 }
 
 /**
- * The song's audio track for the one renderer: a stream here holds one. DefaultTrackSelector, which weighs video, text,
- * languages and adaptive qualities, would cost several times the code.
+ * Picks the song's audio track for the one renderer, since each stream here holds exactly one. DefaultTrackSelector,
+ * which weighs video, text, languages and adaptive qualities, would cost several times the code.
  */
 private object FirstAudioTrack : androidx.media3.exoplayer.trackselection.TrackSelector() {
     override fun selectTracks(
         capabilities: Array<out androidx.media3.exoplayer.RendererCapabilities>, groups: androidx.media3.exoplayer.source.TrackGroupArray,
         period: androidx.media3.exoplayer.source.MediaSource.MediaPeriodId, timeline: androidx.media3.common.Timeline,
     ): androidx.media3.exoplayer.trackselection.TrackSelectorResult {
-        val audio = (0 until groups.length).map(groups::get).firstOrNull { it.type == C.TRACK_TYPE_AUDIO }
-        return androidx.media3.exoplayer.trackselection.TrackSelectorResult(
-            arrayOf(if (audio != null) androidx.media3.exoplayer.RendererConfiguration.DEFAULT else null),
-            arrayOf(audio?.let { androidx.media3.exoplayer.trackselection.FixedTrackSelection(it, 0) }), null,
-        )
+        val allGroups = (0 until groups.length).map(groups::get)
+        val audio = allGroups.firstOrNull { group -> group.type == C.TRACK_TYPE_AUDIO }
+        val configuration = if (audio != null) androidx.media3.exoplayer.RendererConfiguration.DEFAULT else null
+        val selection = if (audio != null) androidx.media3.exoplayer.trackselection.FixedTrackSelection(audio, 0) else null
+        return androidx.media3.exoplayer.trackselection.TrackSelectorResult(arrayOf(configuration), arrayOf(selection), null)
     }
     override fun onSelectionActivated(info: Any?) {}
 }
@@ -239,7 +279,7 @@ private object NoBandwidthMeter : androidx.media3.exoplayer.upstream.BandwidthMe
     override fun removeEventListener(listener: androidx.media3.exoplayer.upstream.BandwidthMeter.EventListener) {}
 }
 
-/** Nothing in roma listens for analytics events, and platform diagnostics are off: ExoPlayer's events go nowhere. */
+/** Nothing in roma listens for analytics events and platform diagnostics are off, so ExoPlayer's events go nowhere. */
 private object NoAnalytics : androidx.media3.exoplayer.analytics.AnalyticsCollector {
     override fun addListener(listener: androidx.media3.exoplayer.analytics.AnalyticsListener) {}
     override fun removeListener(listener: androidx.media3.exoplayer.analytics.AnalyticsListener) {}

@@ -6,14 +6,14 @@ package com.zakius.roma
  * only. The names and constants are Media3's, so on Android each call passes straight through.
  */
 interface AudioPlayer {
-    /** Builds the item for [e]; any thread (a restored queue builds hundreds off the main thread). */
+    /** Builds the item for [e]. Safe on any thread, because a restored queue builds hundreds of them off the main thread. */
     fun item(e: Entry): QueueItem
     fun entryAt(index: Int): Entry?
     val currentEntry: Entry?
 
     val mediaItemCount: Int
     val currentMediaItemIndex: Int
-    /** The song after the current one; with Repeat all the first after the last; -1 when there is none. */
+    /** The song after the current one. With Repeat all, the first song follows the last. -1 when there is none. */
     val nextMediaItemIndex: Int
     fun hasNextMediaItem(): Boolean
     fun hasPreviousMediaItem(): Boolean
@@ -40,17 +40,23 @@ interface AudioPlayer {
     fun prepare()
     fun play()
     fun pause()
-    /** Pause while buffering (waiting for the network) pauses; Play prepares an idle player and restarts an ended one. */
+    /**
+     * Pressing it while buffering (waiting for the network) pauses. Play prepares an idle player and restarts an
+     * ended one.
+     */
     fun togglePlay()
-    /** Whether the play/pause button shows Play: Pause while buffering. */
+    /** Whether the play/pause button shows Play. While buffering it shows Pause. */
     val showPlayButton: Boolean
     var listener: Listener?
 
-    /** Blocking: resolves [id]'s stream and caches its first [bytes] (the whole song when [bytes] is -1). */
+    /** Blocking. Resolves [id]'s stream and caches its first [bytes], or the whole song when [bytes] is -1. */
     fun precache(id: String, bytes: Long)
-    /** The whole song is in the audio cache: it plays, seeks and repeats without the network. */
+    /** Whether the whole song is in the audio cache, so it plays, seeks and repeats without the network. */
     fun fullyCached(id: String): Boolean
-    /** Blocking: drops every song in the audio cache, e.g. another server's songs with the same ids (SubsonicSource.forget). */
+    /**
+     * Blocking. Drops every song in the audio cache. SubsonicSource.forget needs this because another server's songs
+     * can have the same ids.
+     */
     fun clearCache()
 
     interface Listener {
@@ -58,7 +64,7 @@ interface AudioPlayer {
         fun onEvents(listChanged: Boolean, transition: Boolean, repeatChanged: Boolean, playingChanged: Boolean, discontinuity: Boolean)
         fun onMediaItemTransition()
         fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int)
-        /** [httpStatus]: the stream's HTTP status when the server refused it. [message]: the player's own words for it. */
+        /** [httpStatus] is the stream's HTTP status when the server refused it. [message] is the player's own description. */
         fun onPlayerError(e: Throwable, httpStatus: Int?, message: String)
     }
 

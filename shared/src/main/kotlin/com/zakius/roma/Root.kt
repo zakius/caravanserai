@@ -37,7 +37,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
-/** A page opened from a list: an album, playlist or artist, or the sign-in page. [fromPlayer]: Back returns to the player. */
+/** A page opened from a list: an album, playlist or artist, or the sign-in page. With [fromPlayer], Back returns to the player. */
 class Page(val kind: String, val id: String, val fromPlayer: Boolean = false)
 
 const val TAB_HOME = 0
@@ -52,8 +52,13 @@ object Nav {
     private var shownTab by mutableStateOf(Store.prefs.getInt("ui.tab", TAB_HOME))
     var tab: Int
         get() = shownTab
-        set(v) { if (v != shownTab) { before = shownTab; shownTab = v } }
-    /** The tab shown before this one: Back and a swipe down on the player return there. */
+        set(v) {
+            if (v != shownTab) {
+                before = shownTab
+                shownTab = v
+            }
+        }
+    /** The tab shown before this one. Back and a swipe down on the player return there. */
     var before = TAB_HOME
         private set
     var playerView by mutableStateOf(Store.prefs.getString("ui.playerView", null) ?: "song")
@@ -70,7 +75,7 @@ object Nav {
     }
 }
 
-/** Whether a finger is on the screen, and when one last was: Home changes its tiles only when it isn't. */
+/** Whether a finger is on the screen, and when one last was. Home changes its tiles only while no finger is down. */
 object Touch {
     @Volatile var down = false
     @Volatile var last = 0L
@@ -84,69 +89,112 @@ object Touch {
 @Composable
 fun Theme(content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
-    // The system's colours (Android 12+, from the wallpaper), else the app's own accent on the base scheme.
-    var scheme = systemColorScheme(dark) ?: accentScheme(if (dark) darkColorScheme() else lightColorScheme(), backend.brandColor, dark)
-    // Options, both off by default. True black: OLED pixels that are off draw no power. Artwork colours: the accent
-    // follows the playing song's art (one 24 px decode per song).
+    // The system's colours (Android 12+, from the wallpaper), or else the app's own accent on the base scheme.
+    var scheme = systemColorScheme(dark)
+        ?: accentScheme(if (dark) darkColorScheme() else lightColorScheme(), backend.brandColor, dark)
+    // Two options, both off by default. True black saves power, because OLED pixels that are off draw none. Artwork
+    // colours make the accent follow the playing song's art, at the cost of one 24 px decode per song.
     if (dark && Store.bool("ui.trueBlack", false)) {
         val black = androidx.compose.ui.graphics.Color.Black
-        scheme = scheme.copy(background = black, surface = black, surfaceContainer = black, surfaceContainerLowest = black)
+        scheme = scheme.copy(
+            background = black,
+            surface = black,
+            surfaceContainer = black,
+            surfaceContainerLowest = black,
+        )
     }
     if (Store.bool("ui.artColors", false)) {
         Playback.tick
         val thumb = Playback.shown()?.thumb
         var seed by androidx.compose.runtime.remember { mutableStateOf<Int?>(null) }
-        androidx.compose.runtime.LaunchedEffect(thumb) { seed = withContext(Dispatchers.IO) { thumb?.let { artColor(it) } } }
-        seed?.let { scheme = accentScheme(scheme, it, dark) }
+        androidx.compose.runtime.LaunchedEffect(thumb) {
+            seed = withContext(Dispatchers.IO) {
+                if (thumb != null) artColor(thumb) else null
+            }
+        }
+        val artSeed = seed
+        if (artSeed != null) scheme = accentScheme(scheme, artSeed, dark)
     }
-    MaterialTheme(colorScheme = scheme) { Surface(Modifier.fillMaxSize(), content = content) }
+    MaterialTheme(colorScheme = scheme) {
+        Surface(Modifier.fillMaxSize(), content = content)
+    }
 }
 
 /** The art's most colourful average: pixels weighted by saturation, so a grey background doesn't wash it out. */
 private suspend fun artColor(thumb: String): Int? {
-    val image = Images.load(bigThumb(thumb), 24, exact = true, software = true)?.toImage() ?: return null // pixels are read below
+    // A software bitmap, because the pixels are read below.
+    val pic = Images.load(bigThumb(thumb), 24, exact = true, software = true) ?: return null
+    val image = pic.toImage()
     val w0 = image.width
     val h0 = image.height
-    val pixels = IntArray(w0 * h0).also { image.readPixels(it) }
-    var r = 0.0; var g = 0.0; var b = 0.0; var w = 0.0
+    val pixels = IntArray(w0 * h0)
+    image.readPixels(pixels)
+    var r = 0.0
+    var g = 0.0
+    var b = 0.0
+    var w = 0.0
     val hsl = FloatArray(3)
-    for (x in 0 until w0) for (y in 0 until h0) {
-        val px = pixels[y * w0 + x]
-        colorToHsl(px, hsl)
-        val weight = (hsl[1] * (1 - kotlin.math.abs(hsl[2] * 2 - 1))).toDouble() // saturated and not near black or white
-        r += (px shr 16 and 0xff) * weight; g += (px shr 8 and 0xff) * weight; b += (px and 0xff) * weight; w += weight
+    for (x in 0 until w0) {
+        for (y in 0 until h0) {
+            val px = pixels[y * w0 + x]
+            colorToHsl(px, hsl)
+            // Highest for saturated pixels that are not near black or white.
+            val weight = (hsl[1] * (1 - kotlin.math.abs(hsl[2] * 2 - 1))).toDouble()
+            r += red(px) * weight
+            g += green(px) * weight
+            b += blue(px) * weight
+            w += weight
+        }
     }
-    if (w < w0 * h0 * 0.05) return null // a grey picture: keep the usual colours
+    // A grey picture keeps the usual colours.
+    if (w < w0 * h0 * 0.05) return null
     return rgb((r / w).toInt(), (g / w).toInt(), (b / w).toInt())
 }
 
-private fun rgb(r: Int, g: Int, b: Int) = (0xff shl 24) or (r shl 16) or (g shl 8) or b
+// A colour is packed as ARGB, 8 bits per channel: alpha in the top byte, blue in the bottom one.
+private fun red(c: Int) = (c shr 16) and 0xff
+private fun green(c: Int) = (c shr 8) and 0xff
+private fun blue(c: Int) = c and 0xff
 
-// androidx.core's ColorUtils.colorToHSL and HSLToColor, the same arithmetic.
+private const val OPAQUE = 0xff shl 24
+
+private fun rgb(r: Int, g: Int, b: Int) = OPAQUE or (r shl 16) or (g shl 8) or b
+
+// The same arithmetic as androidx.core's ColorUtils.colorToHSL and HSLToColor.
 private fun colorToHsl(c: Int, out: FloatArray) {
-    val rf = (c shr 16 and 0xff) / 255f
-    val gf = (c shr 8 and 0xff) / 255f
-    val bf = (c and 0xff) / 255f
+    val rf = red(c) / 255f
+    val gf = green(c) / 255f
+    val bf = blue(c) / 255f
     val max = maxOf(rf, gf, bf)
     val min = minOf(rf, gf, bf)
     val delta = max - min
     val l = (max + min) / 2f
     var h: Float
     val s: Float
-    if (max == min) { h = 0f; s = 0f } else {
-        h = when (max) { rf -> ((gf - bf) / delta) % 6f; gf -> (bf - rf) / delta + 2f; else -> (rf - gf) / delta + 4f }
+    if (max == min) {
+        h = 0f
+        s = 0f
+    } else {
+        h = when (max) {
+            rf -> ((gf - bf) / delta) % 6f
+            gf -> (bf - rf) / delta + 2f
+            else -> (rf - gf) / delta + 4f
+        }
         s = delta / (1f - kotlin.math.abs(2f * l - 1f))
     }
     h = (h * 60f) % 360f
     if (h < 0) h += 360f
-    out[0] = h.coerceIn(0f, 360f); out[1] = s.coerceIn(0f, 1f); out[2] = l.coerceIn(0f, 1f)
+    out[0] = h.coerceIn(0f, 360f)
+    out[1] = s.coerceIn(0f, 1f)
+    out[2] = l.coerceIn(0f, 1f)
 }
 
 private fun hslToColor(h: Float, s: Float, l: Float): Int {
     val c = (1f - kotlin.math.abs(2 * l - 1f)) * s
     val m = l - 0.5f * c
     val x = c * (1f - kotlin.math.abs(h / 60f % 2f - 1f))
-    fun v(f: Float) = (255 * f).roundToInt().coerceIn(0, 255) // Math.round: halves up, as ColorUtils
+    // roundToInt rounds halves up, like the Math.round that ColorUtils uses.
+    fun v(f: Float) = (255 * f).roundToInt().coerceIn(0, 255)
     return when (h.toInt() / 60) {
         0 -> rgb(v(c + m), v(x + m), v(m))
         1 -> rgb(v(x + m), v(c + m), v(m))
@@ -164,26 +212,44 @@ private fun accentScheme(s: ColorScheme, seed: Int, dark: Boolean): ColorScheme 
     colorToHsl(seed, hsl)
     fun tone(sat: Float, light: Float) = androidx.compose.ui.graphics.Color(hslToColor(hsl[0], sat, light))
     val sat = hsl[1].coerceIn(0.35f, 0.8f)
-    return if (dark) s.copy(primary = tone(sat, 0.75f), onPrimary = tone(sat, 0.15f), secondaryContainer = tone(sat * 0.6f, 0.25f), onSecondaryContainer = tone(sat, 0.9f), inversePrimary = tone(sat, 0.4f))
-    else s.copy(primary = tone(sat, 0.38f), onPrimary = tone(sat, 0.98f), secondaryContainer = tone(sat * 0.6f, 0.88f), onSecondaryContainer = tone(sat, 0.15f), inversePrimary = tone(sat, 0.8f))
+    if (dark) {
+        return s.copy(
+            primary = tone(sat, 0.75f),
+            onPrimary = tone(sat, 0.15f),
+            secondaryContainer = tone(sat * 0.6f, 0.25f),
+            onSecondaryContainer = tone(sat, 0.9f),
+            inversePrimary = tone(sat, 0.4f),
+        )
+    }
+    return s.copy(
+        primary = tone(sat, 0.38f),
+        onPrimary = tone(sat, 0.98f),
+        secondaryContainer = tone(sat * 0.6f, 0.88f),
+        onSecondaryContainer = tone(sat, 0.15f),
+        inversePrimary = tone(sat, 0.8f),
+    )
 }
 
-/** Whether this screen is the one on screen: Root keeps visited tabs, and the screens under a tab's top page, composed;
- *  the player keeps its visited views. Not static: a change then recomposes only the screens that read it, instead of
- *  both tabs' whole trees on every switch (5.0 to 3.7 ms per switch on the phone, 2026-10-27). */
+/**
+ * Whether this screen is the one shown. Root keeps visited tabs, and the screens under a tab's top page, composed, and
+ * the player keeps its visited views. It is a compositionLocalOf rather than a static one, so a change recomposes only
+ * the screens that read it instead of both tabs' whole trees on every switch.
+ */
 val LocalTabShown = androidx.compose.runtime.compositionLocalOf { true }
 
-// Composed and measured at the size it would be shown at, but taking no space and never placed: not drawn or touched,
-// and no semantics for accessibility. Measured, a lazy list has its rows composed and laid out, so showing it costs
-// only placing and drawing.
+// The content is composed and measured at the size it would be shown at, but takes no space and is never placed, so
+// it is not drawn or touched and has no semantics for accessibility. Measuring it matters: a lazy list then has its
+// rows composed and laid out, so showing it later costs only placing and drawing.
 fun Modifier.hidden() = clearAndSetSemantics {}.layout { m, c ->
-    if (c.hasBoundedWidth && c.hasBoundedHeight) m.measure(androidx.compose.ui.unit.Constraints.fixed(c.maxWidth, c.maxHeight))
+    if (c.hasBoundedWidth && c.hasBoundedHeight) {
+        m.measure(androidx.compose.ui.unit.Constraints.fixed(c.maxWidth, c.maxHeight))
+    }
     layout(c.minWidth, c.minHeight) {}
 }
 
 /**
- * Adds [ahead] to [visited] one at a time, once start-up is over and while nothing touches the screen: the screens
- * are built hidden before they're first opened, so opening one costs what a return to it does.
+ * Adds [ahead] to [visited] one at a time, once start-up is over and while nothing touches the screen. The screens are
+ * built hidden before they're first opened, so opening one costs no more than returning to it.
  */
 suspend fun <T> buildAhead(visited: MutableList<T>, ahead: List<T>) {
     for (v in ahead) {
@@ -199,24 +265,37 @@ fun Root() {
     val stack = Nav.stacks[tab]
     BackHandler(enabled = stack.isNotEmpty() || tab != TAB_HOME) {
         // Picking a song jumps to the player, so leaving it returns to the list it was picked from.
-        if (stack.isNotEmpty()) { if (stack.removeAt(stack.size - 1).fromPlayer) Nav.tab = TAB_PLAYER } else if (tab == TAB_PLAYER) Nav.leavePlayer() else Nav.tab = TAB_HOME
+        if (stack.isNotEmpty()) {
+            val closed = stack.removeAt(stack.size - 1)
+            if (closed.fromPlayer) Nav.tab = TAB_PLAYER
+        } else if (tab == TAB_PLAYER) {
+            Nav.leavePlayer()
+        } else {
+            Nav.tab = TAB_HOME
+        }
     }
-    if (!Store.bool("setup.done", false)) return Box(Modifier.fillMaxSize().safeDrawingPadding()) { SetupScreen() }
+    if (!Store.bool("setup.done", false)) {
+        Box(Modifier.fillMaxSize().safeDrawingPadding()) { SetupScreen() }
+        return
+    }
     DictionaryPrompt()
-    Playback.tick // redraw when the player changes, for the Player tab's dimming
+    // Read so the Player tab's dimming redraws when the player changes.
+    Playback.tick
     val loaded = Playback.player.mediaItemCount > 0 || Playback.pending != null || Playback.restoring
     androidx.compose.runtime.LaunchedEffect(tab, Nav.playerView) {
         Store.prefs.edit().putInt("ui.tab", tab).putString("ui.playerView", Nav.playerView).apply()
     }
     val saved = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
-    // Tabs stay composed once visited, so switching back only lays out and draws: rebuilding Home took 10 to 14 ms of
-    // the main thread on the phone (2026-10-26); most are built ahead (buildAhead). So do the tab's own screen and the pages under its top page: Back
-    // shows the one below as it was. A hidden screen isn't measured, drawn, touched or read by accessibility
-    // services; it checks LocalTabShown to pause its own work and Back handling.
+    // Tabs stay composed once visited, so switching back only lays out and draws instead of rebuilding a screen such
+    // as Home on the main thread. Most tabs are built ahead (buildAhead). The pages under a tab's top page stay
+    // composed too, so Back shows the one below as it was. A hidden screen isn't drawn, touched or read by
+    // accessibility services, and it checks LocalTabShown to pause its own work and Back handling.
     val visited = androidx.compose.runtime.remember { mutableStateListOf(tab) }
     if (tab !in visited) visited += tab
     // Library isn't built ahead: building it loads the library from the network.
-    androidx.compose.runtime.LaunchedEffect(Unit) { buildAhead(visited, listOf(TAB_PLAYER, TAB_HOME, TAB_SEARCH, TAB_SETTINGS)) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        buildAhead(visited, listOf(TAB_PLAYER, TAB_HOME, TAB_SEARCH, TAB_SETTINGS))
+    }
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
         Box(Modifier.weight(1f)) {
             for (t in visited) androidx.compose.runtime.key(t) {
@@ -229,9 +308,10 @@ fun Root() {
                             Box(if (top) Modifier.fillMaxSize() else Modifier.hidden()) {
                                 androidx.compose.runtime.CompositionLocalProvider(LocalTabShown provides (t == tab && top)) {
                                     // Each tab and page keeps its saved state (scroll position, search text) while another
-                                    // one is shown, so going back lands where it was. ponytail: states of closed pages stay
-                                    // until the app ends; small.
-                                    saved.SaveableStateProvider(if (page != null) "$t/$level/${page.kind}/${page.id}" else "$t") {
+                                    // one is shown, so going back lands where it was. ponytail: the states of closed pages
+                                    // stay until the app ends, which is acceptable because they are small.
+                                    val stateKey = if (page != null) "$t/$level/${page.kind}/${page.id}" else "$t"
+                                    saved.SaveableStateProvider(stateKey) {
                                         when {
                                             page != null -> PageScreen(page)
                                             t == TAB_HOME -> HomeScreen()
@@ -248,39 +328,67 @@ fun Root() {
                 }
             }
         }
-        // Fixed order, Player in the middle; Player is dimmed until something is loaded. Compact (48 dp): icon and a small
-        // label, no pill, so the player's controls get the height.
+        // The tabs keep a fixed order with Player in the middle, dimmed until something is loaded. The bar is compact
+        // (48 dp), with an icon and a small label but no pill, so the player's controls get the height.
         FixedRowsFont { NavBar(tab, loaded) }
     }
 }
 
 @Composable
 private fun NavBar(tab: Int, loaded: Boolean) {
-        androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth().height(48.dp).background(MaterialTheme.colorScheme.surfaceContainer)) {
-            NavItem("Home", Icons.Default.Home, tab == TAB_HOME, true) { Nav.tab = TAB_HOME; Nav.stacks[TAB_HOME].clear() }
-            NavItem("Search", Icons.Default.Search, tab == TAB_SEARCH, true) { Nav.tab = TAB_SEARCH; Nav.stacks[TAB_SEARCH].clear() }
-            NavItem("Player", Icons.Default.PlayArrow, tab == TAB_PLAYER, loaded) { Nav.tab = TAB_PLAYER }
-            NavItem("Library", Icons.AutoMirrored.Filled.List, tab == TAB_LIBRARY, true) { Nav.tab = TAB_LIBRARY; Nav.stacks[TAB_LIBRARY].clear() }
-            NavItem("Settings", Icons.Default.Settings, tab == TAB_SETTINGS, true, dot = Update.available != null) { Nav.tab = TAB_SETTINGS; Nav.stacks[TAB_SETTINGS].clear() }
+    val barModifier = Modifier
+        .fillMaxWidth()
+        .height(48.dp)
+        .background(MaterialTheme.colorScheme.surfaceContainer)
+    androidx.compose.foundation.layout.Row(barModifier) {
+        NavItem("Home", Icons.Default.Home, tab == TAB_HOME, true) {
+            Nav.tab = TAB_HOME
+            Nav.stacks[TAB_HOME].clear()
         }
+        NavItem("Search", Icons.Default.Search, tab == TAB_SEARCH, true) {
+            Nav.tab = TAB_SEARCH
+            Nav.stacks[TAB_SEARCH].clear()
+        }
+        NavItem("Player", Icons.Default.PlayArrow, tab == TAB_PLAYER, loaded) {
+            Nav.tab = TAB_PLAYER
+        }
+        NavItem("Library", Icons.AutoMirrored.Filled.List, tab == TAB_LIBRARY, true) {
+            Nav.tab = TAB_LIBRARY
+            Nav.stacks[TAB_LIBRARY].clear()
+        }
+        NavItem("Settings", Icons.Default.Settings, tab == TAB_SETTINGS, true, dot = Update.available != null) {
+            Nav.tab = TAB_SETTINGS
+            Nav.stacks[TAB_SETTINGS].clear()
+        }
+    }
 }
 
 /**
- * The fixed-height rows (player controls, nav bar) follow the system font size only up to 1.3×: larger, their labels
- * and times would be cut off, and the rows can't grow without moving the controls. Everything else scales fully.
+ * The fixed-height rows (player controls, nav bar) follow the system font size only up to 1.3×. Any larger and their
+ * labels and times would be cut off, and the rows can't grow without moving the controls. Everything else scales fully.
  */
 @Composable
 fun FixedRowsFont(content: @Composable () -> Unit) {
     val d = androidx.compose.ui.platform.LocalDensity.current
     if (d.fontScale <= 1.3f) return content()
-    androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(d.density, 1.3f), content = content)
+    val capped = androidx.compose.ui.unit.Density(d.density, 1.3f)
+    androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides capped, content = content)
 }
 
 @Composable
-private fun androidx.compose.foundation.layout.RowScope.NavItem(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, selected: Boolean, enabled: Boolean, dot: Boolean = false, onClick: () -> Unit) {
+private fun androidx.compose.foundation.layout.RowScope.NavItem(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    selected: Boolean,
+    enabled: Boolean,
+    dot: Boolean = false,
+    onClick: () -> Unit,
+) {
     val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
     androidx.compose.foundation.layout.Column(
-        Modifier.weight(1f).fillMaxHeight()
+        Modifier
+            .weight(1f)
+            .fillMaxHeight()
             .selectable(selected = selected, enabled = enabled, role = androidx.compose.ui.semantics.Role.Tab, onClick = onClick)
             .dim(if (enabled) 1f else 0.35f),
         horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
@@ -288,8 +396,14 @@ private fun androidx.compose.foundation.layout.RowScope.NavItem(label: String, i
     ) {
         androidx.compose.foundation.layout.Box {
             Icon(icon, null, Modifier.size(22.dp), tint = color)
-            // Something waits there (an update): a dot, no count, nothing that moves.
-            if (dot) androidx.compose.foundation.layout.Box(Modifier.align(androidx.compose.ui.Alignment.TopEnd).size(6.dp).background(MaterialTheme.colorScheme.primary, androidx.compose.foundation.shape.CircleShape))
+            // Something waits there, such as an update. It gets a plain dot: no count, nothing that moves.
+            if (dot) {
+                val dotModifier = Modifier
+                    .align(androidx.compose.ui.Alignment.TopEnd)
+                    .size(6.dp)
+                    .background(MaterialTheme.colorScheme.primary, androidx.compose.foundation.shape.CircleShape)
+                androidx.compose.foundation.layout.Box(dotModifier)
+            }
         }
         Text(label, fontSize = 10.sp, lineHeight = 12.sp, color = color, maxLines = 1)
     }

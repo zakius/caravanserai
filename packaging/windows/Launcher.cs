@@ -1,9 +1,10 @@
-// roma-ytm.exe of the small Windows build, which carries no Java runtime (finimal's launcher, Java only). It starts the
-// app on the newest installed Java 21 or later; without one it downloads Eclipse Temurin's JRE once to
-// %LOCALAPPDATA%\roma-ytm\java (not runtime: the full build installs its own there), checked against the SHA-256 pinned
-// at build time (Pins.cs, from tools/windows-packages.sh).
+// roma-ytm.exe of the small Windows build, which carries no Java runtime. It is finimal's launcher, reduced to Java only.
+// It starts the app on the newest installed Java 21 or later. Without one, it downloads Eclipse Temurin's JRE once to
+// %LOCALAPPDATA%\roma-ytm\java and checks it against the SHA-256 pinned at build time (Pins.cs, written by
+// tools/windows-packages.sh). The folder is not "runtime" because the full build installs its own Java there.
 // The Java options come from app\roma-ytm.cfg, which jpackage writes for the full build's own launcher.
-// C# 5: the compiler that comes with .NET Framework 4, which every Windows 10 and 11 has, builds it.
+// The code sticks to C# 5 so that the compiler shipped with .NET Framework 4, present on every Windows 10 and 11,
+// can build it.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -23,7 +24,7 @@ static class Launcher
     [STAThread]
     static int Main(string[] args)
     {
-        // CI runs --check unattended: no windows, errors to stderr.
+        // CI runs --check unattended, so it opens no windows and writes errors to stderr.
         bool quiet = Array.IndexOf(args, "--check") >= 0;
         try
         {
@@ -45,8 +46,9 @@ static class Launcher
         }
     }
 
-    // The newest Java 21 or later with the desktop module: the one downloaded before, JAVA_HOME, the PATH, then what
-    // installers register (Oracle and most others under JavaSoft, Temurin, Microsoft's build, Azul Zulu).
+    // Finds the newest Java 21 or later with the desktop module. It looks at the one downloaded before, JAVA_HOME, the
+    // PATH, and then what installers register (Oracle and most others under JavaSoft, Temurin, Microsoft's build, Azul
+    // Zulu).
     static string FindJava()
     {
         var homes = new List<string>();
@@ -64,7 +66,7 @@ static class Launcher
             AddHomes(homes, hive, @"SOFTWARE\Azul Systems\Zulu", "", "InstallationPath");
         }
         string best = null;
-        int bestVersion = 20;
+        int bestVersion = 20; // only Java 21 or later can win
         foreach (string home in homes)
         {
             if (string.IsNullOrEmpty(home)) continue;
@@ -87,7 +89,7 @@ static class Launcher
                         if (sub != null) homes.Add(sub.GetValue(value) as string);
             }
         }
-        catch (Exception) { }
+        catch (Exception) { } // an unreadable registry key only means no Java from that vendor
     }
 
     // The feature version from the runtime's release file, or 0 when it isn't a usable desktop Java.
@@ -109,7 +111,7 @@ static class Launcher
         return 0;
     }
 
-    // The Java download, behind a small progress window unless quiet.
+    // Downloads Java, showing a small progress window unless quiet.
     static void Download(bool quiet)
     {
         Exception failure = null;
@@ -142,13 +144,14 @@ static class Launcher
         if (form != null) form.Shown += delegate { work.Start(); };
         else work.Start();
         if (form != null) Application.Run(form);
-        // Closed before the downloads finished: the user doesn't want them. The next start begins again.
+        // If the window closed before the downloads finished, the user doesn't want them, so exit. The next start
+        // begins again.
         if (form != null && work.IsAlive) Environment.Exit(0);
         work.Join();
         if (failure != null) throw failure;
     }
 
-    // Downloads a zip, checks its SHA-256 and unpacks it into dir; a partial download leaves nothing behind.
+    // Downloads a zip, checks its SHA-256 and unpacks it into dir. A partial download leaves nothing behind.
     static void Fetch(string url, string sha256, string dir, string what, Action<string, int> show)
     {
         Directory.CreateDirectory(dir);
@@ -161,14 +164,16 @@ static class Launcher
         using (var hash = SHA256.Create())
         {
             long total = response.ContentLength, done = 0;
-            var buffer = new byte[1 << 16];
+            const int Mb = 1024 * 1024;
+            var buffer = new byte[64 * 1024];
             int n;
             while ((n = input.Read(buffer, 0, buffer.Length)) > 0)
             {
                 output.Write(buffer, 0, n);
                 hash.TransformBlock(buffer, 0, n, null, 0);
                 done += n;
-                show(what + ": " + (done >> 20) + " of " + (total >> 20) + " MB", total > 0 ? (int)(done * 100 / total) : 0);
+                int percent = total > 0 ? (int)(done * 100 / total) : 0;
+                show(what + ": " + (done / Mb) + " of " + (total / Mb) + " MB", percent);
             }
             hash.TransformFinalBlock(buffer, 0, 0);
             string got = BitConverter.ToString(hash.Hash).Replace("-", "").ToLowerInvariant();
@@ -190,8 +195,8 @@ static class Launcher
         Directory.Delete(unpacked, true);
     }
 
-    // javaw with app\roma-ytm.cfg's class path, options and main class, as jpackage's launcher would; waits for it, so
-    // the exit code and any redirected output come through.
+    // Runs javaw with app\roma-ytm.cfg's class path, options and main class, as jpackage's launcher would. It waits for
+    // javaw to exit, so the exit code and any redirected output come through.
     static int Run(string java, string app, string[] args)
     {
         var classpath = new List<string>();

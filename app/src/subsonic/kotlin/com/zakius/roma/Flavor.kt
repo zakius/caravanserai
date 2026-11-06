@@ -11,21 +11,31 @@ import androidx.media3.extractor.text.SubtitleParser
 import androidx.media3.extractor.ts.AdtsExtractor
 import androidx.media3.extractor.wav.WavExtractor
 
-// The Subsonic app's own parts of the Android app: nothing to set up, and Google Play updates the app.
+// The caravan (Subsonic) flavor's parts of the Android app. It has nothing to set up, and Google Play updates it.
 
 fun flavorInit() {}
 
 fun flavorResumed() {}
 
 /**
- * The containers ExoPlayer reads (ExoAudio): what music servers stream as it is stored (MP3, FLAC, Ogg, WAV, M4A, ADTS
- * AAC), and the fragmented MP4 and WebM that servers relaying streaming services (oasis's YouTube Music songs) send.
+ * The containers ExoAudio's player reads. Music servers stream files as they are stored (MP3, FLAC, Ogg, WAV, M4A, ADTS
+ * AAC). Servers that relay streaming services, such as oasis with YouTube Music songs, send fragmented MP4 and WebM.
  */
-fun containers(): Array<Extractor> = SubtitleParser.Factory.UNSUPPORTED.let {
-    arrayOf(Mp3Extractor(), FlacExtractor(), OggExtractor(), WavExtractor(), FragmentedMp4Extractor(it), Mp4Extractor(it), MatroskaExtractor(it), AdtsExtractor())
+fun containers(): Array<Extractor> {
+    val noSubtitles = SubtitleParser.Factory.UNSUPPORTED
+    return arrayOf(
+        Mp3Extractor(),
+        FlacExtractor(),
+        OggExtractor(),
+        WavExtractor(),
+        FragmentedMp4Extractor(noSubtitles),
+        Mp4Extractor(noSubtitles),
+        MatroskaExtractor(noSubtitles),
+        AdtsExtractor(),
+    )
 }
 
-/** Google Play updates the Subsonic app: it never has an update of its own to offer (Settings asks). */
+/** Settings asks for an update, but Google Play updates this app, so it never has one of its own to offer. */
 object Update {
     val available: String? = null
     val status: String? = null

@@ -14,8 +14,12 @@ class Bans(val songs: Set<String> = emptySet(), val artists: Set<String> = empty
 
 private val VERSIONS = Regex("""(?i)\b(live|sped[ -]?up|speed[ -]?up|nightcore|slowed|reverb)\b|ライブ|现场|라이브""")
 
-private fun key(s: Song) = Romanizer.stripMarks(s.title.original).lowercase().replace(Regex("""\s*[(\[].*?[)\]]"""), "").trim() +
-    "|" + (s.artists.firstOrNull()?.name?.original?.lowercase() ?: "")
+/** The title without bracketed parts such as "(Official Video)", and the first artist: the same song in any upload. */
+private fun key(s: Song): String {
+    val title = Romanizer.stripMarks(s.title.original).lowercase().replace(Regex("""\s*[(\[].*?[)\]]"""), "").trim()
+    val artist = s.artists.firstOrNull()?.name?.original?.lowercase() ?: ""
+    return title + "|" + artist
+}
 
 /**
  * Picks which radio candidates to append. [already] holds the songs in the queue (all sections), [related] the
@@ -40,9 +44,13 @@ fun filterRadio(
     for (s in candidates) {
         if (s.id in seen) continue
         if (settings.skipBanned && bans.banned(s)) continue
-        if (settings.hideVersions && !seedIsVersion && (VERSIONS.containsMatchIn(s.title.original) || VERSIONS.containsMatchIn(s.title.latin))) continue
+        if (settings.hideVersions && !seedIsVersion) {
+            val isVersion = VERSIONS.containsMatchIn(s.title.original) || VERSIONS.containsMatchIn(s.title.latin)
+            if (isVersion) continue
+        }
         val k = key(s)
-        if (k in seenKeys) continue // the same song again, e.g. its video next to its audio track
+        // The same song again, such as its video next to its audio track.
+        if (k in seenKeys) continue
         if (settings.preferAudio && s.video && k in audioKeys) continue
         val ids = s.artists.mapNotNull { it.id }
         val reason = when {
@@ -53,7 +61,14 @@ fun filterRadio(
         when (settings.leash) {
             "close" -> if (reason == null) continue
             // Medium: other artists are allowed, but never more of them than of the seed's own circle.
-            "medium" -> if (reason == null) { if (offLeash >= onLeash) continue else offLeash++ } else onLeash++
+            "medium" -> {
+                if (reason == null) {
+                    if (offLeash >= onLeash) continue
+                    offLeash++
+                } else {
+                    onLeash++
+                }
+            }
         }
         seen.add(s.id)
         seenKeys.add(k)
@@ -63,5 +78,7 @@ fun filterRadio(
 }
 
 /** A page of a mix or another playlist being played: the radio filters apply, the leash doesn't, since there is no seed to drift from. */
-fun filterMix(candidates: List<Song>, already: List<Song>, bans: Bans, settings: RadioSettings): List<Song> =
-    filterRadio(candidates, null, emptySet(), already, bans, RadioSettings("free", settings.preferAudio, settings.hideVersions, settings.skipBanned))
+fun filterMix(candidates: List<Song>, already: List<Song>, bans: Bans, settings: RadioSettings): List<Song> {
+    val noLeash = RadioSettings("free", settings.preferAudio, settings.hideVersions, settings.skipBanned)
+    return filterRadio(candidates, null, emptySet(), already, bans, noLeash)
+}

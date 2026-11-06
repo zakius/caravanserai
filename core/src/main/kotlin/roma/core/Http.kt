@@ -22,10 +22,10 @@ class HttpResponse(val status: Int, private val headers: Map<String?, List<Strin
     fun text() = body.decodeToString()
 }
 
-/** A body over its limit; the same request would fail the same way, so it isn't retried. */
 /** No stream for a song. The message is the reason in plain words; [offline]: for want of a network, so worth retrying. */
 class StreamException(message: String, val offline: Boolean = false) : IOException(message)
 
+/** A body over its limit; the same request would fail the same way, so it isn't retried. */
 class ResponseTooLargeException(maxBytes: Int) : IllegalStateException("Response exceeded the $maxBytes byte limit")
 
 /**
@@ -41,32 +41,43 @@ suspend fun http(
     method: String = if (body == null) "GET" else "POST",
     timeoutMs: Int = 30_000,
     totalMs: Long = 60_000,
-    maxBytes: Int = 4 shl 20,
+    maxBytes: Int = 4 * 1024 * 1024,
     errorBody: Boolean = true,
     redirects: Boolean = true,
     stopWhen: ((String) -> Boolean)? = null,
 ): HttpResponse {
     val c = open(url, headers, method, timeoutMs, redirects)
-    return withTimeoutOrNull(totalMs) { coroutineScope {
-        val done = AtomicBoolean()
-        // Blocking reads don't see cancellation; disconnecting from here ends them. Undispatched, so a cancellation
-        // before it would first run still reaches the finally block.
-        val watch = launch(start = CoroutineStart.UNDISPATCHED) { try { awaitCancellation() } finally { if (!done.get()) c.disconnect() } }
-        try {
-            withContext(Dispatchers.IO) { exchange(c, body, maxBytes, errorBody, stopWhen) }
-        } catch (e: IOException) {
-            currentCoroutineContext().ensureActive()
-            throw e
-        } finally {
-            done.set(true)
-            watch.cancel()
+    val response = withTimeoutOrNull(totalMs) {
+        coroutineScope {
+            val done = AtomicBoolean()
+            // Blocking reads don't see cancellation, so disconnecting from here is what ends them. The watcher starts
+            // undispatched so that a cancellation arriving before it would first run still reaches its finally block.
+            val watch = launch(start = CoroutineStart.UNDISPATCHED) {
+                try {
+                    awaitCancellation()
+                } finally {
+                    if (!done.get()) c.disconnect()
+                }
+            }
+            try {
+                withContext(Dispatchers.IO) { exchange(c, body, maxBytes, errorBody, stopWhen) }
+            } catch (e: IOException) {
+                currentCoroutineContext().ensureActive()
+                throw e
+            } finally {
+                done.set(true)
+                watch.cancel()
+            }
         }
-    } } ?: throw SocketTimeoutException("$url took over $totalMs ms")
+    }
+    return response ?: throw SocketTimeoutException("$url took over $totalMs ms")
 }
 
 /** A blocking request: the status code and the body, an error's body included, up to [maxBytes]. */
-fun httpCall(url: String, body: ByteArray? = null, headers: Map<String, String> = emptyMap(), timeoutMs: Int = 20_000, maxBytes: Int = 4 shl 20): Pair<Int, String> {
-    val r = exchange(open(url, headers, if (body == null) "GET" else "POST", timeoutMs, true), body, maxBytes, true, null)
+fun httpCall(url: String, body: ByteArray? = null, headers: Map<String, String> = emptyMap(), timeoutMs: Int = 20_000, maxBytes: Int = 4 * 1024 * 1024): Pair<Int, String> {
+    val method = if (body == null) "GET" else "POST"
+    val connection = open(url, headers, method, timeoutMs, true)
+    val r = exchange(connection, body, maxBytes, true, null)
     return r.status to r.text()
 }
 
@@ -78,8 +89,15 @@ fun httpText(url: String, body: ByteArray? = null, headers: Map<String, String> 
 }
 
 /** [url] when it is HTTPS on the default port without user info, and [host] and [path] accept its host and path. */
-fun httpsUrl(url: String, host: (String) -> Boolean, path: (String) -> Boolean): URI? = runCatching { URI(url) }.getOrNull()?.takeIf {
-    it.scheme == "https" && (it.port == -1 || it.port == 443) && it.rawUserInfo == null && it.host?.let(host) == true && it.rawPath?.let(path) == true
+fun httpsUrl(url: String, host: (String) -> Boolean, path: (String) -> Boolean): URI? {
+    val uri = runCatching { URI(url) }.getOrNull() ?: return null
+    val defaultPort = uri.port == -1 || uri.port == 443
+    if (uri.scheme != "https" || !defaultPort || uri.rawUserInfo != null) return null
+    val uriHost = uri.host
+    if (uriHost == null || !host(uriHost)) return null
+    val uriPath = uri.rawPath
+    if (uriPath == null || !path(uriPath)) return null
+    return uri
 }
 
 private fun open(url: String, headers: Map<String, String>, method: String, timeoutMs: Int, redirects: Boolean) =
@@ -106,9 +124,11 @@ private fun exchange(c: HttpURLConnection, body: ByteArray?, maxBytes: Int, erro
         val declared = c.contentLengthLong
         if (stopWhen == null && declared > maxBytes) throw ResponseTooLargeException(maxBytes)
         // A read that stops early usually ends well before a full page's declared length, so it grows into it instead.
-        var bytes = ByteArray(minOf(maxOf(declared, 8192L), maxBytes.toLong(), if (stopWhen != null) 64L shl 10 else Long.MAX_VALUE).toInt())
+        val earlyStopCap = if (stopWhen != null) 64L * 1024 else Long.MAX_VALUE
+        val initialSize = minOf(maxOf(declared, 8192L), maxBytes.toLong(), earlyStopCap)
+        var bytes = ByteArray(initialSize.toInt())
         var size = 0
-        var nextCheck = 32 shl 10
+        var nextCheck = 32 * 1024
         while (true) {
             if (size == bytes.size) {
                 if (size == maxBytes) {
@@ -123,10 +143,15 @@ private fun exchange(c: HttpURLConnection, body: ByteArray?, maxBytes: Int, erro
             if (stopWhen != null && size >= nextCheck) {
                 nextCheck = size * 2
                 val prefix = bytes.decodeToString(endIndex = size)
-                // Ends the download: closing a half-read stream drops the connection instead of reading the rest.
-                if (stopWhen(prefix)) { c.disconnect(); return HttpResponse(status, c.headerFields, prefix.encodeToByteArray()) }
+                if (stopWhen(prefix)) {
+                    // Disconnecting ends the download. Closing a half-read stream drops the connection instead of
+                    // reading the rest.
+                    c.disconnect()
+                    return HttpResponse(status, c.headerFields, prefix.encodeToByteArray())
+                }
             }
         }
-        return HttpResponse(status, c.headerFields, if (size == bytes.size) bytes else bytes.copyOf(size))
+        val read = if (size == bytes.size) bytes else bytes.copyOf(size)
+        return HttpResponse(status, c.headerFields, read)
     }
 }

@@ -7,6 +7,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -22,11 +23,14 @@ interface BotGuardSession {
     suspend fun mint(identifier: String): String
     val expired: Boolean
     val dead: Boolean
-    /** Any thread. */
+    /** Safe to call from any thread. */
     fun close()
 }
 
-/** The platform can't run BotGuard at all (Android: a system WebView that fails on the page): no more tries this run. */
+/**
+ * The platform can't run BotGuard at all, for example an Android system WebView that fails on the page. roma stops
+ * trying for the rest of the run.
+ */
 class BotGuardBroken(message: String) : Exception(message)
 
 /**
@@ -44,14 +48,16 @@ class PoTokens(private val timeoutMs: Long, private val start: suspend () -> Bot
     private var view: BotGuardSession? = null
     private var visitor: String? = null
     private var streamingToken: String? = null
-    @Volatile private var broken = false // the platform can't run the page; don't try again this run
+    // Set when the platform can't run the page, so roma doesn't try again this run.
+    @Volatile private var broken = false
 
     override suspend fun getPoToken(videoId: String, visitorData: String, cookie: String?): PoTokenResult? {
         if (broken) return null
         return try {
             withTimeout(timeoutMs) { mint(videoId, visitorData, retried = false) }
         } catch (_: TimeoutCancellationException) {
-            reset() // the page's process may have been killed; the next song starts over
+            // The page's process may have been killed, so the next song starts over.
+            reset()
             null
         } catch (_: BotGuardBroken) {
             broken = true
@@ -59,7 +65,8 @@ class PoTokens(private val timeoutMs: Long, private val start: suspend () -> Bot
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
-            reset() // BotGuard failed or the page is gone: no token for this song (null, not a thrown lookup)
+            // BotGuard failed or the page is gone. This song plays without a token rather than failing the lookup.
+            reset()
             null
         }
     }
@@ -70,11 +77,20 @@ class PoTokens(private val timeoutMs: Long, private val start: suspend () -> Bot
             val fresh = retried || current == null || current.expired || current.dead || visitor != visitorData
             if (fresh) {
                 current?.close()
-                view = null; streamingToken = null; visitor = null
+                view = null
+                streamingToken = null
+                visitor = null
                 val created = start()
                 // The streaming token must be minted before any player token.
-                val token = try { created.mint(visitorData) } catch (t: Throwable) { created.close(); throw t }
-                view = created; streamingToken = token; visitor = visitorData
+                val token = try {
+                    created.mint(visitorData)
+                } catch (t: Throwable) {
+                    created.close()
+                    throw t
+                }
+                view = created
+                streamingToken = token
+                visitor = visitorData
             }
             Triple(view!!, streamingToken!!, fresh)
         }
@@ -82,14 +98,17 @@ class PoTokens(private val timeoutMs: Long, private val start: suspend () -> Bot
             v.mint(videoId)
         } catch (t: Throwable) {
             if (fresh) throw t
-            return mint(videoId, visitorData, retried = true) // the page may be gone after the app was in the background
+            // The page may be gone after the app was in the background, so retry once with a fresh one.
+            return mint(videoId, visitorData, retried = true)
         }
         return PoTokenResult(playerRequestToken = streaming, streamingDataToken = player, visitorData = visitorData)
     }
 
     private suspend fun reset() = lock.withLock {
         view?.close()
-        view = null; streamingToken = null; visitor = null
+        view = null
+        streamingToken = null
+        visitor = null
     }
 }
 
@@ -97,9 +116,11 @@ class PoTokens(private val timeoutMs: Long, private val start: suspend () -> Bot
 object BotGuard {
     const val API_KEY = "AIzaSyDyT5W0Jh49F30Pqqtyfdf7pDLFKLJoAnw"
     const val REQUEST_KEY = "O43z0dpjhgX20SCx4KAo"
+    private const val EXPIRY_MARGIN_SECONDS = 600
+    private const val SCRAMBLE_OFFSET = 97
     const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.3"
 
-    /** Blocking: a BotGuard request ("Create", then "GenerateIT"), as the page would send it. */
+    /** Sends a BotGuard request ("Create", then "GenerateIT") as the page would, blocking the calling thread. */
     fun request(url: String, body: String): String {
         val headers = mapOf(
             "User-Agent" to USER_AGENT,
@@ -113,25 +134,42 @@ object BotGuard {
         return text
     }
 
-    /** GenerateIT's answer: the integrity token as a Uint8Array literal, and when it expires (10 minutes early). */
+    /**
+     * Reads GenerateIT's answer: the integrity token as a Uint8Array literal, and the time it expires. The expiry is
+     * moved 10 minutes early so a token is never used right at its end.
+     */
     fun integrity(body: String): Pair<String, Long> {
         val data = Json.parseToJsonElement(body).jsonArray
-        return u8Array(base64(data[0].jsonPrimitive.content)) to System.currentTimeMillis() + (data[1].jsonPrimitive.long - 600) * 1000
+        val token = u8Array(base64(data[0].jsonPrimitive.content))
+        val lifetimeSeconds = data[1].jsonPrimitive.long - EXPIRY_MARGIN_SECONDS
+        val expiresAt = System.currentTimeMillis() + lifetimeSeconds * 1000
+        return token to expiresAt
     }
 
-    /** A minted token, as the page hands it over (its bytes joined by commas), in YouTube's URL-safe base64. */
-    fun token(u8: String): String =
-        Base64.getEncoder().encodeToString(u8.split(",").map { it.toInt().toByte() }.toByteArray()).replace('+', '-').replace('/', '_')
+    /** Converts a minted token from the page's form (its bytes joined by commas) to YouTube's URL-safe base64. */
+    fun token(u8: String): String {
+        val bytes = u8.split(",").map { number -> number.toInt().toByte() }.toByteArray()
+        val standard = Base64.getEncoder().encodeToString(bytes)
+        return standard.replace('+', '-').replace('/', '_')
+    }
 
-    /** The Create answer, maybe scrambled (base64, each byte minus 97), as the object runBotGuard takes. */
+    /**
+     * Turns the Create answer into the object runBotGuard takes. The answer may be scrambled: base64, with each byte
+     * lowered by 97.
+     */
     fun parseChallenge(raw: String): String {
         val outer = Json.parseToJsonElement(raw).jsonArray
-        val c = if (outer.size > 1 && (outer[1] as? JsonPrimitive)?.isString == true) {
-            Json.parseToJsonElement(base64(outer[1].jsonPrimitive.content).map { (it + 97).toByte() }.toByteArray().decodeToString()).jsonArray
+        val scrambled = outer.size > 1 && (outer[1] as? JsonPrimitive)?.isString == true
+        val c = if (scrambled) {
+            val bytes = base64(outer[1].jsonPrimitive.content).map { byte -> (byte + SCRAMBLE_OFFSET).toByte() }
+            Json.parseToJsonElement(bytes.toByteArray().decodeToString()).jsonArray
         } else {
             outer[0].jsonArray
         }
-        fun firstString(i: Int) = (c[i] as? JsonArray)?.firstOrNull { (it as? JsonPrimitive)?.isString == true } ?: JsonNull
+        fun firstString(i: Int): JsonElement {
+            val list = c[i] as? JsonArray ?: return JsonNull
+            return list.firstOrNull { item -> (item as? JsonPrimitive)?.isString == true } ?: JsonNull
+        }
         return JsonObject(
             mapOf(
                 "messageId" to JsonPrimitive(c[0].jsonPrimitive.content),
@@ -149,8 +187,11 @@ object BotGuard {
         ).toString()
     }
 
-    // YouTube's base64 variant: URL-safe, '.' for padding.
+    // YouTube's base64 variant is URL-safe and pads with '.'.
     fun base64(s: String): ByteArray = Base64.getDecoder().decode(s.replace('-', '+').replace('_', '/').replace('.', '='))
 
-    fun u8Array(bytes: ByteArray) = "new Uint8Array([" + bytes.joinToString(",") { (it.toInt() and 0xff).toString() } + "])"
+    fun u8Array(bytes: ByteArray): String {
+        val numbers = bytes.joinToString(",") { byte -> byte.toUByte().toString() }
+        return "new Uint8Array([$numbers])"
+    }
 }

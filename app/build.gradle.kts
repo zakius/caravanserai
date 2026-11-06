@@ -4,7 +4,7 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
-// The Japanese dictionary, downloaded as data (:core:dictZip): its version, its sha256 and where to fetch it.
+// The app downloads the Japanese dictionary as data (:core:dictZip). Its version and sha256 come from :core.
 evaluationDependsOn(":core")
 val dictVersion = project(":core").extra["dictRelease"] as String
 val dictSha256 = project(":core").extra["dictSha256"] as String
@@ -24,17 +24,17 @@ android {
         buildConfigField("String", "DICT_URL", "\"$dictBase/roma-dict-$dictVersion.zip\"")
         buildConfigField("String", "DICT_VERSION", "\"$dictVersion\"")
         buildConfigField("String", "DICT_SHA256", "\"$dictSha256\"")
-        // The dictionary app of roma ytm 0.1.57 and earlier, which roma ytm says can go (Flavor.kt).
+        // The separate dictionary app of roma ytm 0.1.57 and earlier, which roma ytm tells the user to uninstall (Flavor.kt).
         buildConfigField("String", "DICT_PACKAGE", "\"com.zakius.roma.dict\"")
         manifestPlaceholders["dictPackage"] = "com.zakius.roma.dict"
     }
 
-    // Two apps from one codebase (docs/subsonic.md, Two apps): roma ytm (the youtube flavor), YouTube Music only,
-    // released on GitHub; and caravan (subsonic), for Subsonic servers and Google Play, whose APK carries no YouTube code
-    // at all. Each flavor brings its own music source.
+    // Two apps come from one codebase (docs/subsonic.md, "Two apps"). roma ytm (the youtube flavor) plays YouTube Music
+    // only and is released on GitHub. caravan (the subsonic flavor) is for Subsonic servers and Google Play, and its APK
+    // carries no YouTube code at all. Each flavor brings its own music source.
     flavorDimensions += "app"
     productFlavors {
-        // Each app's name, id and slug: gradle.properties.
+        // Each app's name, id and slug come from gradle.properties.
         for (app in listOf("youtube", "subsonic")) create(app) {
             dimension = "app"
             val name = property("${app}App.name") as String
@@ -44,8 +44,8 @@ android {
             buildConfigField("String", "SLUG", "\"$slug\"")
             manifestPlaceholders += mapOf("appLabel" to name, "linkScheme" to slug)
         }
-        // Testing only: `-Proma.refuseVisionOs=true` acts as if YouTube refused the VISIONOS client (Streams.refuseVisionOs),
-        // so songs play through InnerTubeX's other clients. Never set for a release.
+        // For testing only, never for a release. `-Proma.refuseVisionOs=true` acts as if YouTube refused the VISIONOS
+        // client (Streams.refuseVisionOs), so songs play through InnerTubeX's other clients.
         getByName("youtube").buildConfigField("boolean", "REFUSE_VISIONOS", (findProperty("roma.refuseVisionOs") == "true").toString())
     }
 
@@ -67,13 +67,13 @@ android {
         targetCompatibility = JavaVersion.VERSION_21
     }
     buildFeatures { compose = true; buildConfig = true }
-    // The screens and playback logic, shared with the desktop app (:desktop); each flavor adds its source's own.
+    // The screens and playback logic, shared with the desktop app (:desktop). Each flavor adds its own music source's code.
     sourceSets["main"].kotlin.directories += "../shared/src/main/kotlin"
     sourceSets["youtube"].kotlin.directories += "../shared/src/youtube/kotlin"
     sourceSets["subsonic"].kotlin.directories += "../shared/src/subsonic/kotlin"
-    // The dictionary download, as on the desktop.
+    // The dictionary download code, shared with the desktop app.
     sourceSets["main"].kotlin.directories += "../shared/src/portable/kotlin"
-    // Only the app's languages: libraries bring strings for about 80 locales.
+    // Keep only the app's languages; libraries bring strings for about 80 locales.
     androidResources { localeFilters += setOf("en", "pl") }
     packaging {
         resources { excludes += setOf("META-INF/*.md", "META-INF/INDEX.LIST", "META-INF/DEPENDENCIES", "META-INF/*.kotlin_module", "kotlin/**", "DebugProbesKt.bin", "META-INF/*.version",
@@ -81,8 +81,8 @@ android {
             "pos.csv",
             // Four copies of the Apache License 2.0, which assets/LICENSE-2.0.txt already carries.
             "META-INF/androidx/**/LICENSE.txt") }
-        // androidx.graphics.path's native PathIterator for Android 13 and older: Compose ships it, R8 removes every caller.
-        // Without it the APK has no native code, so it suits every architecture.
+        // Compose ships androidx.graphics.path's native PathIterator for Android 13 and older, but R8 removes every caller.
+        // Without it the APK has no native code, so one APK suits every architecture.
         jniLibs { excludes += "**/libandroidx.graphics.path.so" }
     }
 }
@@ -101,5 +101,5 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.11.1")
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
-    implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.2") // ASUS FlipFont skip, App.kt
+    implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.2") // skips ASUS's FlipFont rebuild (App.kt)
 }

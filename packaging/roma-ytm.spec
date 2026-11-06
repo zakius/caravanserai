@@ -1,6 +1,7 @@
-# Fedora package around the tree tools/linux-packages.sh stages. Java comes from Fedora, so its fixes arrive with
-# system updates. As finimal's.
-# xz, as the .deb: Ubuntu's rpmbuild (CI) defaults to gzip, which leaves the package much bigger.
+# The Fedora package around the tree that tools/linux-packages.sh stages. Java comes from Fedora, so its fixes arrive
+# with system updates. This follows finimal's package.
+# Compressed with xz like the .deb, because Ubuntu's rpmbuild (used in CI) defaults to gzip, which leaves the package
+# much bigger.
 %global _binary_payload w9.xzdio
 
 Name:           roma-ytm
@@ -10,7 +11,7 @@ Summary:        YouTube Music, every title and lyric romanized
 License:        GPL-3.0-only
 URL:            https://github.com/zakius/roma
 ExclusiveArch:  x86_64
-# Skia's library would otherwise pull its every link as a requirement; Java's full JRE brings X11, fonts and sound.
+# Otherwise every library Skia links would become a requirement. Java's full JRE already brings X11, fonts and sound.
 AutoReqProv:    no
 Requires:       (java-25-openjdk or java-21-openjdk or java-latest-openjdk)
 Requires:       libglvnd-glx

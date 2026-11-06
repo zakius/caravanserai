@@ -88,8 +88,12 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlin.math.roundToInt
 
-// The few Material 3 pieces roma uses, under Material's names, built on Compose foundation: the library itself was
-// 170 KB of dex for them. Same colour roles, type scale and Android 12+ dynamic colours; simpler motion.
+// The few Material 3 pieces roma uses, under Material's names but built on Compose foundation, because the Material 3
+// library costs 170 KB of dex for them. They keep Material's colour roles, type scale and Android 12+ dynamic colours,
+// with simpler motion.
+
+// Material's opacity for disabled controls.
+private const val DISABLED_ALPHA = 0.38f
 
 class ColorScheme(
     val primary: Color, val onPrimary: Color, val inversePrimary: Color,
@@ -112,6 +116,7 @@ class ColorScheme(
 
 private fun c(argb: Long) = Color(argb)
 
+// Material 3's baseline colours, in the order of ColorScheme's parameters.
 fun lightColorScheme() = ColorScheme(
     c(0xFF6750A4), c(0xFFFFFFFF), c(0xFFD0BCFF), c(0xFFE8DEF8), c(0xFF1D192B), c(0xFFFEF7FF), c(0xFFFEF7FF), c(0xFF1D1B20), c(0xFF49454F),
     c(0xFFF3EDF7), c(0xFFFFFFFF), c(0xFFECE6F0), c(0xFF322F35), c(0xFFF5EFF7), c(0xFF79747E), c(0xFFCAC4D0), c(0xFFB3261E),
@@ -180,15 +185,25 @@ fun Text(
     val merged = style.merge(
         TextStyle(
             color = color.takeOrElse { style.color.takeOrElse { LocalContentColor.current } },
-            fontSize = fontSize, fontWeight = fontWeight, textAlign = textAlign ?: TextAlign.Unspecified, lineHeight = lineHeight,
+            fontSize = fontSize,
+            fontWeight = fontWeight,
+            textAlign = textAlign ?: TextAlign.Unspecified,
+            lineHeight = lineHeight,
         ),
     )
     BasicText(text, modifier, merged, onTextLayout, overflow, maxLines = maxLines)
 }
 
 @Composable
-fun Text(text: AnnotatedString, modifier: Modifier = Modifier, onTextLayout: ((TextLayoutResult) -> Unit)? = null, style: TextStyle = LocalTextStyle.current) =
-    BasicText(text, modifier, style.merge(TextStyle(color = style.color.takeOrElse { LocalContentColor.current })), onTextLayout)
+fun Text(
+    text: AnnotatedString,
+    modifier: Modifier = Modifier,
+    onTextLayout: ((TextLayoutResult) -> Unit)? = null,
+    style: TextStyle = LocalTextStyle.current,
+) {
+    val color = style.color.takeOrElse { LocalContentColor.current }
+    BasicText(text, modifier, style.merge(TextStyle(color = color)), onTextLayout)
+}
 
 @Composable
 fun Icon(icon: ImageVector, contentDescription: String?, modifier: Modifier = Modifier, tint: Color = LocalContentColor.current) =
@@ -196,8 +211,13 @@ fun Icon(icon: ImageVector, contentDescription: String?, modifier: Modifier = Mo
 
 @Composable
 fun Icon(painter: Painter, contentDescription: String?, modifier: Modifier = Modifier, tint: Color = LocalContentColor.current) {
-    val described = if (contentDescription != null) Modifier.semantics { this.contentDescription = contentDescription } else Modifier
-    Image(painter, null, modifier.then(described).defaultMinSize(24.dp, 24.dp), colorFilter = if (tint == Color.Unspecified) null else ColorFilter.tint(tint))
+    val described = if (contentDescription != null) {
+        Modifier.semantics { this.contentDescription = contentDescription }
+    } else {
+        Modifier
+    }
+    val colorFilter = if (tint == Color.Unspecified) null else ColorFilter.tint(tint)
+    Image(painter, null, modifier.then(described).defaultMinSize(24.dp, 24.dp), colorFilter = colorFilter)
 }
 
 @Composable
@@ -209,40 +229,66 @@ fun Surface(
     content: @Composable () -> Unit,
 ) {
     val fg = contentColorFor(color)
-    // Touches stop here, as on Material's Surface: nothing behind it reacts.
-    Box(modifier.clip(shape).background(color).pointerInput(Unit) {}, propagateMinConstraints = true) {
+    // Touches stop here, as on Material's Surface, so nothing behind it reacts.
+    val surfaceModifier = modifier
+        .clip(shape)
+        .background(color)
+        .pointerInput(Unit) {}
+    Box(surfaceModifier, propagateMinConstraints = true) {
         CompositionLocalProvider(LocalContentColor provides fg, content = content)
     }
 }
 
 @Composable
 private fun ButtonBase(
-    onClick: () -> Unit, modifier: Modifier, enabled: Boolean, bg: Color, fg: Color, padding: PaddingValues, content: @Composable RowScope.() -> Unit,
+    onClick: () -> Unit,
+    modifier: Modifier,
+    enabled: Boolean,
+    bg: Color,
+    fg: Color,
+    padding: PaddingValues,
+    content: @Composable RowScope.() -> Unit,
 ) {
     Row(
-        modifier.defaultMinSize(minHeight = 40.dp).clip(RoundedCornerShape(50)).background(bg)
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick).alpha(if (enabled) 1f else 0.38f).padding(padding),
+        modifier
+            .defaultMinSize(minHeight = 40.dp)
+            .clip(RoundedCornerShape(50))
+            .background(bg)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .alpha(if (enabled) 1f else DISABLED_ALPHA)
+            .padding(padding),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        CompositionLocalProvider(LocalContentColor provides fg, LocalTextStyle provides MaterialTheme.typography.labelLarge) { content() }
+        CompositionLocalProvider(LocalContentColor provides fg, LocalTextStyle provides MaterialTheme.typography.labelLarge) {
+            content()
+        }
     }
 }
 
 @Composable
-fun Button(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, content: @Composable RowScope.() -> Unit) =
-    ButtonBase(onClick, modifier, enabled, MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary, PaddingValues(24.dp, 10.dp), content)
+fun Button(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, content: @Composable RowScope.() -> Unit) {
+    val s = MaterialTheme.colorScheme
+    ButtonBase(onClick, modifier, enabled, s.primary, s.onPrimary, PaddingValues(24.dp, 10.dp), content)
+}
 
 @Composable
 fun TextButton(
-    onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true,
-    contentPadding: PaddingValues = PaddingValues(12.dp, 8.dp), content: @Composable RowScope.() -> Unit,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    contentPadding: PaddingValues = PaddingValues(12.dp, 8.dp),
+    content: @Composable RowScope.() -> Unit,
 ) = ButtonBase(onClick, modifier, enabled, Color.Transparent, MaterialTheme.colorScheme.primary, contentPadding, content)
 
 @Composable
 fun IconButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, content: @Composable () -> Unit) {
     Box(
-        modifier.size(48.dp).clip(CircleShape).clickable(enabled = enabled, role = Role.Button, onClick = onClick).alpha(if (enabled) 1f else 0.38f),
+        modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .alpha(if (enabled) 1f else DISABLED_ALPHA),
         contentAlignment = Alignment.Center,
     ) {
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant, content = content)
@@ -252,14 +298,27 @@ fun IconButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Bool
 @Composable
 fun Switch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val s = MaterialTheme.colorScheme
-    val toggle = if (onCheckedChange != null) Modifier.toggleable(checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange) else Modifier
+    val toggle = if (onCheckedChange != null) {
+        Modifier.toggleable(checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange)
+    } else {
+        Modifier
+    }
     Box(
-        modifier.then(toggle).size(52.dp, 32.dp).alpha(if (enabled) 1f else 0.38f).clip(RoundedCornerShape(50))
-            .background(if (checked) s.primary else s.surfaceContainerHigh).border(2.dp, if (checked) s.primary else s.outline, RoundedCornerShape(50)),
+        modifier
+            .then(toggle)
+            .size(52.dp, 32.dp)
+            .alpha(if (enabled) 1f else DISABLED_ALPHA)
+            .clip(RoundedCornerShape(50))
+            .background(if (checked) s.primary else s.surfaceContainerHigh)
+            .border(2.dp, if (checked) s.primary else s.outline, RoundedCornerShape(50)),
     ) {
         Box(
-            Modifier.align(if (checked) Alignment.CenterEnd else Alignment.CenterStart).padding(horizontal = if (checked) 4.dp else 8.dp)
-                .size(if (checked) 24.dp else 16.dp).clip(CircleShape).background(if (checked) s.onPrimary else s.outline),
+            Modifier
+                .align(if (checked) Alignment.CenterEnd else Alignment.CenterStart)
+                .padding(horizontal = if (checked) 4.dp else 8.dp)
+                .size(if (checked) 24.dp else 16.dp)
+                .clip(CircleShape)
+                .background(if (checked) s.onPrimary else s.outline),
         )
     }
 }
@@ -267,18 +326,33 @@ fun Switch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier: Mo
 @Composable
 fun Checkbox(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier: Modifier = Modifier) {
     val s = MaterialTheme.colorScheme
-    val toggle = if (onCheckedChange != null) Modifier.toggleable(checked, role = Role.Checkbox, onValueChange = onCheckedChange) else Modifier
+    val toggle = if (onCheckedChange != null) {
+        Modifier.toggleable(checked, role = Role.Checkbox, onValueChange = onCheckedChange)
+    } else {
+        Modifier
+    }
     Box(modifier.then(toggle).padding(11.dp).size(18.dp)) {
         Canvas(Modifier.fillMaxSize()) {
             val r = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx())
             if (checked) {
                 drawRoundRect(s.primary, cornerRadius = r)
                 val w = size.width
-                val path = androidx.compose.ui.graphics.Path().apply { moveTo(w * 0.2f, w * 0.52f); lineTo(w * 0.42f, w * 0.72f); lineTo(w * 0.8f, w * 0.3f) }
+                val path = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(w * 0.2f, w * 0.52f)
+                    lineTo(w * 0.42f, w * 0.72f)
+                    lineTo(w * 0.8f, w * 0.3f)
+                }
                 drawPath(path, s.onPrimary, style = Stroke(2.dp.toPx(), cap = StrokeCap.Square))
             } else {
-                drawRoundRect(s.onSurfaceVariant, cornerRadius = r, style = Stroke(2.dp.toPx()), topLeft = Offset(1.dp.toPx(), 1.dp.toPx()),
-                    size = androidx.compose.ui.geometry.Size(size.width - 2.dp.toPx(), size.height - 2.dp.toPx()))
+                val inset = 1.dp.toPx()
+                val boxSize = androidx.compose.ui.geometry.Size(size.width - 2.dp.toPx(), size.height - 2.dp.toPx())
+                drawRoundRect(
+                    s.onSurfaceVariant,
+                    cornerRadius = r,
+                    style = Stroke(2.dp.toPx()),
+                    topLeft = Offset(inset, inset),
+                    size = boxSize,
+                )
             }
         }
     }
@@ -297,7 +371,7 @@ fun RadioButton(selected: Boolean, onClick: (() -> Unit)?, modifier: Modifier = 
     }
 }
 
-/** A seek bar: drag or tap; [onValueChange] while moving, [onValueChangeFinished] when let go. */
+/** A seek bar that takes drags and taps. It calls [onValueChange] while moving and [onValueChangeFinished] when let go. */
 @Composable
 fun Slider(
     value: Float,
@@ -313,49 +387,91 @@ fun Slider(
     val finish by rememberUpdatedState(onValueChangeFinished)
     val range by rememberUpdatedState(valueRange)
     fun at(x: Float) = range.start + (x / width).coerceIn(0f, 1f) * (range.endInclusive - range.start)
-    val span = (valueRange.endInclusive - valueRange.start).takeIf { it > 0f } ?: 1f
+    val rawSpan = valueRange.endInclusive - valueRange.start
+    val span = if (rawSpan > 0f) rawSpan else 1f
     val fraction = ((value - valueRange.start) / span).coerceIn(0f, 1f)
-    val input = if (!enabled) Modifier else Modifier
-        .pointerInput(Unit) { detectTapGestures { change(at(it.x)); finish?.invoke() } }
-        .pointerInput(Unit) {
-            var x = 0f
-            detectHorizontalDragGestures(
-                onDragStart = { x = it.x; change(at(x)) },
-                onDragEnd = { finish?.invoke() },
-                onDragCancel = { finish?.invoke() },
-            ) { _, dx -> x += dx; change(at(x)) }
-        }
+    val input = if (!enabled) {
+        Modifier
+    } else {
+        Modifier
+            .pointerInput(Unit) {
+                detectTapGestures { tap ->
+                    change(at(tap.x))
+                    finish?.invoke()
+                }
+            }
+            .pointerInput(Unit) {
+                var x = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = { start ->
+                        x = start.x
+                        change(at(x))
+                    },
+                    onDragEnd = { finish?.invoke() },
+                    onDragCancel = { finish?.invoke() },
+                ) { _, dx ->
+                    x += dx
+                    change(at(x))
+                }
+            }
+    }
     Canvas(
-        modifier.onSizeChanged { width = it.width.toFloat().coerceAtLeast(1f) }.then(input)
+        modifier
+            .onSizeChanged { newSize -> width = newSize.width.toFloat().coerceAtLeast(1f) }
+            .then(input)
             .semantics {
                 progressBarRangeInfo = ProgressBarRangeInfo(value, valueRange)
-                if (enabled) setProgress { v -> change(v.coerceIn(range.start, range.endInclusive)); finish?.invoke(); true }
+                if (enabled) {
+                    setProgress { v ->
+                        change(v.coerceIn(range.start, range.endInclusive))
+                        finish?.invoke()
+                        true
+                    }
+                }
             },
     ) {
         val y = size.height / 2
         val x = size.width * fraction
         val track = 4.dp.toPx()
-        drawLine(if (enabled) s.secondaryContainer else s.outlineVariant, Offset(x, y), Offset(size.width, y), track, StrokeCap.Round)
-        drawLine(if (enabled) s.primary else s.outline, Offset(0f, y), Offset(x, y), track, StrokeCap.Round)
-        drawLine(if (enabled) s.primary else s.outline, Offset(x, y - 8.dp.toPx()), Offset(x, y + 8.dp.toPx()), 4.dp.toPx(), StrokeCap.Round)
+        val restColor = if (enabled) s.secondaryContainer else s.outlineVariant
+        val doneColor = if (enabled) s.primary else s.outline
+        drawLine(restColor, Offset(x, y), Offset(size.width, y), track, StrokeCap.Round)
+        drawLine(doneColor, Offset(0f, y), Offset(x, y), track, StrokeCap.Round)
+        drawLine(doneColor, Offset(x, y - 8.dp.toPx()), Offset(x, y + 8.dp.toPx()), 4.dp.toPx(), StrokeCap.Round)
     }
 }
 
 @Composable
 fun TabRow(selectedTabIndex: Int, content: @Composable RowScope.() -> Unit) {
-    Row(Modifier.fillMaxWidth().height(48.dp).background(MaterialTheme.colorScheme.surface), content = content)
+    val rowModifier = Modifier
+        .fillMaxWidth()
+        .height(48.dp)
+        .background(MaterialTheme.colorScheme.surface)
+    Row(rowModifier, content = content)
 }
 
 @Composable
 fun RowScope.Tab(selected: Boolean, onClick: () -> Unit, text: @Composable () -> Unit) {
     val s = MaterialTheme.colorScheme
-    Box(Modifier.weight(1f).fillMaxHeight().selectable(selected, role = Role.Tab, onClick = onClick), contentAlignment = Alignment.Center) {
+    val tabModifier = Modifier
+        .weight(1f)
+        .fillMaxHeight()
+        .selectable(selected, role = Role.Tab, onClick = onClick)
+    Box(tabModifier, contentAlignment = Alignment.Center) {
         CompositionLocalProvider(
             LocalContentColor provides if (selected) s.primary else s.onSurfaceVariant,
             LocalTextStyle provides MaterialTheme.typography.titleSmall,
             content = text,
         )
-        if (selected) Box(Modifier.align(Alignment.BottomCenter).width(48.dp).height(3.dp).clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp)).background(s.primary))
+        if (selected) {
+            val indicator = Modifier
+                .align(Alignment.BottomCenter)
+                .width(48.dp)
+                .height(3.dp)
+                .clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
+                .background(s.primary)
+            Box(indicator)
+        }
     }
 }
 
@@ -364,8 +480,12 @@ fun FilterChip(selected: Boolean, onClick: () -> Unit, label: @Composable () -> 
     val s = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(8.dp)
     Box(
-        Modifier.height(32.dp).clip(shape).then(if (selected) Modifier.background(s.secondaryContainer) else Modifier.border(1.dp, s.outlineVariant, shape))
-            .selectable(selected, role = Role.Checkbox, onClick = onClick).padding(horizontal = 16.dp),
+        Modifier
+            .height(32.dp)
+            .clip(shape)
+            .then(if (selected) Modifier.background(s.secondaryContainer) else Modifier.border(1.dp, s.outlineVariant, shape))
+            .selectable(selected, role = Role.Checkbox, onClick = onClick)
+            .padding(horizontal = 16.dp),
         contentAlignment = Alignment.Center,
     ) {
         CompositionLocalProvider(
@@ -382,7 +502,16 @@ fun CircularProgressIndicator() {
     val spin by rememberInfiniteTransition().animateFloat(0f, 360f, infiniteRepeatable(tween(1100, easing = LinearEasing)))
     Canvas(Modifier.size(40.dp).semantics { progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate }) {
         val w = 4.dp.toPx()
-        drawArc(color, spin, 270f, false, topLeft = Offset(w / 2, w / 2), size = androidx.compose.ui.geometry.Size(size.width - w, size.height - w), style = Stroke(w, cap = StrokeCap.Round))
+        val arcSize = androidx.compose.ui.geometry.Size(size.width - w, size.height - w)
+        drawArc(
+            color,
+            spin,
+            270f,
+            false,
+            topLeft = Offset(w / 2, w / 2),
+            size = arcSize,
+            style = Stroke(w, cap = StrokeCap.Round),
+        )
     }
 }
 
@@ -398,7 +527,11 @@ fun AlertDialog(
     text: @Composable () -> Unit = {},
 ) {
     Dialog(onDismissRequest = onDismissRequest) {
-        Surface(Modifier.widthIn(min = 280.dp, max = 560.dp), shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+        Surface(
+            Modifier.widthIn(min = 280.dp, max = 560.dp),
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ) {
             Column(Modifier.padding(24.dp)) {
                 CompositionLocalProvider(LocalTextStyle provides MaterialTheme.typography.headlineSmall, content = title)
                 Spacer(Modifier.height(16.dp))
@@ -410,7 +543,10 @@ fun AlertDialog(
                     )
                 }
                 Spacer(Modifier.height(24.dp))
-                Row(Modifier.align(Alignment.End), horizontalArrangement = Arrangement.spacedBy(8.dp)) { dismissButton(); confirmButton() }
+                Row(Modifier.align(Alignment.End), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    dismissButton()
+                    confirmButton()
+                }
             }
         }
     }
@@ -420,23 +556,45 @@ class SheetState
 @Composable
 fun rememberModalBottomSheetState(skipPartiallyExpanded: Boolean = true) = remember { SheetState() }
 
-/** A menu from the bottom: tap outside, Back or a drag down closes it. Always fully open. */
+/** A menu from the bottom that a tap outside, Back or a drag down closes. It always opens fully. */
 @Composable
 fun ModalBottomSheet(onDismissRequest: () -> Unit, sheetState: SheetState, content: @Composable ColumnScope.() -> Unit) {
     Dialog(onDismissRequest = onDismissRequest, properties = sheetDialogProperties) {
         var drag by remember { mutableFloatStateOf(0f) }
-        Box(Modifier.fillMaxSize().clickable(interactionSource = null, indication = null, onClick = onDismissRequest), contentAlignment = Alignment.BottomCenter) {
+        val scrim = Modifier
+            .fillMaxSize()
+            .clickable(interactionSource = null, indication = null, onClick = onDismissRequest)
+        Box(scrim, contentAlignment = Alignment.BottomCenter) {
             Surface(
-                Modifier.widthIn(max = 640.dp).fillMaxWidth().offset { IntOffset(0, drag.roundToInt()) }
+                Modifier
+                    .widthIn(max = 640.dp)
+                    .fillMaxWidth()
+                    .offset { IntOffset(0, drag.roundToInt()) }
                     .clickable(interactionSource = null, indication = null) {}
                     .pointerInput(Unit) {
-                        detectVerticalDragGestures(onDragEnd = { if (drag > 100.dp.toPx()) onDismissRequest() else drag = 0f }) { _, dy -> drag = (drag + dy).coerceAtLeast(0f) }
+                        detectVerticalDragGestures(
+                            onDragEnd = {
+                                if (drag > 100.dp.toPx()) {
+                                    onDismissRequest()
+                                } else {
+                                    drag = 0f
+                                }
+                            },
+                        ) { _, dy ->
+                            drag = (drag + dy).coerceAtLeast(0f)
+                        }
                     },
                 shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
                 color = MaterialTheme.colorScheme.surfaceContainer,
             ) {
                 Column(Modifier.navigationBarsPadding().verticalScroll(rememberScrollState())) {
-                    Box(Modifier.padding(vertical = 22.dp).align(Alignment.CenterHorizontally).size(32.dp, 4.dp).clip(RoundedCornerShape(2.dp)).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)))
+                    val handle = Modifier
+                        .padding(vertical = 22.dp)
+                        .align(Alignment.CenterHorizontally)
+                        .size(32.dp, 4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                    Box(handle)
                     content()
                 }
             }

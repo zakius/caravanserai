@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Recompresses an unsigned APK with Zopfli (pigz -11), the strongest deflate: Android reads only
-stored and deflate entries. Deflated entries and the native libraries (useLegacyPackaging, so
-extractNativeLibs) are recompressed; stored ones (resources.arsc) stay stored. zipalign and
+"""Recompresses an unsigned APK with Zopfli (pigz -11), the strongest deflate, since Android reads
+only stored and deflated entries. Deflated entries and the native libraries (useLegacyPackaging,
+so extractNativeLibs) are recompressed; stored ones (resources.arsc) stay stored. zipalign and
 signing come after. Taken from tennessine's tools/repack_apk.py.
 
 It also embeds AGP's baseline profile at assets/art-profile/baseline.prof, where ART (Android 15+) reads it when the
@@ -43,8 +43,8 @@ def main():
             out.external_attr = info.external_attr
             out.compress_type = zipfile.ZIP_DEFLATED if deflate else zipfile.ZIP_STORED
             dst.writestr(out, src.read(info))
-        # The profile for API 31+ (format 015) from the .dm next to the input APK; it names the dex files by checksum,
-        # and the repack doesn't change their bytes.
+        # Takes the profile for API 31 and later (format 015) from the .dm next to the input APK. It names the dex files
+        # by checksum, which stays valid because the repack doesn't change their bytes.
         built = os.path.dirname(sys.argv[1])
         with open(os.path.join(built, 'output-metadata.json')) as f:
             dm = next(p['baselineProfiles'][0] for p in json.load(f)['baselineProfiles'] if p['minApi'] >= 31)

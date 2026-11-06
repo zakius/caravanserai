@@ -33,6 +33,8 @@ class MixesTest {
         fun song(id: String, title: String, artist: String) = Song(id, Text(title, title), listOf(Named(artist, Text(artist, artist))))
         val page = listOf(song("1", "a", "Z"), song("2", "b (Live)", "Y"), song("3", "c", "X"), song("4", "d", "W"), song("1", "a", "Z"))
         val got = filterMix(page, listOf(song("4", "d", "W")), Bans(artists = setOf("X")), RadioSettings(leash = "close"))
-        assertEquals(listOf("1"), got.map { it.id }) // live version, banned artist, already queued and repeats dropped; Z kept off any leash
+        // The live version, the banned artist, the queued song and the repeat are dropped. Mix songs ignore the leash,
+        // so Z stays.
+        assertEquals(listOf("1"), got.map { it.id })
     }
 }

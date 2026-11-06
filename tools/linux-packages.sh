@@ -1,8 +1,9 @@
 #!/bin/bash
-# The desktop app for Debian/Ubuntu and Fedora: dist/roma-ytm_<version>_amd64.deb and dist/roma-ytm-<version>-1.x86_64.rpm,
-# from the release app image's app files (ProGuard-shrunk). Both install roma ytm to /opt/roma-ytm with /usr/bin/roma-ytm and run on
-# the distribution's Java 21+, so its fixes come with system updates; as finimal's packages.
-# rpmbuild comes from the host (Ubuntu: the rpm package) or, without it, a Fedora container.
+# Builds the desktop app for Debian/Ubuntu and Fedora: dist/roma-ytm_<version>_amd64.deb and
+# dist/roma-ytm-<version>-1.x86_64.rpm, from the app files of the ProGuard-shrunk release app image. Both install roma
+# ytm to /opt/roma-ytm with /usr/bin/roma-ytm and run on the distribution's Java 21 or later, so Java fixes arrive with
+# system updates. This follows finimal's packages.
+# rpmbuild comes from the host (on Ubuntu, the rpm package) or, if the host has none, from a Fedora container.
 # Usage: tools/linux-packages.sh [--no-gradle]
 set -euo pipefail
 cd "$(dirname "$0")/.."

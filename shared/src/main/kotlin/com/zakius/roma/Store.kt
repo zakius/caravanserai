@@ -25,7 +25,9 @@ object Startup {
     private val later = ArrayList<() -> Unit>()
 
     /** Runs [f] once roma's first frame is drawn (or now, if it was). Main thread only. */
-    fun later(f: () -> Unit) { if (started) f() else later += f }
+    fun later(f: () -> Unit) {
+        if (started) f() else later += f
+    }
 
     /** The first frame is drawn, or the media service started without a screen: the deferred work runs now. */
     fun go() {
@@ -59,38 +61,50 @@ object Store {
 
     val icu: Icu = platformIcu
 
-    // The dictionary is memory-mapped in place where Dictionary keeps it (the app's own storage) and stays out
-    // of the heap. While it is missing, or Japanese is in the scripts the user reads (then nothing would show the
-    // romaji), Japanese gets kana only and the dictionary isn't loaded.
+    // The dictionary is memory-mapped in place, in the app's own storage where Dictionary keeps it, so it stays out
+    // of the heap. While it is missing, or while the user reads Japanese as written (nothing would show the romaji
+    // then), Japanese gets kana only and the dictionary isn't loaded.
     val romanizer = Romanizer(icu) {
         try {
             check("ja" !in readScripts) { "Japanese is read as written" }
-            Dictionary.map()
-                .also {
-                    // Names romanized without it, in this run or an earlier one, are redone.
-                    if (prefs.getBoolean("dict.failed", false)) {
-                        prefs.edit().remove("dict.failed").apply()
-                        postMain { Playback.romanizationChanged(); dataChanged() }
-                    }
+            val dictionary = Dictionary.map()
+            // Names romanized without the dictionary, in this run or an earlier one, are redone.
+            if (prefs.getBoolean("dict.failed", false)) {
+                prefs.edit().remove("dict.failed").apply()
+                postMain {
+                    Playback.romanizationChanged()
+                    dataChanged()
                 }
+            }
+            dictionary
         } catch (e: Exception) {
             prefs.edit().putBoolean("dict.failed", true).apply()
             throw e
         }
     }
 
-    /** [files]: user storage; [cache]: what may be fetched or rebuilt again. */
     fun init(prefs: Prefs, files: File, cache: File) {
         this.prefs = prefs
         this.files = files
         this.cache = cache
         pages = File(cache, "pages")
-        // Up to 0.1.26 these sat in filesDir and the mixes in prefs. Copied, not renamed: a renamed file keeps its
-        // group, and Android counts a file as cache by its group. The dictionary unpacked by 0.1.27 and earlier goes.
-        // Off the main thread, before the index and the liked songs are read from the cache folder.
+        // Cleans up after older versions, off the main thread and before the index and the liked songs are read from
+        // the cache folder. Up to 0.1.26 these files sat in filesDir and the mixes in prefs. They are copied, not
+        // renamed, because a renamed file keeps its group and Android counts a file as cache by its group. The
+        // dictionary unpacked by 0.1.27 and earlier is deleted.
         indexThread.execute {
-            listOf(files, cache).flatMap { it.listFiles().orEmpty().toList() }.filter { it.name.startsWith("sudachi") }.forEach { it.delete() }
-            for (n in listOf("index.json", "liked.json", "streams.txt")) File(files, n).takeIf { it.exists() }?.let { runCatching { it.copyTo(File(cache, n), true) }; it.delete() }
+            for (dir in listOf(files, cache)) {
+                for (f in dir.listFiles().orEmpty()) {
+                    if (f.name.startsWith("sudachi")) f.delete()
+                }
+            }
+            for (n in listOf("index.json", "liked.json", "streams.txt")) {
+                val old = File(files, n)
+                if (old.exists()) {
+                    runCatching { old.copyTo(File(cache, n), true) }
+                    old.delete()
+                }
+            }
             File(cache, "http_cache").deleteRecursively() // OkHttp's cache, up to 0.1.39
             File(cache, "ktor_cache").deleteRecursively() // Ktor's cache, up to 0.1.50
             prefs.edit().remove("home.mixes").apply()
@@ -98,21 +112,30 @@ object Store {
         romanizer.settings = romanizeSettings()
         romanizer.loadOverrides(indexThread.submit<List<Override>> { loadOverrides() })
         romanizer.cache = Names
-        // After the first frame: new names come with network results, well after it, and start-up has enough reads.
+        // Loaded after the first frame: new names arrive with network results well after it, and start-up already
+        // has enough disk reads.
         Startup.later { Names.load(File(cache, "names.json")) }
         backend.init()
         Startup.later {
             indexThread.execute {
-                index.addAll(runCatching { json.decodeFromString<List<Song>>(File(cache, "index.json").readText()) }.getOrDefault(emptyList()))
+                val saved = runCatching { json.decodeFromString<List<Song>>(File(cache, "index.json").readText()) }
+                index.addAll(saved.getOrDefault(emptyList()))
                 runCatching { File(files, "played.txt").forEachLine { played.add(it) } }
             }
         }
     }
 
-    // Reading version subscribes the calling composable, so it redraws when set() changes a setting.
-    // SharedPreferences alone isn't observable, and skipped composables (Switch1, Options) never saw the change.
-    fun str(key: String, def: String): String { version; return prefs.getString(key, def) ?: def }
-    fun bool(key: String, def: Boolean): Boolean { version; return prefs.getBoolean(key, def) }
+    // Reading [version] subscribes the calling composable, so it redraws when set() changes a setting.
+    // SharedPreferences alone isn't observable, and skipped composables such as Switch1 and Options would miss the change.
+    fun str(key: String, def: String): String {
+        version
+        return prefs.getString(key, def) ?: def
+    }
+
+    fun bool(key: String, def: Boolean): Boolean {
+        version
+        return prefs.getBoolean(key, def)
+    }
 
     fun set(key: String, value: Any?) {
         prefs.edit().apply {
@@ -127,8 +150,10 @@ object Store {
             Playback.romanizationChanged()
         }
         if (key == READ_KEY) {
-            Playback.romanizationChanged() // the notification's title follows
-            romanizer.retryDictionary() // Japanese read as written doesn't load the dictionary; romanized again, it does
+            // The notification's title follows the scripts the user reads.
+            Playback.romanizationChanged()
+            // Japanese read as written doesn't load the dictionary, so Japanese romanized again must load it.
+            romanizer.retryDictionary()
         }
         if (backend.changes(key) or key.startsWith("rom.")) dataChanged()
         // A source that asks for lyrics by what they show (backend.lyricsVariant) loads the song's again.
@@ -142,20 +167,24 @@ object Store {
         get() = runCatching { json.decodeFromString<List<Item>>(File(cache, "mixes.json").readText()) }.getOrNull()
         set(v) { runCatching { File(cache, "mixes.json").writeText(json.encodeToString(v)) } }
 
-    // ---- Pages on disk: the last copy of Home, the library tabs and pages, shown at once on the next start ----
-
+    // The last copy of Home, the library tabs and pages is kept on disk and shown at once on the next start.
     // Pages are read, written and dropped on their own thread, in order, so a read never sees a dropped page.
     private val pageThread = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     private fun pageFile(key: String) = File(pages, key.replace(Regex("[^A-Za-z0-9_-]"), "_") + ".json")
 
     /** Blocking: call it off the main thread. */
-    fun <T> readPage(key: String, serializer: KSerializer<T>): T? =
-        pageThread.submit<T?> { runCatching { json.decodeFromString(serializer, pageFile(key).readText()) }.getOrNull() }.get()
+    fun <T> readPage(key: String, serializer: KSerializer<T>): T? {
+        val task = pageThread.submit<T?> {
+            runCatching { json.decodeFromString(serializer, pageFile(key).readText()) }.getOrNull()
+        }
+        return task.get()
+    }
 
     fun <T> writePage(key: String, value: T, serializer: KSerializer<T>) = pageThread.execute {
         pages.mkdirs()
-        runCatching { pageFile(key).writeText(json.encodeToString(serializer, value)) } // a full disk only loses the copy
+        // A failed write, such as on a full disk, only loses the copy.
+        runCatching { pageFile(key).writeText(json.encodeToString(serializer, value)) }
     }
 
     /** What pages hold changed (account, romanization): the disk copies go, and open pages load again. */
@@ -163,8 +192,6 @@ object Store {
         pageThread.execute { pages.listFiles()?.forEach { it.delete() } }
         dataVersion++
     }
-
-    // ---- Romanization ----
 
     /** Changes with every romanization setting or correction change; it keys the kept romanized lyrics. */
     val romanizationVersion get() = prefs.getInt("rom.cacheVersion", 0)
@@ -212,7 +239,8 @@ object Store {
     fun setOverrides(list: List<Override>) {
         // Written beside and renamed over: a full disk or a kill mid-write keeps the old corrections.
         val tmp = File(overridesFile.path + ".tmp")
-        if (runCatching { tmp.writeText(json.encodeToString(list)) }.isFailure || !tmp.renameTo(overridesFile)) {
+        val written = runCatching { tmp.writeText(json.encodeToString(list)) }.isSuccess
+        if (!written || !tmp.renameTo(overridesFile)) {
             toast("Couldn't save the correction: storage is full or not writable", long = true)
             return
         }
@@ -222,16 +250,20 @@ object Store {
         version++
     }
 
-    fun exportOverrides(): String = overridesFile.takeIf { it.exists() }?.readText() ?: "[]"
-
-    // ---- Display ----
+    fun exportOverrides(): String {
+        val file = overridesFile
+        if (!file.exists()) return "[]"
+        return file.readText()
+    }
 
     /** Scripts the user reads ("ja", "zh", "ko", "cyrillic", "greek", "other"): text only in those shows as written. */
     val readScripts: Set<String> get() = str(READ_KEY, "").split(',').filter { it.isNotEmpty() }.toSet()
 
     fun reads(original: String, siblings: List<String> = emptyList()): Boolean {
         val read = readScripts
-        return read.isNotEmpty() && romanizer.scripts(original, siblings).let { it.isNotEmpty() && read.containsAll(it) }
+        if (read.isEmpty()) return false
+        val scripts = romanizer.scripts(original, siblings)
+        return scripts.isNotEmpty() && read.containsAll(scripts)
     }
 
     /** The form a single-line surface (notification, menu) shows: the original in a script the user reads, else Latin. */
@@ -249,25 +281,40 @@ object Store {
     const val PLACE_KEY = "display.place"
 
     /**
-     * Where romanization goes everywhere: "below", "above" (ruby) or "custom" (the per-surface keys). Someone who set a
-     * per-surface key before this setting existed keeps it: custom.
+     * Where romanization goes on every surface: "below", "above" (ruby) or "custom" (the per-surface keys). The default
+     * is custom for someone who set a per-surface key before this setting existed, so they keep their choice.
      */
-    val place get() = str(PLACE_KEY, if (listOf("display.list", "display.player", "lyrics.layout").any(prefs::contains)) "custom" else "below")
+    val place: String
+        get() {
+            val hasPerSurfaceKey = listOf("display.list", "display.player", "lyrics.layout").any(prefs::contains)
+            return str(PLACE_KEY, if (hasPerSurfaceKey) "custom" else "below")
+        }
 
     /** "romanized", "both", "ruby" or "original". */
     val listMode get() = mode("display.list")
     val playerMode get() = mode("display.player")
-    val lyricsRuby get() = when (place) { "below" -> false; "above" -> true; else -> str("lyrics.layout", "lines") == "ruby" }
+    val lyricsRuby get() = when (place) {
+        "below" -> false
+        "above" -> true
+        else -> str("lyrics.layout", "lines") == "ruby"
+    }
 
-    private fun mode(key: String) = when (place) { "below" -> "both"; "above" -> "ruby"; else -> str(key, "both") }
-
-    // ---- Bans ----
+    private fun mode(key: String) = when (place) {
+        "below" -> "both"
+        "above" -> "ruby"
+        else -> str(key, "both")
+    }
 
     var banned: List<Banned>
         get() = runCatching { json.decodeFromString<List<Banned>>(str("bans", "[]")) }.getOrDefault(emptyList())
         set(v) = set("bans", json.encodeToString(v))
 
-    fun bans() = banned.let { b -> Bans(b.filter { it.kind == "song" }.map { it.id }.toSet(), b.filter { it.kind == "artist" }.map { it.id }.toSet()) }
+    fun bans(): Bans {
+        val all = banned
+        val songs = all.filter { it.kind == "song" }.map { it.id }.toSet()
+        val artists = all.filter { it.kind == "artist" }.map { it.id }.toSet()
+        return Bans(songs, artists)
+    }
 
     fun ban(kind: String, id: String, name: String) {
         banned = banned.filterNot { it.kind == kind && it.id == id } + Banned(kind, id, name)
@@ -277,8 +324,6 @@ object Store {
         banned = banned.filterNot { it.kind == kind && it.id == id }
     }
 
-    // ---- Radio and queue ----
-
     fun radioSettings() = RadioSettings(
         leash = str("radio.leash", "free"),
         preferAudio = bool("radio.preferAudio", true),
@@ -287,8 +332,6 @@ object Store {
     )
 
     val stopAtEnd get() = bool("queue.stopAtEnd", false)
-
-    // ---- Lyrics ----
 
     /** Providers in the user's order. */
     fun lyricsOrder(): List<LyricsProvider> {
@@ -309,12 +352,13 @@ object Store {
         return if (set == "device") listOf(java.util.Locale.getDefault().language, "en").distinct() else listOf(set)
     }
 
-    // ---- Local index: every song that entered the app; the played ones are searchable by their Latin form ----
-
-    // The index is read, changed and saved only on its own thread, so a tap never waits for it: with 5000 songs, loading
-    // took about 100 ms of app start and each save about 15 ms. Saves that queue up behind each other are written once.
+    // The local index holds every song that entered the app, newest first, and the played ones are searchable by their
+    // Latin form. It is read, changed and saved only on its own thread, so a tap never waits for it: with a full index,
+    // loading costs about 100 ms and each save about 15 ms. Saves that queue up behind each other are written once.
     private val index = ArrayList<Song>()
-    // Ids of songs played past the scrobble point; "Seen before" shows only these. In filesDir: Android doesn't clear it.
+    private const val INDEX_SIZE = 5000
+    // Ids of songs played past the scrobble point; "Seen before" shows only these. They are kept in [files], which
+    // Android doesn't clear.
     private val played = HashSet<String>()
     private val indexThread = java.util.concurrent.Executors.newSingleThreadExecutor()
 
@@ -326,8 +370,9 @@ object Store {
     object Names : roma.core.RomanizeCache {
         // ponytail: 6,000 names (about 400 KB on disk), least recently used dropped; enough for Home, the library and
         // the queue. A bigger library just romanizes its rarely seen names again.
+        private const val MAX_NAMES = 6000
         private val map = object : LinkedHashMap<String, String>(1024, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>) = size > 6000
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>) = size > MAX_NAMES
         }
         @Volatile private var ready = false
         private var file: File? = null
@@ -338,12 +383,14 @@ object Store {
             file = f
             indexThread.execute {
                 val kept = runCatching { json.decodeFromString<Map<String, String>>(f.readText()) }.getOrNull()
-                synchronized(map) { if (kept?.get("") == stamp) map.putAll(kept - "") }
+                synchronized(map) {
+                    if (kept?.get("") == stamp) map.putAll(kept - "")
+                }
                 ready = true
             }
         }
 
-        // Before the file is read, a name is romanized as usual: nothing waits for the cache.
+        // Until the file is read, every lookup misses and names are romanized as usual, so nothing waits for the cache.
         override fun get(key: String) = if (!ready) null else synchronized(map) { map[key] }
 
         override fun put(key: String, value: String) {
@@ -353,16 +400,19 @@ object Store {
                 if (saveQueued) return
                 saveQueued = true
             }
-            // Written once a burst of new names (a page of results) is done.
+            // The delay lets a burst of new names, such as a page of results, be written once.
             postMain(2_000) { indexThread.execute(::save) }
         }
 
         private fun save() {
-            val copy = synchronized(map) { saveQueued = false; map.toMap() }
+            val copy = synchronized(map) {
+                saveQueued = false
+                map.toMap()
+            }
             runCatching { file?.writeText(json.encodeToString(copy + ("" to stamp))) }
         }
 
-        /** After a romanization change: the kept names no longer apply. */
+        /** Called after a romanization change, when the kept names no longer apply. */
         fun forget() {
             synchronized(map) { map.clear() }
             indexThread.execute { file?.delete() }
@@ -370,8 +420,8 @@ object Store {
     }
     private var saveQueued = false
 
-    /** Blocking: call it off the main thread. */
-    fun anySong(): Song? = indexThread.submit<Song?> { index.firstOrNull() }.get() // the newest: old ones may be gone
+    /** Blocking: call it off the main thread. Returns the newest song, because older ones may no longer exist. */
+    fun anySong(): Song? = indexThread.submit<Song?> { index.firstOrNull() }.get()
 
     fun remember(songs: List<Song>) {
         if (songs.isEmpty()) return
@@ -379,7 +429,7 @@ object Store {
             val ids = songs.map { it.id }.toSet()
             index.removeAll { it.id in ids }
             index.addAll(0, songs)
-            while (index.size > 5000) index.removeAt(index.size - 1)
+            while (index.size > INDEX_SIZE) index.removeAt(index.size - 1)
             if (!saveQueued) {
                 saveQueued = true
                 indexThread.execute {
@@ -393,12 +443,25 @@ object Store {
     /** [song] was really listened to: it stays in the index, at the front, and shows under "Seen before". */
     fun played(song: Song) {
         remember(listOf(song))
-        indexThread.execute { if (played.add(song.id)) runCatching { File(files, "played.txt").appendText(song.id + "\n") } }
+        indexThread.execute {
+            if (played.add(song.id)) {
+                runCatching { File(files, "played.txt").appendText(song.id + "\n") }
+            }
+        }
     }
 
-    /** Blocking: call it off the main thread. The stored Latin forms date from when each song was seen; the hits are
-     *  romanized again so they follow today's rules. */
-    fun searchLocal(q: String): List<Song> = indexThread.submit<List<Song>> {
-        index.mapNotNull { s -> if (s.id !in played) null else matchDistance(s, q)?.let { s to it } }.sortedBy { it.second }.take(20).map { it.first }
-    }.get().map { romanizer.again(it) }
+    /**
+     * Blocking: call it off the main thread. The stored Latin forms date from when each song was seen, so the hits are
+     * romanized again to follow today's rules.
+     */
+    fun searchLocal(q: String): List<Song> {
+        val task = indexThread.submit<List<Song>> {
+            val hits = index.mapNotNull { s ->
+                val distance = if (s.id in played) matchDistance(s, q) else null
+                if (distance == null) null else s to distance
+            }
+            hits.sortedBy { it.second }.take(20).map { it.first }
+        }
+        return task.get().map { romanizer.again(it) }
+    }
 }

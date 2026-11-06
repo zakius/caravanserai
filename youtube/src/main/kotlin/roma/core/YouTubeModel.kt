@@ -8,12 +8,20 @@ fun Romanizer.song(item: SongItem): Song {
     val artistId = item.artists.firstOrNull { it.id != null }?.id
     val title = text(item.title, artistNames + listOfNotNull(albumName), item.id, artistId, titleOf = true)
     val artists = item.artists.map { a -> Named(a.id, text(a.name, listOf(item.title) + listOfNotNull(albumName), item.id, a.id)) }
-    val album = item.album?.let { Named(it.id, text(it.name, listOf(item.title) + artistNames, item.id, artistId, titleOf = true)) }
+    val itemAlbum = item.album
+    val album = if (itemAlbum == null) {
+        null
+    } else {
+        Named(itemAlbum.id, text(itemAlbum.name, listOf(item.title) + artistNames, item.id, artistId, titleOf = true))
+    }
     return Song(item.id, title, artists, album, item.duration ?: 0, item.thumbnail, item.isVideoSong)
 }
 
 fun Romanizer.item(y: com.metrolist.innertube.models.YTItem): Item? = when (y) {
-    is SongItem -> song(y).let { Item("song", it.id, it.title, it.artistText, it.thumb, it) }
+    is SongItem -> {
+        val track = song(y)
+        Item("song", track.id, track.title, track.artistText, track.thumb, track)
+    }
     is com.metrolist.innertube.models.AlbumItem -> {
         val artists = y.artists.orEmpty().joinToString(", ") { it.name }
         Item("album", y.browseId, text(y.title, listOf(artists), titleOf = true), text(artists, listOf(y.title)), y.thumbnail)

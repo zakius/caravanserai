@@ -19,9 +19,9 @@ import java.net.URL
 
 /**
  * roma's own updates, from its GitHub releases. Once per start, after the first frame, one HEAD request asks which
- * release is the latest (the dictionary's are never marked latest). A newer one only puts a dot on Settings and a row
- * at its top: installing restarts roma and stops the music, so it waits for a tap. Android asks to confirm the first
- * time; after roma installed itself once, Android 12+ usually updates without asking.
+ * release is the latest (dictionary releases are never marked latest). A newer release only puts a dot on Settings and
+ * a row at its top. Installing restarts roma and stops the music, so it waits for a tap. Android asks the user to
+ * confirm the first install. After roma has installed itself once, Android 12 and later usually update without asking.
  */
 object Update {
     private const val ACTION = "com.zakius.roma.UPDATE_INSTALL"
@@ -39,7 +39,7 @@ object Update {
         ContextCompat.registerReceiver(app, object : BroadcastReceiver() {
             override fun onReceive(c: Context, i: Intent) = finished(c, i)
         }, IntentFilter(ACTION), ContextCompat.RECEIVER_NOT_EXPORTED)
-        // A debug build is another package (.debug): a release APK wouldn't update it.
+        // A debug build is a separate package (.debug), which a release APK can't update.
         if (!BuildConfig.DEBUG) Startup.later { thread(name = "update") { check() } }
     }
 
@@ -51,18 +51,22 @@ object Update {
     fun install() {
         val v = available ?: return
         val app = appContext
-        val c = app
         if (busy) return
         if (!app.packageManager.canRequestPackageInstalls()) {
             status = "Allow ${BuildConfig.APP_NAME} to install apps, then tap again"
-            c.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:${app.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            val packageUri = android.net.Uri.parse("package:${app.packageName}")
+            val settings = Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, packageUri)
+            app.startActivity(settings.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             return
         }
         busy = true
         status = "Downloading ${BuildConfig.APP_NAME} $v…"
         thread(name = "update") {
             try {
-                installApk(app, "$RELEASES/download/v$v/${BuildConfig.SLUG}-$v.apk", app.packageName, ACTION, userActionNotRequired = true) { status = "Downloading ${BuildConfig.APP_NAME} $v… $it" }
+                val apkUrl = "$RELEASES/download/v$v/${BuildConfig.SLUG}-$v.apk"
+                installApk(app, apkUrl, app.packageName, ACTION, userActionNotRequired = true) { progress ->
+                    status = "Downloading ${BuildConfig.APP_NAME} $v… $progress"
+                }
                 status = "Installing ${BuildConfig.APP_NAME} $v…"
             } catch (e: Exception) {
                 busy = false
@@ -71,15 +75,21 @@ object Update {
         }
     }
 
-    // On success Android stops roma to replace it, so only the other outcomes are ever seen here.
+    // On success Android stops roma to replace it, so only the other outcomes ever reach this.
     private fun finished(c: Context, i: Intent) {
         when (i.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 status = "Confirm the update"
-                IntentCompat.getParcelableExtra(i, Intent.EXTRA_INTENT, Intent::class.java)?.let { runCatching { c.startActivity(Intent(it).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }
+                val confirm = IntentCompat.getParcelableExtra(i, Intent.EXTRA_INTENT, Intent::class.java)
+                if (confirm != null) {
+                    runCatching { c.startActivity(Intent(confirm).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                }
             }
             PackageInstaller.STATUS_SUCCESS -> Unit
-            PackageInstaller.STATUS_FAILURE_ABORTED -> { busy = false; status = null }
+            PackageInstaller.STATUS_FAILURE_ABORTED -> {
+                busy = false
+                status = null
+            }
             else -> {
                 busy = false
                 status = "Couldn't update: " + (i.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "unknown reason")
@@ -89,40 +99,48 @@ object Update {
 }
 
 /**
- * Streams the APK at [url] straight into a PackageInstaller session for [pkg] and commits it;
- * the outcome arrives as a broadcast of [action]. [progress] gets "n%" (or "n MB" without a length). Blocking.
+ * Streams the APK at [url] straight into a PackageInstaller session for [pkg] and commits it. The outcome arrives as a
+ * broadcast of [action]. [progress] gets "n%", or "n MB" when the server sends no length. Blocks until committed.
  */
 fun installApk(app: Context, url: String, pkg: String, action: String, userActionNotRequired: Boolean = false, progress: (String) -> Unit) {
     val installer = app.packageManager.packageInstaller
     val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
     params.setAppPackageName(pkg)
-    if (userActionNotRequired && Build.VERSION.SDK_INT >= 31) params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+    if (userActionNotRequired && Build.VERSION.SDK_INT >= 31) {
+        params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+    }
     val id = installer.createSession(params)
     try {
         installer.openSession(id).use { session ->
             val conn = URL(url).openConnection() as HttpURLConnection
             conn.connectTimeout = 15_000
-            conn.readTimeout = 30_000 // a stalled download fails instead of keeping the install busy for good
+            // A stalled download fails instead of keeping the install busy for good.
+            conn.readTimeout = 30_000
             check(conn.responseCode == 200) { "The download answered HTTP ${conn.responseCode}" }
             val total = conn.contentLengthLong
             var read = 0L
             var shown = -1L
             val counted = object : FilterInputStream(conn.inputStream) {
-                override fun read(b: ByteArray, off: Int, len: Int) = super.read(b, off, len).also {
-                    if (it > 0) read += it
-                    val percent = if (total > 0) read * 100 / total else read shr 20
-                    if (percent != shown) {
-                        shown = percent
-                        progress(if (total > 0) "$percent%" else "$percent MB")
+                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                    val count = super.read(b, off, len)
+                    if (count > 0) read += count
+                    val amount = if (total > 0) read * 100 / total else read / (1024 * 1024)
+                    if (amount != shown) {
+                        shown = amount
+                        progress(if (total > 0) "$amount%" else "$amount MB")
                     }
+                    return count
                 }
             }
             session.openWrite("app.apk", 0, -1).use { out ->
-                counted.use { it.copyTo(out, 1 shl 16) }
+                counted.use { input -> input.copyTo(out, 64 * 1024) }
                 session.fsync(out)
             }
-            val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
-            session.commit(PendingIntent.getBroadcast(app, id, Intent(action).setPackage(app.packageName), flags).intentSender)
+            // The installer adds its status extras to this intent, so it must be mutable.
+            val mutable = if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or mutable
+            val outcome = Intent(action).setPackage(app.packageName)
+            session.commit(PendingIntent.getBroadcast(app, id, outcome, flags).intentSender)
         }
     } catch (e: Exception) {
         runCatching { installer.abandonSession(id) }

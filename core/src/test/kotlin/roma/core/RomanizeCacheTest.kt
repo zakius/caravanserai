@@ -13,7 +13,8 @@ class RomanizeCacheTest {
 
     @Test fun keptAndReused() {
         val cache = MapCache()
-        val r = Romanizer(jvmIcu).also { it.cache = cache }
+        val r = Romanizer(jvmIcu)
+        r.cache = cache
         assertEquals("Moskva", r.machine("Москва"))
         assertEquals(1, cache.map.size)
         // A hit is returned as kept, without romanizing again.
@@ -29,7 +30,8 @@ class RomanizeCacheTest {
 
     @Test fun songReadingsAndMissingDictionaryAreNotKept() {
         val cache = MapCache()
-        val r = Romanizer(jvmIcu, dictionary = { error("no dictionary") }).also { it.cache = cache }
+        val r = Romanizer(jvmIcu, dictionary = { error("no dictionary") })
+        r.cache = cache
         r.overrides = listOf(Override("word", "song1", "Москва", "Moscow"))
         r.machine("Москва", songId = "song1")
         assertTrue(cache.map.isEmpty(), "a song's own readings bypass the cache")

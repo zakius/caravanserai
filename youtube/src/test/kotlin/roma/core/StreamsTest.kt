@@ -25,13 +25,13 @@ class StreamsTest {
     @Test
     fun keptAcrossStarts() {
         val f = java.io.File.createTempFile("streams", ".txt")
-        val old = System.currentTimeMillis() - 8 * 86_400_000L
+        val old = System.currentTimeMillis() - 8 * 24 * 60 * 60 * 1000L
         f.writeText("a L 1.5\nb L -2.0\na L 3.0\nc X ${System.currentTimeMillis()}\nd X $old\ne X 1\ne N\n")
         Streams.keepIn(f)
         assertEquals(3.0f, Streams.loudness("a"))
         assertEquals(-2.0f, Streams.loudness("b"))
-        assertEquals("c", Streams.recentFallback()) // d is too old, e worked with the direct path again
-        Streams.putLoudness("b", -2.0f) // unchanged: no new line
+        assertEquals("c", Streams.recentFallback()) // d is too old, and e worked with the direct path again.
+        Streams.putLoudness("b", -2.0f) // Unchanged, so no new line is written.
         Streams.putLoudness("z", 4.0f)
         assertEquals("z L 4.0", f.readLines().last())
         f.delete()

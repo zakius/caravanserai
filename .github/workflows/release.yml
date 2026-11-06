@@ -1,28 +1,32 @@
 # Every push to master builds and tests. When app/build.gradle.kts has a versionName with no release yet, the run also
-# signs (tools/release.sh) and publishes roma ytm, the YouTube Music app, as a GitHub release, tagged v<version> on that
-# commit: a merge that bumps the version is the release. caravan, the Subsonic app (docs/subsonic.md, Two apps), builds
-# in the same jobs, Android and Linux desktop, and is checked for YouTube code (tools/residue_check.py); its signed APK
-# ships in the same release. The desktop app (:desktop) ships in the same release: a .deb and an .rpm built on Linux, an
-# .msi on Windows, with roma-aac (tools/build-ffmpeg.sh) built for both on Linux. The Japanese dictionary (data, a zip)
-# gets its own release, dict-<version>, the first time its version ships; the apps download it from there. The app and the dictionary build in parallel jobs, and the core tests (which need the
-# slim dictionary) in a third; roma's release is published only once its dictionary release exists and the tests pass.
-# Only master: setup-gradle saves the Gradle cache (with SudachiDict and the slim dictionary) on the default branch
-# alone, and a cache saved by a tag's run is visible to that tag only.
+# signs (tools/release.sh) and publishes roma ytm, the YouTube Music app, as a GitHub release tagged v<version> on that
+# commit. So a merge that bumps the version is the release.
+# caravan, the Subsonic app (docs/subsonic.md, "Two apps"), builds in the same Android and Linux desktop jobs and is
+# checked for YouTube code (tools/residue_check.py). Its signed APK ships in the same release.
+# The desktop app (:desktop) ships in the same release too: a .deb and an .rpm built on Linux and an .msi built on
+# Windows, with roma-aac (tools/build-ffmpeg.sh) built for both on Linux.
+# The Japanese dictionary (data, a zip) gets its own release, dict-<version>, the first time its version ships, and the
+# apps download it from there. The app and the dictionary build in parallel jobs, and the core tests (which need the
+# slim dictionary) run in a third. roma's release is published only once its dictionary release exists and the tests
+# pass.
+# Releases come only from master because setup-gradle saves the Gradle cache (with SudachiDict and the slim dictionary)
+# only on the default branch, and a cache saved by a tag's run is visible to that tag only.
 # Secrets: KEYSTORE_BASE64 (the .jks, base64), STORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD.
 name: release
 on:
   push:
     branches: [master]
-  # A pull request's build and packages before it merges; nothing is signed or published off master.
+  # A pull request gets the build and packages before it merges. Nothing is signed or published off master.
   pull_request:
 permissions:
   contents: write
-# The runner's git names its first branch "master" without asking; saying so quiets its hint in every checkout.
+# Setting git's default branch name explicitly quiets the hint it prints in every checkout.
 env: { GIT_CONFIG_COUNT: 1, GIT_CONFIG_KEY_0: init.defaultBranch, GIT_CONFIG_VALUE_0: master }
-# Merges in quick succession release one at a time, so a version can't be published twice. A pull request's runs
-# have a group of their own: in this one, a queued run would cancel master's waiting release run.
+# Merges in quick succession release one at a time, so a version can't be published twice. A pull request's runs get
+# a group of their own, because in the release group a queued PR run would cancel master's waiting release run.
 concurrency: { group: "${{ github.event_name == 'pull_request' && format('pr-{0}', github.ref) || 'release' }}", cancel-in-progress: false }
-# ubuntu-24.04, not ubuntu-latest: the image the release is built and tested on, changed on purpose rather than by GitHub.
+# Jobs pin ubuntu-24.04 rather than ubuntu-latest, so the image the release is built and tested on changes only on
+# purpose, not when GitHub moves the alias.
 jobs:
   version:
     runs-on: ubuntu-24.04
@@ -37,8 +41,8 @@ jobs:
         run: |
           v=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          # Only "release not found" is a new version; any other error (network, rate limit) fails the run. Only master
-          # releases: a pull request's run only builds.
+          # Only "release not found" means a new version; any other error (network, rate limit) fails the run. Only
+          # master releases; a pull request's run only builds.
           if [ "$GITHUB_REF" != refs/heads/master ]; then echo "release=" >> "$GITHUB_OUTPUT"
           elif out=$(gh release view "v$v" 2>&1); then echo "release=" >> "$GITHUB_OUTPUT"
           elif [[ $out == *"release not found"* ]]; then echo "release=1" >> "$GITHUB_OUTPUT"
@@ -71,7 +75,7 @@ jobs:
       - if: env.RELEASE
         uses: actions/upload-artifact@v7
         with: { name: app, path: "dist/*.apk" }
-      # Unsigned, for trying it; the residue check above has passed.
+      # The unsigned caravan APK, for trying it out. The residue check above has already passed.
       - uses: actions/upload-artifact@v7
         with: { name: subsonic-app, path: app/build/outputs/apk/subsonic/release/app-subsonic-release-unsigned.apk }
 
@@ -84,8 +88,9 @@ jobs:
       - uses: gradle/actions/setup-gradle@v5
       - run: tools/release.sh test
 
-  # roma-aac, the audio-only ffmpeg in the desktop packages (tools/build-ffmpeg.sh), for Linux and, cross-compiled, for
-  # Windows: its own job, cached per build script, so both desktop jobs start at once instead of Windows waiting on Linux.
+  # roma-aac is the audio-only ffmpeg in the desktop packages (tools/build-ffmpeg.sh), for Linux and, cross-compiled,
+  # for Windows. It has its own job, cached per build script, so both desktop jobs start together instead of Windows
+  # waiting on Linux.
   roma-aac:
     runs-on: ubuntu-24.04
     steps:
@@ -109,7 +114,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v5
       - uses: actions/download-artifact@v8
         with: { name: roma-aac, path: aac }
-      - run: chmod +x aac/linux/roma-aac && sudo apt-get install -y rpm > /dev/null # artifacts drop the executable bit
+      - run: chmod +x aac/linux/roma-aac && sudo apt-get install -y rpm > /dev/null # artifacts lose the executable bit
       - run: ./gradlew -q :desktop:createReleaseDistributable :desktop:icuCheck :desktop:skiaCheck :desktop-subsonic:createReleaseDistributable "-Proma.aacDir=$GITHUB_WORKSPACE/aac"
       - run: desktop/build/compose/binaries/main-release/app/roma-ytm/bin/roma-ytm --check
       - name: Neither app carries the other's code
@@ -124,9 +129,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with: { name: desktop-mapping, path: desktop/build/proguard-mapping.txt }
 
-  # Windows: the full .msi (its own Java) and the small .msi and .zip, which find Java 21+ or download it once
-  # (tools/windows-packages.sh). Each starts once with --check. Temurin 21, not 24+: those ship no jmods, which ProGuard
-  # and jlink read.
+  # Windows: the full .msi with its own Java, and the small .msi and .zip, which find Java 21 or later or download it
+  # once (tools/windows-packages.sh). Each one is started once with --check. The job uses Temurin 21 because Temurin 24
+  # and later ship no jmods, which ProGuard and jlink read.
   desktop-windows:
     needs: roma-aac
     runs-on: windows-2025
@@ -201,7 +206,8 @@ jobs:
       - name: Publish
         env: { GH_TOKEN: "${{ github.token }}", V: "${{ needs.version.outputs.version }}" }
         run: |
-          # Notes: the version's own commit ("0.1.28: …"), which may sit below later fixes in this push.
+          # The release notes are the version's own commit message ("0.1.28: …"), which may sit below later fixes in this
+          # push.
           git log -1 --format=%B --grep "^$V:" "$GITHUB_SHA" | grep -v '^Co-Authored-By' > "$RUNNER_TEMP/notes.md"
           # javax.json ships in the APK under GPL 2 with the Classpath Exception, so its source goes with each release.
           json=dist/javax.json-1.1.4-sources.jar

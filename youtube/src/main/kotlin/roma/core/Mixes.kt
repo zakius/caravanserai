@@ -29,5 +29,11 @@ fun personalMixes(items: List<Item>): List<Item> =
         .sortedWith(mixOrder { it.id })
 
 /** Orders mixes by the YouTube playlist id [youtubeId] gives (null when unknown): the known ones first, then by title. */
-fun mixOrder(youtubeId: (Item) -> String?): Comparator<Item> =
-    compareBy({ KNOWN_MIXES.indexOf(youtubeId(it)?.removePrefix("VL")).let { i -> if (i < 0) KNOWN_MIXES.size else i } }, { it.title.latin.lowercase() })
+fun mixOrder(youtubeId: (Item) -> String?): Comparator<Item> {
+    fun knownPosition(item: Item): Int {
+        val id = youtubeId(item)?.removePrefix("VL")
+        val i = KNOWN_MIXES.indexOf(id)
+        return if (i < 0) KNOWN_MIXES.size else i
+    }
+    return compareBy({ knownPosition(it) }, { it.title.latin.lowercase() })
+}
