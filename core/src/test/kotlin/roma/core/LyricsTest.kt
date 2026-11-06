@@ -208,6 +208,17 @@ class LyricsChoiceTest {
         assertEquals("lrc", found.source)
         assertEquals(listOf("kimi no koe", "hanabi"), found.lines.map { it.latin })
     }
+
+    @Test fun providerLanguageSurvivesTheSearch() {
+        // A Subsonic server tags its lyrics "zh", which makes Han lines romanize as Chinese.
+        val server = object : LyricsProvider {
+            override val id = "server"
+            override val name = "server"
+            override fun fetch(q: LyricsQuery) = Lyrics("server", listOf(Line(0, "声音")), false, lang = "zh")
+        }
+        val found = LyricsProviders.find(LyricsQuery("x", "t", "a", null, 0), listOf(server)).result!!.lyrics
+        assertEquals("zh", found.lang)
+    }
 }
 
 class TitleMatchTest {

@@ -106,7 +106,7 @@ object LyricsProviders {
             val lineLatin = line.latin.ifEmpty { latin[normalizeLyrics(line.text)] ?: "" }
             Line(line.startMs, line.text, line.words, latin = lineLatin, wordLatin = line.wordLatin)
         }
-        val bare = Lyrics(chosenLyrics.source, bareLines, chosenLyrics.synced)
+        val bare = Lyrics(chosenLyrics.source, bareLines, chosenLyrics.synced, lang = chosenLyrics.lang)
         return LyricsSearch(LyricsResult(bare, translations, rule), complete)
     }
 }
@@ -146,7 +146,7 @@ private fun unescaped(l: Lyrics): Lyrics {
         val translation = line.translation?.let(::unescapedText)
         Line(line.startMs, text, words, translation, line.latin, line.wordLatin)
     }
-    return Lyrics(l.source, lines, l.synced, l.translationSource)
+    return Lyrics(l.source, lines, l.synced, l.translationSource, l.lang)
 }
 
 // Credit lines are a role and then a colon, such as "作词 : X", "作曲：X" or "Lyrics by: X".
