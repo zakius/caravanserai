@@ -1,4 +1,4 @@
-// R8 newer than AGP's own (9.4): its release APK is 16 KB smaller. Drop this when AGP bundles 9.5 or later.
+// A newer R8 than the 9.4 that AGP bundles makes the release APK 16 KB smaller. Drop this once AGP bundles 9.5 or later.
 buildscript {
     repositories { google() }
     dependencies { classpath("com.android.tools:r8:9.5.28") }

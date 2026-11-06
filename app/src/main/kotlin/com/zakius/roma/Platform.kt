@@ -43,7 +43,7 @@ import roma.core.Icu
 
 typealias Prefs = android.content.SharedPreferences
 
-/** A decoded cover, as Images keeps it: hardware bitmaps unless the pixels are read. */
+/** A decoded cover, as Images keeps it. It is a hardware bitmap unless something reads its pixels. */
 typealias Pic = android.graphics.Bitmap
 
 fun Pic.toImage(): ImageBitmap = asImageBitmap()
@@ -51,27 +51,36 @@ fun Pic.toImage(): ImageBitmap = asImageBitmap()
 fun picBytes(p: Pic) = p.allocationByteCount
 
 /**
- * The covers' memory, sized from the phone's RAM, not the Java heap: most covers are hardware bitmaps, whose pixels sit
- * in graphics memory. 1/32 of RAM, 48–128 MB: about 80–200 home cards, or 600+ list rows.
+ * The memory for covers, sized from the phone's RAM rather than the Java heap, because most covers are hardware bitmaps
+ * whose pixels sit in graphics memory. It is 1/32 of RAM, kept between 48 and 128 MB: about 80 to 200 home cards, or
+ * over 600 list rows.
  */
 fun picMemory(): Long {
-    val ram = android.app.ActivityManager.MemoryInfo().also { appContext.getSystemService(android.app.ActivityManager::class.java).getMemoryInfo(it) }.totalMem
-    return (ram / 32).coerceIn(48L shl 20, 128L shl 20)
+    val info = android.app.ActivityManager.MemoryInfo()
+    appContext.getSystemService(android.app.ActivityManager::class.java).getMemoryInfo(info)
+    val ram = info.totalMem
+    val mb = 1024L * 1024
+    return (ram / 32).coerceIn(48 * mb, 128 * mb)
 }
 
 /**
- * Decoded at least [px] on its short side, sampled down by powers of two; [exact]: scaled to [px] across. Hardware
- * bitmaps unless [software] or [exact] (pixels read).
+ * Decodes a cover at least [px] on its short side, sampled down by powers of two. With [exact], it is scaled to exactly
+ * [px] wide. The result is a hardware bitmap unless [software] or [exact] asks for readable pixels.
  */
 fun decodePic(data: ByteArray, px: Int, exact: Boolean, software: Boolean): Pic? {
-    val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    val o = android.graphics.BitmapFactory.Options()
+    o.inJustDecodeBounds = true
     android.graphics.BitmapFactory.decodeByteArray(data, 0, data.size, o)
     if (o.outWidth <= 0) return null
     var sample = 1
     while (minOf(o.outWidth, o.outHeight) / (sample * 2) >= px) sample *= 2
     val opts = android.graphics.BitmapFactory.Options().apply {
         inSampleSize = sample
-        inPreferredConfig = if (software || exact) android.graphics.Bitmap.Config.ARGB_8888 else android.graphics.Bitmap.Config.HARDWARE
+        inPreferredConfig = if (software || exact) {
+            android.graphics.Bitmap.Config.ARGB_8888
+        } else {
+            android.graphics.Bitmap.Config.HARDWARE
+        }
     }
     val b = android.graphics.BitmapFactory.decodeByteArray(data, 0, data.size, opts) ?: return null
     if (!exact) return b
@@ -84,20 +93,31 @@ lateinit var appContext: Context
 
 private val main = Handler(Looper.getMainLooper())
 
-fun postMain(delayMs: Long = 0, f: () -> Unit) { main.postDelayed(f, delayMs) }
+fun postMain(delayMs: Long = 0, f: () -> Unit) {
+    main.postDelayed(f, delayMs)
+}
 
-/** Milliseconds since boot, sleep included: the sleep timer's clock. */
+/** Milliseconds since boot, sleep included. The sleep timer uses this clock. */
 fun elapsedRealtime() = SystemClock.elapsedRealtime()
 
 fun uptimeMillis() = SystemClock.uptimeMillis()
 
-fun toast(text: String, long: Boolean = false) = Toast.makeText(appContext, text, if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
+fun toast(text: String, long: Boolean = false) {
+    val duration = if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
+    Toast.makeText(appContext, text, duration).show()
+}
 
-fun openUrl(url: String) = appContext.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+fun openUrl(url: String) {
+    val view = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    appContext.startActivity(view)
+}
 
 /** The system's share sheet with a link. */
 fun share(text: String, title: String) {
-    val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text).putExtra(Intent.EXTRA_TITLE, title)
+    val send = Intent(Intent.ACTION_SEND)
+        .setType("text/plain")
+        .putExtra(Intent.EXTRA_TEXT, text)
+        .putExtra(Intent.EXTRA_TITLE, title)
     appContext.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 }
 
@@ -109,12 +129,14 @@ val platformIcu = Icu { id, text -> android.icu.text.Transliterator.getInstance(
 /** Screen pixels per dp. */
 fun screenDensity() = appContext.resources.displayMetrics.density
 
-/** The like on the current song changed: the media notification's Like button follows. */
-fun likeChanged() { PlaybackService.instance?.updateLikeButton() }
+/** Called when the current song's like changes, so the media notification's Like button follows. */
+fun likeChanged() {
+    PlaybackService.instance?.updateLikeButton()
+}
 
 /**
- * [changed] gets whether a validated network is up, on the main thread, each time that changes. From the system's
- * callback, never from polling.
+ * Calls [changed] on the main thread with whether a validated network is up, each time that changes. It uses the
+ * system's callback, never polling.
  */
 fun watchNetwork(changed: (Boolean) -> Unit) {
     val cm = appContext.getSystemService(android.net.ConnectivityManager::class.java)
@@ -124,17 +146,19 @@ fun watchNetwork(changed: (Boolean) -> Unit) {
             main.post { changed(up) }
         }
 
-        override fun onLost(n: android.net.Network) { main.post { changed(false) } }
+        override fun onLost(n: android.net.Network) {
+            main.post { changed(false) }
+        }
     }, main)
 }
 
-/** Mobile data or Battery Saver: guesses and prefetching wait unless the user allows them. */
+/** True on mobile data or in Battery Saver, where guesses and prefetching wait unless the user allows them. */
 fun meteredOrSaving(): Boolean {
     val metered = appContext.getSystemService(android.net.ConnectivityManager::class.java).isActiveNetworkMetered
     return metered || appContext.getSystemService(android.os.PowerManager::class.java).isPowerSaveMode
 }
 
-/** The system's colours (Android 12+), else null for roma's own. */
+/** The system's colours on Android 12 and later, or null to use roma's own. */
 @Composable
 fun systemColorScheme(dark: Boolean): ColorScheme? {
     if (Build.VERSION.SDK_INT < 31) return null
@@ -142,24 +166,32 @@ fun systemColorScheme(dark: Boolean): ColorScheme? {
     return if (dark) dynamicDarkColorScheme(c) else dynamicLightColorScheme(c)
 }
 
-private fun c(argb: Long) = Color(argb)
-
 // The system's tonal palettes (Android 12+), by tone: _0 is tone 100, _500 tone 50, _1000 tone 0. Tones between two
 // resources are blended.
 @RequiresApi(31)
 private fun dynamicLightColorScheme(ctx: Context): ColorScheme {
     fun r(id: Int) = Color(ctx.getColor(id))
-    val n1 = { id: Int -> r(id) }
+    val n10 = r(android.R.color.system_neutral1_10)
+    val n50 = r(android.R.color.system_neutral1_50)
+    val n100 = r(android.R.color.system_neutral1_100)
     return ColorScheme(
-        r(android.R.color.system_accent1_600), r(android.R.color.system_accent1_0), r(android.R.color.system_accent1_200),
-        r(android.R.color.system_accent2_100), r(android.R.color.system_accent2_900),
-        lerp(n1(android.R.color.system_neutral1_10), n1(android.R.color.system_neutral1_50), 0.25f),
-        lerp(n1(android.R.color.system_neutral1_10), n1(android.R.color.system_neutral1_50), 0.25f),
-        r(android.R.color.system_neutral1_900), r(android.R.color.system_neutral2_700),
-        lerp(n1(android.R.color.system_neutral1_50), n1(android.R.color.system_neutral1_100), 0.2f), r(android.R.color.system_neutral1_0),
-        lerp(n1(android.R.color.system_neutral1_50), n1(android.R.color.system_neutral1_100), 0.6f),
-        r(android.R.color.system_neutral1_800), r(android.R.color.system_neutral1_50),
-        r(android.R.color.system_neutral2_500), r(android.R.color.system_neutral2_200), c(0xFFB3261E),
+        primary = r(android.R.color.system_accent1_600),
+        onPrimary = r(android.R.color.system_accent1_0),
+        inversePrimary = r(android.R.color.system_accent1_200),
+        secondaryContainer = r(android.R.color.system_accent2_100),
+        onSecondaryContainer = r(android.R.color.system_accent2_900),
+        background = lerp(n10, n50, 0.25f),
+        surface = lerp(n10, n50, 0.25f),
+        onSurface = r(android.R.color.system_neutral1_900),
+        onSurfaceVariant = r(android.R.color.system_neutral2_700),
+        surfaceContainer = lerp(n50, n100, 0.2f),
+        surfaceContainerLowest = r(android.R.color.system_neutral1_0),
+        surfaceContainerHigh = lerp(n50, n100, 0.6f),
+        inverseSurface = r(android.R.color.system_neutral1_800),
+        inverseOnSurface = n50,
+        outline = r(android.R.color.system_neutral2_500),
+        outlineVariant = r(android.R.color.system_neutral2_200),
+        error = Color(0xFFB3261E), // Material 3's baseline light error colour
     )
 }
 
@@ -170,21 +202,31 @@ private fun dynamicDarkColorScheme(ctx: Context): ColorScheme {
     val n800 = r(android.R.color.system_neutral1_800)
     val black = r(android.R.color.system_neutral1_1000)
     return ColorScheme(
-        r(android.R.color.system_accent1_200), r(android.R.color.system_accent1_800), r(android.R.color.system_accent1_600),
-        r(android.R.color.system_accent2_700), r(android.R.color.system_accent2_100),
-        lerp(n900, black, 0.4f), lerp(n900, black, 0.4f),
-        r(android.R.color.system_neutral1_100), r(android.R.color.system_neutral2_200),
-        lerp(n900, n800, 0.2f), lerp(n900, black, 0.6f), lerp(n900, n800, 0.7f),
-        r(android.R.color.system_neutral1_100), n800,
-        r(android.R.color.system_neutral2_400), r(android.R.color.system_neutral2_700), c(0xFFF2B8B5),
+        primary = r(android.R.color.system_accent1_200),
+        onPrimary = r(android.R.color.system_accent1_800),
+        inversePrimary = r(android.R.color.system_accent1_600),
+        secondaryContainer = r(android.R.color.system_accent2_700),
+        onSecondaryContainer = r(android.R.color.system_accent2_100),
+        background = lerp(n900, black, 0.4f),
+        surface = lerp(n900, black, 0.4f),
+        onSurface = r(android.R.color.system_neutral1_100),
+        onSurfaceVariant = r(android.R.color.system_neutral2_200),
+        surfaceContainer = lerp(n900, n800, 0.2f),
+        surfaceContainerLowest = lerp(n900, black, 0.6f),
+        surfaceContainerHigh = lerp(n900, n800, 0.7f),
+        inverseSurface = r(android.R.color.system_neutral1_100),
+        inverseOnSurface = n800,
+        outline = r(android.R.color.system_neutral2_400),
+        outlineVariant = r(android.R.color.system_neutral2_700),
+        error = Color(0xFFF2B8B5), // Material 3's baseline dark error colour
     )
 }
 
 /**
- * A text field: Android's EditText in an outlined box. Compose's own text field brings in about 120 KB of the APK (its
- * text input, selection and context menu); EditText is in the platform. Text set from outside (a picked search
- * suggestion) puts the caret at its end. [onSearch] gives the keyboard a Search key. [autoFocus]: focused, with the
- * keyboard up, as soon as it is on screen (a dialog that is only for typing).
+ * A text field: Android's EditText in an outlined box. Compose's own text field adds about 120 KB to the APK (its text
+ * input, selection and context menu), while EditText is part of the platform. Text set from outside, such as a picked
+ * search suggestion, puts the caret at its end. [onSearch] gives the keyboard a Search key. With [autoFocus], the field
+ * takes focus and raises the keyboard as soon as it is on screen, for a dialog that is only for typing.
  */
 @Composable
 fun OutlinedTextField(
@@ -204,19 +246,39 @@ fun OutlinedTextField(
     val change by rememberUpdatedState(onValueChange)
     val search by rememberUpdatedState(onSearch)
     var edit by remember { mutableStateOf<EditText?>(null) }
-    // Made when the field is first on screen: an EditText made in a tab built hidden (buildAhead) stays blank, no
-    // hint or caret, the first time the tab is shown.
+    // The EditText is created only once the field is first on screen. One created in a tab that is built while
+    // hidden (buildAhead) stays blank, with no hint or caret, the first time the tab is shown.
     val shown = remember { BooleanArray(1) }
     if (LocalTabShown.current) shown[0] = true
     Column(
-        modifier.defaultMinSize(minWidth = 280.dp, minHeight = 56.dp)
-            .border(if (focused) 2.dp else 1.dp, if (focused) s.primary else s.outline, shape)
-            // The whole box takes a tap, as Compose's field did, not only the line of text.
-            .pointerInput(Unit) { detectTapGestures { edit?.let { it.requestFocus(); it.showKeyboard() } } }
+        modifier
+            .defaultMinSize(minWidth = 280.dp, minHeight = 56.dp)
+            .border(
+                width = if (focused) 2.dp else 1.dp,
+                color = if (focused) s.primary else s.outline,
+                shape = shape,
+            )
+            // The whole box takes a tap, not only the line of text, like Compose's own text field.
+            .pointerInput(Unit) {
+                detectTapGestures {
+                    val field = edit
+                    if (field != null) {
+                        field.requestFocus()
+                        field.showKeyboard()
+                    }
+                }
+            }
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.Center,
     ) {
-        if (label != null) Text(label, Modifier.clearAndSetSemantics {}, color = if (focused) s.primary else s.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+        if (label != null) {
+            Text(
+                label,
+                Modifier.clearAndSetSemantics {},
+                color = if (focused) s.primary else s.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         val style = MaterialTheme.typography.bodyLarge
         if (shown[0]) AndroidView(
             factory = { c ->
@@ -226,25 +288,36 @@ fun OutlinedTextField(
                     includeFontPadding = false
                     setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, style.fontSize.value)
                     letterSpacing = style.letterSpacing.value / style.fontSize.value
-                    if (Build.VERSION.SDK_INT >= 28) lineHeight = (style.lineHeight.value * resources.displayMetrics.scaledDensity).toInt()
-                    inputType = if (password) android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
-                    else android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_AUTO_CORRECT or
-                        (if (singleLine) 0 else android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE)
+                    if (Build.VERSION.SDK_INT >= 28) {
+                        lineHeight = (style.lineHeight.value * resources.displayMetrics.scaledDensity).toInt()
+                    }
+                    val textClass = android.text.InputType.TYPE_CLASS_TEXT
+                    if (password) {
+                        inputType = textClass or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+                    } else {
+                        val multiLine = if (singleLine) 0 else android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                        inputType = textClass or android.text.InputType.TYPE_TEXT_FLAG_AUTO_CORRECT or multiLine
+                    }
                     if (singleLine) maxLines = 1
                     imeOptions = when {
                         onSearch != null -> android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
                         singleLine -> android.view.inputmethod.EditorInfo.IME_ACTION_DONE
                         else -> 0
                     }
-                    // TalkBack reads the label with the field, as it did when the label was inside Compose's field.
-                    if (label != null) accessibilityDelegate = object : View.AccessibilityDelegate() {
-                        override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) {
-                            super.onInitializeAccessibilityNodeInfo(host, info)
-                            info.hintText = label
+                    // The label is drawn outside the EditText and hidden from TalkBack, so it is handed to the field as
+                    // its hint text, and TalkBack reads it with the field.
+                    if (label != null) {
+                        accessibilityDelegate = object : View.AccessibilityDelegate() {
+                            override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) {
+                                super.onInitializeAccessibilityNodeInfo(host, info)
+                                info.hintText = label
+                            }
                         }
                     }
                     setOnEditorActionListener { _, action, _ ->
-                        (action == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH).also { if (it) search?.invoke() }
+                        val isSearch = action == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+                        if (isSearch) search?.invoke()
+                        isSearch
                     }
                     setText(value)
                     setSelection(value.length)
@@ -254,33 +327,48 @@ fun OutlinedTextField(
                         override fun afterTextChanged(t: android.text.Editable) = change(t.toString())
                     })
                     // Focus from code (a new search) brings the keyboard up too, and leaving the field puts it away.
-                    setOnFocusChangeListener { v, f -> focused = f; if (f) v.showKeyboard() else v.context.getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(v.windowToken, 0) }
+                    setOnFocusChangeListener { v, hasFocus ->
+                        focused = hasFocus
+                        if (hasFocus) {
+                            v.showKeyboard()
+                        } else {
+                            v.context.getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(v.windowToken, 0)
+                        }
+                    }
                     edit = this
                     if (autoFocus) post { requestFocus() }
                 }
             },
             Modifier.fillMaxWidth(),
             update = { e ->
-                if (e.text.toString() != value) { e.setText(value); e.setSelection(value.length) }
+                if (e.text.toString() != value) {
+                    e.setText(value)
+                    e.setSelection(value.length)
+                }
                 e.setTextColor(s.onSurface.toArgb())
                 e.setHintTextColor(s.onSurfaceVariant.toArgb())
                 e.hint = placeholder
                 e.highlightColor = s.primary.copy(alpha = 0.4f).toArgb()
                 if (Build.VERSION.SDK_INT >= 29) {
                     e.textCursorDrawable = android.graphics.drawable.GradientDrawable().apply {
-                        setColor(s.primary.toArgb()); setSize((2 * e.resources.displayMetrics.density).toInt(), 0)
+                        setColor(s.primary.toArgb())
+                        setSize((2 * e.resources.displayMetrics.density).toInt(), 0)
                     }
-                    listOf(e.textSelectHandle, e.textSelectHandleLeft, e.textSelectHandleRight).forEach { it?.setTint(s.primary.toArgb()) }
+                    val handles = listOf(e.textSelectHandle, e.textSelectHandleLeft, e.textSelectHandleRight)
+                    handles.forEach { handle -> handle?.setTint(s.primary.toArgb()) }
                 }
             },
         )
     }
 }
 
-// Android ignores the request until the window has focus: a field focused as its dialog opens waits for that.
+// Android ignores the request until the window has focus, so a field focused as its dialog opens waits for that.
 private fun View.showKeyboard() {
     val show = { post { context.getSystemService(InputMethodManager::class.java).showSoftInput(this, 0) } }
-    if (hasWindowFocus()) { show(); return }
+    if (hasWindowFocus()) {
+        show()
+        return
+    }
     viewTreeObserver.addOnWindowFocusChangeListener(object : android.view.ViewTreeObserver.OnWindowFocusChangeListener {
         override fun onWindowFocusChanged(hasFocus: Boolean) {
             if (!hasFocus) return
@@ -290,44 +378,60 @@ private fun View.showKeyboard() {
     })
 }
 
-/** The screen's width in dp, outside composition (Home's first pictures). */
+/** The screen's width in dp, for use outside composition (Home's first pictures). */
 fun screenWidthDp() = appContext.resources.configuration.screenWidthDp
 
-/** The screen's size in dp; recomposes when it turns. */
+/** The screen's size in dp. Callers recompose when the screen turns. */
 @Composable
-fun screenSizeDp(): androidx.compose.ui.unit.IntSize = androidx.compose.ui.platform.LocalConfiguration.current.let { androidx.compose.ui.unit.IntSize(it.screenWidthDp, it.screenHeightDp) }
+fun screenSizeDp(): androidx.compose.ui.unit.IntSize {
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    return androidx.compose.ui.unit.IntSize(configuration.screenWidthDp, configuration.screenHeightDp)
+}
 
-/** Asks where to save [name] (the system's file picker); the returned function opens it, [bytes] is what is written. */
+/**
+ * Returns a function that opens the system's file picker to choose where to save [name]. [bytes] gives what is written.
+ */
 @Composable
 fun rememberSaveFile(name: String, bytes: () -> ByteArray): () -> Unit {
-    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")) { uri ->
+    val createJson = androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")
+    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(createJson) { uri ->
         uri ?: return@rememberLauncherForActivityResult
         runCatching { appContext.contentResolver.openOutputStream(uri)!!.use { o -> o.write(bytes()) } }
-            .onFailure { toast("Couldn't export: ${it.message}", long = true) }
+            .onFailure { error -> toast("Couldn't export: ${error.message}", long = true) }
     }
     return { launcher.launch(name) }
 }
 
-/** Asks for a file (the system's file picker); the returned function opens it, [text] gets the file's text. */
+/** Returns a function that opens the system's file picker to choose a file. [text] gets the file's text. */
 @Composable
 fun rememberOpenFile(text: (String) -> Unit): () -> Unit {
-    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+    val openDocument = androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(openDocument) { uri ->
         uri ?: return@rememberLauncherForActivityResult
-        runCatching { appContext.contentResolver.openInputStream(uri)!!.use { it.readBytes().decodeToString() } }
-            .onSuccess(text).onFailure { toast("Couldn't read the file: ${it.message}", long = true) }
+        runCatching { appContext.contentResolver.openInputStream(uri)!!.use { input -> input.readBytes().decodeToString() } }
+            .onSuccess(text)
+            .onFailure { error -> toast("Couldn't read the file: ${error.message}", long = true) }
     }
     return { launcher.launch(arrayOf("application/json", "*/*")) }
 }
 
-/** Last.fm's browser auth; it returns to roma://lastfm?token=… (MainActivity.handleLastFm). */
-fun connectLastFm() = openUrl(roma.core.LastFm(Store.str("lastfm.key", ""), "").authUrl("${BuildConfig.SLUG}://lastfm"))
+/** Opens Last.fm's browser sign-in, which returns to roma://lastfm?token=… (MainActivity.handleLastFm). */
+fun connectLastFm() {
+    val lastFm = roma.core.LastFm(Store.str("lastfm.key", ""), "")
+    openUrl(lastFm.authUrl("${BuildConfig.SLUG}://lastfm"))
+}
 
 /** A comment's HTML as plain text. */
 fun htmlToText(html: String) = androidx.core.text.HtmlCompat.fromHtml(html, androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY).toString()
 
-// Balanced wrapping evens out the line lengths instead of leaving one word on the last line; Phrase keeps Japanese
-// phrases (bunsetsu) together instead of breaking between any two characters (Android 13+, ignored before).
-val lyricBreak = androidx.compose.ui.text.style.LineBreak(androidx.compose.ui.text.style.LineBreak.Strategy.Balanced, androidx.compose.ui.text.style.LineBreak.Strictness.Normal, androidx.compose.ui.text.style.LineBreak.WordBreak.Phrase)
+// Balanced wrapping evens out the line lengths instead of leaving one word on the last line. Phrase keeps Japanese
+// phrases (bunsetsu) together instead of breaking between any two characters; Android 13 and later support it, and
+// earlier versions ignore it.
+val lyricBreak = androidx.compose.ui.text.style.LineBreak(
+    androidx.compose.ui.text.style.LineBreak.Strategy.Balanced,
+    androidx.compose.ui.text.style.LineBreak.Strictness.Normal,
+    androidx.compose.ui.text.style.LineBreak.WordBreak.Phrase,
+)
 
-/** The bottom sheet's window: edge to edge, the sheet draws behind the navigation bar. */
+/** The bottom sheet's window is edge to edge, so the sheet draws behind the navigation bar. */
 val sheetDialogProperties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)

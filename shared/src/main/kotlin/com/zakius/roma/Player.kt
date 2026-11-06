@@ -110,100 +110,208 @@ fun PlayerScreen() {
     // While a mix loads, the song still playing is on its way out: its controls are dimmed.
     val entry = if (Playback.opening != null) null else Playback.current()
     val p = Playback.player
-    val lyricsState = Playback.lyrics?.takeIf { it.songId == Playback.shown()?.id }
+    val loadedLyrics = Playback.lyrics
+    val lyricsState = if (loadedLyrics != null && loadedLyrics.songId == Playback.shown()?.id) loadedLyrics else null
     val lyrics = lyricsState?.lyrics
     val hasLyrics = lyrics != null && lyrics.lines.isNotEmpty() && Playback.opening == null
     if (view == "lyrics" && !hasLyrics && lyrics != null) view = "song"
     val visitedViews = remember { androidx.compose.runtime.mutableStateListOf(view) }
     if (view !in visitedViews) visitedViews += view
-    // Not the comments: building them loads them from the network.
+    // The comments view isn't built ahead, because building it loads the comments from the network.
     LaunchedEffect(Unit) { buildAhead(visitedViews, listOf("song", "queue", "lyrics")) }
     val tabShown = LocalTabShown.current
 
     val upper: @Composable (Modifier) -> Unit = { modifier ->
         Box(modifier) {
-            // Each view stays composed once opened, as tabs do, so going back to it only lays out and draws: building
-            // the queue took 10 to 12 ms of the main thread on the phone (2026-10-27).
-            for (v in visitedViews) androidx.compose.runtime.key(v) {
-                Box(if (v == view && Playback.opening == null) Modifier.fillMaxSize() else Modifier.hidden()) {
-                    androidx.compose.runtime.CompositionLocalProvider(LocalTabShown provides (tabShown && v == view)) {
-                        when (v) {
-                            "lyrics" -> {
-                                LyricsBackdrop(Playback.shown()?.thumb)
-                                if (lyricsState != null && lyrics != null) LyricsView(lyricsState, lyrics, Playback.shown()?.id) else Centered("Looking for lyrics…")
+            // Each view stays composed once opened, as tabs do, so going back to it only lays out and draws. Building
+            // the queue again costs about 10 ms of the main thread on a phone.
+            for (v in visitedViews) {
+                androidx.compose.runtime.key(v) {
+                    val viewModifier = if (v == view && Playback.opening == null) Modifier.fillMaxSize() else Modifier.hidden()
+                    Box(viewModifier) {
+                        androidx.compose.runtime.CompositionLocalProvider(LocalTabShown provides (tabShown && v == view)) {
+                            when (v) {
+                                "lyrics" -> {
+                                    LyricsBackdrop(Playback.shown()?.thumb)
+                                    if (lyricsState != null && lyrics != null) {
+                                        LyricsView(lyricsState, lyrics, Playback.shown()?.id)
+                                    } else {
+                                        Centered("Looking for lyrics…")
+                                    }
+                                }
+                                "queue" -> QueueView()
+                                "comments" -> backend.Comments()
+                                else -> SongView()
                             }
-                            "queue" -> QueueView()
-                            "comments" -> backend.Comments()
-                            else -> SongView()
                         }
                     }
                 }
             }
-            Playback.opening?.let { (title, thumb) -> OpeningPage(title, thumb) }
-            Playback.lastBan?.let { (song, _) ->
+            val opening = Playback.opening
+            if (opening != null) OpeningPage(opening.first, opening.second)
+            val lastBan = Playback.lastBan
+            if (lastBan != null) {
+                val song = lastBan.first
                 Surface(
-                    Modifier.align(Alignment.BottomCenter).padding(8.dp).fillMaxWidth(),
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(8.dp)
+                        .fillMaxWidth(),
                     shape = RoundedCornerShape(8.dp),
                     color = MaterialTheme.colorScheme.inverseSurface,
                 ) {
                     Row(Modifier.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Banned · ${song.title.latin}", Modifier.weight(1f), color = MaterialTheme.colorScheme.inverseOnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        TextButton(onClick = { Playback.undoBan() }) { Text("Undo", color = MaterialTheme.colorScheme.inversePrimary) }
+                        Text(
+                            "Banned · ${song.title.latin}",
+                            Modifier.weight(1f),
+                            color = MaterialTheme.colorScheme.inverseOnSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        TextButton(onClick = { Playback.undoBan() }) {
+                            Text("Undo", color = MaterialTheme.colorScheme.inversePrimary)
+                        }
                     }
                 }
             }
             // Top left, clear of Translate on the right even with a large font; the lists start below the chips.
             SleepChip(Modifier.align(Alignment.TopStart)) { sleepOpen = true }
-            val line = if (seekPreview >= 0 && lyrics != null && lyrics.synced) lyrics.lines.lastOrNull { it.startMs <= seekPreview } else null
+            val line = if (seekPreview >= 0 && lyrics != null && lyrics.synced) {
+                lyrics.lines.lastOrNull { it.startMs <= seekPreview }
+            } else {
+                null
+            }
             if (line != null && line.text.isNotBlank()) SeekPreview(line, Modifier.align(Alignment.BottomCenter))
         }
     }
     // The bottom block, top to bottom: seek bar, action row, playback row (nearest the thumb; the nav bar is under it).
-    // Fixed heights and slots; a wide screen only puts it beside the upper area.
+    // It has fixed heights and slots; a wide screen only puts it beside the upper area.
     val controls: @Composable (Modifier) -> Unit = { modifier ->
-        FixedRowsFont { Column(modifier) {
-            SeekBar { seekPreview = it }
-            // More (song menu, where Ban lives) sits at the outer edge with two empty slots after it; Like at the other
-            // edge, under the thumb. Left-handed mode mirrors the row. Slots never move otherwise.
-            Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
-                val liked = entry?.song?.id in Playback.liked
-                val slots: List<@Composable RowScope.() -> Unit> = listOf(
-                    { Slot(rememberVectorPainter(Icons.Default.MoreVert), "More", entry != null, label = "More") { menuOpen = true } },
-                    { Spacer(Modifier.weight(1f)) }, // deliberately empty: no icon, no label, not tappable
-                    // A source without comments leaves the slot empty, as the one above.
-                    if (!backend.hasComments) { { Spacer(Modifier.weight(1f)) } }
-                    else { { Slot(rememberVectorPainter(CommentsIcon), "Comments", entry != null, view == "comments", label = "Comments", state = if (view == "comments") "shown" else null) { view = if (view == "comments") "song" else "comments" } } },
-                    { Slot(rememberVectorPainter(LyricsIcon), "Lyrics", hasLyrics || view == "lyrics", view == "lyrics", label = "Lyrics", state = if (view == "lyrics") "shown" else null) { view = if (view == "lyrics") "song" else "lyrics" } },
-                    { Slot(rememberVectorPainter(Icons.AutoMirrored.Filled.List), "Queue", entry != null, view == "queue", label = "Queue", state = if (view == "queue") "shown" else null) { view = if (view == "queue") "song" else "queue" } },
-                    {
-                        Slot(rememberVectorPainter(if (liked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp), "Like", Playback.canLike(entry?.song), liked, label = "Like", state = if (liked) "liked" else "not liked") {
-                            haptic.performHapticFeedback(if (liked) HapticFeedbackType.ToggleOff else HapticFeedbackType.ToggleOn)
-                            Playback.toggleLike()
-                        }
-                    },
-                )
-                (if (Store.bool("ui.leftHanded", false)) slots.reversed() else slots).forEach { it() }
-            }
-            Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
-                Slot(painterResource(R.drawable.shuffle), "Shuffle", entry != null, Playback.shuffled, iconSize = 26, state = if (Playback.shuffled) "on" else "off") { Playback.toggleShuffle() }
-                Slot(painterResource(R.drawable.previous), "Previous", entry != null, iconSize = 30) { Playback.previous() }
-                // Shows what the user asked for: Pause while a song buffers or waits for the network, too.
-                val showPlay = p.showPlayButton
-                // Long press: the sleep timer. A hidden extra on a button that's there anyway, so the row stays as it is.
-                Slot(
-                    painterResource(if (showPlay) R.drawable.play else R.drawable.pause), if (showPlay) "Play" else "Pause", entry != null, iconSize = 44,
-                    onLongClick = { sleepOpen = true }, longClickLabel = "Sleep timer",
-                ) { Playback.togglePlay() }
-                Slot(painterResource(R.drawable.next), "Next", Playback.neighbour(Playback.shownIndex(), 1) >= 0, iconSize = 30) { Playback.next() }
-                val repeatIcon = when (p.repeatMode) {
-                    AudioPlayer.REPEAT_MODE_ONE -> R.drawable.repeat_one
-                    AudioPlayer.REPEAT_MODE_ALL -> R.drawable.repeat
-                    else -> R.drawable.repeat // off is shown as muted (see Slot), not as another icon
+        FixedRowsFont {
+            Column(modifier) {
+                SeekBar { seekPreview = it }
+                // More (the song menu, where Ban lives) sits at the outer edge with two empty slots after it, and Like
+                // at the other edge, under the thumb. Left-handed mode mirrors the row; otherwise slots never move.
+                Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val liked = entry?.song?.id in Playback.liked
+                    val slots: List<@Composable RowScope.() -> Unit> = listOf(
+                        {
+                            Slot(rememberVectorPainter(Icons.Default.MoreVert), "More", entry != null, label = "More") {
+                                menuOpen = true
+                            }
+                        },
+                        // Deliberately empty: no icon, no label, not tappable.
+                        { Spacer(Modifier.weight(1f)) },
+                        // A source without comments leaves this slot empty too.
+                        if (!backend.hasComments) {
+                            { Spacer(Modifier.weight(1f)) }
+                        } else {
+                            {
+                                Slot(
+                                    rememberVectorPainter(CommentsIcon),
+                                    "Comments",
+                                    entry != null,
+                                    view == "comments",
+                                    label = "Comments",
+                                    state = if (view == "comments") "shown" else null,
+                                ) {
+                                    view = if (view == "comments") "song" else "comments"
+                                }
+                            }
+                        },
+                        {
+                            Slot(
+                                rememberVectorPainter(LyricsIcon),
+                                "Lyrics",
+                                hasLyrics || view == "lyrics",
+                                view == "lyrics",
+                                label = "Lyrics",
+                                state = if (view == "lyrics") "shown" else null,
+                            ) {
+                                view = if (view == "lyrics") "song" else "lyrics"
+                            }
+                        },
+                        {
+                            Slot(
+                                rememberVectorPainter(Icons.AutoMirrored.Filled.List),
+                                "Queue",
+                                entry != null,
+                                view == "queue",
+                                label = "Queue",
+                                state = if (view == "queue") "shown" else null,
+                            ) {
+                                view = if (view == "queue") "song" else "queue"
+                            }
+                        },
+                        {
+                            Slot(
+                                rememberVectorPainter(if (liked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp),
+                                "Like",
+                                Playback.canLike(entry?.song),
+                                liked,
+                                label = "Like",
+                                state = if (liked) "liked" else "not liked",
+                            ) {
+                                haptic.performHapticFeedback(if (liked) HapticFeedbackType.ToggleOff else HapticFeedbackType.ToggleOn)
+                                Playback.toggleLike()
+                            }
+                        },
+                    )
+                    val ordered = if (Store.bool("ui.leftHanded", false)) slots.reversed() else slots
+                    for (slot in ordered) slot()
                 }
-                val repeatState = when (p.repeatMode) { AudioPlayer.REPEAT_MODE_ONE -> "this song"; AudioPlayer.REPEAT_MODE_ALL -> "all"; else -> "off" }
-                Slot(painterResource(repeatIcon), "Repeat", entry != null, p.repeatMode != AudioPlayer.REPEAT_MODE_OFF, iconSize = 26, state = repeatState) { Playback.cycleRepeat() }
+                Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Slot(
+                        painterResource(R.drawable.shuffle),
+                        "Shuffle",
+                        entry != null,
+                        Playback.shuffled,
+                        iconSize = 26,
+                        state = if (Playback.shuffled) "on" else "off",
+                    ) {
+                        Playback.toggleShuffle()
+                    }
+                    Slot(painterResource(R.drawable.previous), "Previous", entry != null, iconSize = 30) { Playback.previous() }
+                    // Shows what the user asked for: Pause while a song buffers or waits for the network, too.
+                    val showPlay = p.showPlayButton
+                    // A long press opens the sleep timer: a hidden extra on a button that's there anyway, so the row
+                    // stays as it is.
+                    Slot(
+                        painterResource(if (showPlay) R.drawable.play else R.drawable.pause),
+                        if (showPlay) "Play" else "Pause",
+                        entry != null,
+                        iconSize = 44,
+                        onLongClick = { sleepOpen = true },
+                        longClickLabel = "Sleep timer",
+                    ) {
+                        Playback.togglePlay()
+                    }
+                    val hasNext = Playback.neighbour(Playback.shownIndex(), 1) >= 0
+                    Slot(painterResource(R.drawable.next), "Next", hasNext, iconSize = 30) { Playback.next() }
+                    val repeatIcon = when (p.repeatMode) {
+                        AudioPlayer.REPEAT_MODE_ONE -> R.drawable.repeat_one
+                        AudioPlayer.REPEAT_MODE_ALL -> R.drawable.repeat
+                        // Off is shown as muted (see Slot), not as another icon.
+                        else -> R.drawable.repeat
+                    }
+                    val repeatState = when (p.repeatMode) {
+                        AudioPlayer.REPEAT_MODE_ONE -> "this song"
+                        AudioPlayer.REPEAT_MODE_ALL -> "all"
+                        else -> "off"
+                    }
+                    Slot(
+                        painterResource(repeatIcon),
+                        "Repeat",
+                        entry != null,
+                        p.repeatMode != AudioPlayer.REPEAT_MODE_OFF,
+                        iconSize = 26,
+                        state = repeatState,
+                    ) {
+                        Playback.cycleRepeat()
+                    }
+                }
             }
-        } }
+        }
     }
 
     // Landscape (a phone on its side, the MatePad): the song, lyrics or queue on the left, the same bottom block on the
@@ -212,7 +320,9 @@ fun PlayerScreen() {
     if (screen.width > screen.height) {
         Row(Modifier.fillMaxSize()) {
             upper(Modifier.weight(1f).fillMaxHeight())
-            Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) { controls(Modifier.widthIn(max = 560.dp).fillMaxWidth()) }
+            Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                controls(Modifier.widthIn(max = 560.dp).fillMaxWidth())
+            }
         }
     } else {
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -232,24 +342,47 @@ fun PlayerScreen() {
 @Composable
 private fun LyricsBackdrop(thumb: String?) {
     if (thumb == null) return
-    // 16 pixels across, stretched over the screen: a blur.
-    ThumbPx(bigThumb(thumb), 16, Modifier.fillMaxSize(), alpha = 0.2f, contentScale = androidx.compose.ui.layout.ContentScale.Crop, exact = true)
+    ThumbPx(
+        bigThumb(thumb),
+        16,
+        Modifier.fillMaxSize(),
+        alpha = 0.2f,
+        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+        exact = true,
+    )
     val bg = MaterialTheme.colorScheme.surface
-    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to bg, 0.15f to Color.Transparent, 0.85f to Color.Transparent, 1f to bg)))
+    val edgeFade = Brush.verticalGradient(0f to bg, 0.15f to Color.Transparent, 0.85f to Color.Transparent, 1f to bg)
+    Box(Modifier.fillMaxSize().background(edgeFade))
 }
 
 /** While the sleep timer runs: how long is left, over the top of the upper area. Tap: change or turn it off. */
 @Composable
 private fun SleepChip(modifier: Modifier, onClick: () -> Unit) {
-    if (LocalTabShown.current) Playback.clock // counts down on the half-second clock, also while paused; not hidden
+    // Reading the clock makes the chip count down twice a second, also while paused. A hidden chip doesn't follow it.
+    if (LocalTabShown.current) Playback.clock
     val text = when {
         Playback.sleepAfterSong -> "Sleep when this song ends"
-        Playback.sleepAt != 0L -> "Sleep in ${((Playback.sleepAt - elapsedRealtime()) / 60_000 + 1).coerceAtLeast(1)} min"
+        Playback.sleepAt != 0L -> {
+            val minutes = ((Playback.sleepAt - elapsedRealtime()) / 60_000 + 1).coerceAtLeast(1)
+            "Sleep in $minutes min"
+        }
         else -> return
     }
     // One line, at most about 60% of a phone's width: with a large font it ends in "…" rather than reaching Translate.
-    Surface(modifier.padding(4.dp).widthIn(max = 240.dp), shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.secondaryContainer) {
-        Text(text, Modifier.clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Surface(
+        modifier.padding(4.dp).widthIn(max = 240.dp),
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+    ) {
+        Text(
+            text,
+            Modifier
+                .clickable(onClick = onClick)
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -263,13 +396,22 @@ private fun TranslateChip(found: LyricsState, lyricsShown: Boolean, modifier: Mo
     var busy by remember(found.songId) { mutableStateOf(false) }
     val lang = Store.translationLanguages().first()
     val enabled = !busy && lyricsShown && found.translations.none { it.language == lang }
-    Surface(modifier.padding(4.dp).dim(if (enabled) 1f else 0.38f), shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.secondaryContainer) {
+    Surface(
+        modifier.padding(4.dp).dim(if (enabled) 1f else 0.38f),
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+    ) {
         Text(
             if (busy) "Translating…" else "Translate",
-            Modifier.clickable(enabled) {
-                busy = true
-                Playback.googleTranslate(found.songId) { msg -> busy = false; if (msg != null) toast(msg, long = true) }
-            }.padding(horizontal = 12.dp, vertical = 4.dp),
+            Modifier
+                .clickable(enabled) {
+                    busy = true
+                    Playback.googleTranslate(found.songId) { msg ->
+                        busy = false
+                        if (msg != null) toast(msg, long = true)
+                    }
+                }
+                .padding(horizontal = 12.dp, vertical = 4.dp),
             style = MaterialTheme.typography.labelMedium,
         )
     }
@@ -278,7 +420,12 @@ private fun TranslateChip(found: LyricsState, lyricsShown: Boolean, modifier: Mo
 /** The lyric line at the seek bar's drag position, over the bottom of the upper area: where the drag would land. */
 @Composable
 private fun SeekPreview(line: Line, modifier: Modifier) {
-    Surface(modifier.padding(8.dp).fillMaxWidth(), shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.secondaryContainer, tonalElevation = 2.dp) {
+    Surface(
+        modifier.padding(8.dp).fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        tonalElevation = 2.dp,
+    ) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
             Text(line.text, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (line.latin.isNotBlank() && line.latin != line.text && Romanizer.hasNonLatin(line.text)) {
@@ -297,12 +444,46 @@ private fun SleepDialog(onDone: () -> Unit) {
         text = {
             Column {
                 listOf(15, 30, 45, 60, 90).forEach { m ->
-                    Text(if (m < 60) "$m minutes" else if (m == 60) "1 hour" else "1.5 hours", Modifier.fillMaxWidth().clickable { Playback.sleepIn(m); onDone() }.padding(vertical = 12.dp))
+                    val label = when {
+                        m < 60 -> "$m minutes"
+                        m == 60 -> "1 hour"
+                        else -> "1.5 hours"
+                    }
+                    Text(
+                        label,
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                Playback.sleepIn(m)
+                                onDone()
+                            }
+                            .padding(vertical = 12.dp),
+                    )
                 }
-                Text("When this song ends", Modifier.fillMaxWidth().clickable { Playback.sleepAtSongEnd(); onDone() }.padding(vertical = 12.dp))
+                Text(
+                    "When this song ends",
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            Playback.sleepAtSongEnd()
+                            onDone()
+                        }
+                        .padding(vertical = 12.dp),
+                )
             }
         },
-        confirmButton = { if (active) TextButton(onClick = { Playback.sleepOff(); onDone() }) { Text("Turn off") } },
+        confirmButton = {
+            if (active) {
+                TextButton(
+                    onClick = {
+                        Playback.sleepOff()
+                        onDone()
+                    },
+                ) {
+                    Text("Turn off")
+                }
+            }
+        },
         dismissButton = { TextButton(onClick = onDone) { Text("Cancel") } },
     )
 }
@@ -313,25 +494,48 @@ private fun RowScope.Slot(
     icon: Painter, description: String, enabled: Boolean, selected: Boolean = false, label: String? = null, iconSize: Int = 22,
     state: String? = null, onLongClick: (() -> Unit)? = null, longClickLabel: String? = null, onClick: () -> Unit,
 ) {
-    // A switch without a label (Shuffle, Repeat): on gets the pill, off is muted, but less than an unavailable control (0.3).
-    val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = if (state != null && label == null) 0.6f else 1f)
+    // A switch without a label (Shuffle, Repeat) gets the pill when on. When off it is muted, but less than an
+    // unavailable control (0.3).
+    val offAlpha = if (state != null && label == null) 0.6f else 1f
+    val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = offAlpha)
+    // A rounded background only when selected, not a rounded clip on every slot: one GPU program less.
+    val selectedBackground = if (selected) {
+        Modifier.background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(12.dp))
+    } else {
+        Modifier
+    }
     Box(
-        Modifier.weight(1f).widthIn(min = 48.dp).fillMaxHeight()
+        Modifier
+            .weight(1f)
+            .widthIn(min = 48.dp)
+            .fillMaxHeight()
             .padding(horizontal = 2.dp)
-            // A rounded background only when selected, not a rounded clip on every slot: one GPU program less.
-            .then(if (selected) Modifier.background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(12.dp)) else Modifier)
-            .combinedClickable(enabled = enabled, onClickLabel = description, role = Role.Button, onLongClick = onLongClick, onLongClickLabel = longClickLabel, onClick = onClick)
+            .then(selectedBackground)
+            .combinedClickable(
+                enabled = enabled,
+                onClickLabel = description,
+                role = Role.Button,
+                onLongClick = onLongClick,
+                onLongClickLabel = longClickLabel,
+                onClick = onClick,
+            )
             .semantics { if (state != null) stateDescription = state }
             .dim(if (enabled) 1f else 0.3f),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(icon, if (label != null) null else description, Modifier.size(iconSize.dp), tint = color) // a label is read instead
+            // With a label, the icon has no description, because the label is read instead.
+            Icon(icon, if (label != null) null else description, Modifier.size(iconSize.dp), tint = color)
             // Shrinks to fit rather than losing letters: with a large system font "Comments" is wider than its slot.
-            if (label != null) androidx.compose.foundation.text.BasicText(
-                label, style = androidx.compose.ui.text.TextStyle(color = color, lineHeight = 12.sp), maxLines = 1, softWrap = false,
-                autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(minFontSize = 7.sp, maxFontSize = 10.sp),
-            )
+            if (label != null) {
+                androidx.compose.foundation.text.BasicText(
+                    label,
+                    style = androidx.compose.ui.text.TextStyle(color = color, lineHeight = 12.sp),
+                    maxLines = 1,
+                    softWrap = false,
+                    autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(minFontSize = 7.sp, maxFontSize = 10.sp),
+                )
+            }
         }
     }
 }
@@ -339,44 +543,79 @@ private fun RowScope.Slot(
 @Composable
 private fun SeekBar(onPreview: (Long) -> Unit) {
     Playback.tick
-    // Hidden, the bar doesn't follow the clock: twice a second it redrew the window, a GPU wake-up each time. Shown
-    // again, reading LocalTabShown brings it up to date.
+    // A hidden bar doesn't follow the clock, because redrawing the window twice a second wakes the GPU each time.
+    // Shown again, reading LocalTabShown brings it up to date.
     if (LocalTabShown.current) Playback.clock
     val p = Playback.player
     val haptic = LocalHapticFeedback.current
-    // A song restored after a restart isn't prepared until Play: its known length stands in.
-    val duration = if (Playback.opening != null) 0L else Playback.pending?.let { it.durationSec * 1000L } ?: p.duration.takeIf { it > 0 } ?: Playback.current()?.song?.durationSec?.let { it * 1000L } ?: 0L
+    // The length comes from the song being prepared, else the player. A song restored after a restart isn't prepared
+    // until Play, so its known length stands in.
+    val duration = if (Playback.opening != null) {
+        0L
+    } else {
+        Playback.pending?.let { it.durationSec * 1000L }
+            ?: p.duration.takeIf { it > 0 }
+            ?: Playback.current()?.song?.durationSec?.let { it * 1000L }
+            ?: 0L
+    }
     var dragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableFloatStateOf(0f) }
     var snappedTo by remember { mutableLongStateOf(-1L) }
     var width by remember { mutableIntStateOf(1) }
     // Near a timed lyric line's start (12 dp of travel), a drag snaps to it with a tick, so a seek starts on a line
     // instead of a word into it.
-    val lyrics = Playback.lyrics?.takeIf { it.songId == Playback.shown()?.id }?.lyrics?.takeIf { it.synced }
+    val lyricsState = Playback.lyrics
+    val shownLyrics = if (lyricsState != null && lyricsState.songId == Playback.shown()?.id) lyricsState.lyrics else null
+    val lyrics = if (shownLyrics != null && shownLyrics.synced) shownLyrics else null
     val snapMs = with(LocalDensity.current) { 12.dp.toPx() } / width * duration
     // While a picked song is being prepared, the old one's progress would belong to another title: show the new start.
     val preparing = Playback.pending != null || Playback.opening != null
-    val pos = if (preparing) 0f else if (dragging) dragValue else p.currentPosition.toFloat()
-    // One line, about 28 dp: elapsed time, the bar, total time.
-    Row(Modifier.fillMaxWidth().height(28.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+    val pos = when {
+        preparing -> 0f
+        dragging -> dragValue
+        else -> p.currentPosition.toFloat()
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(28.dp)
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(time(pos.toLong()), Modifier.widthIn(min = 36.dp), fontSize = 12.sp, textAlign = TextAlign.Start, maxLines = 1)
         Slider(
             value = pos.coerceIn(0f, duration.toFloat().coerceAtLeast(1f)),
             onValueChange = { v ->
-                val near = lyrics?.lines?.minByOrNull { abs(it.startMs - v) }?.startMs?.takeIf { abs(it - v) < snapMs }
+                val nearest = lyrics?.lines?.minByOrNull { line -> abs(line.startMs - v) }?.startMs
+                val near = if (nearest != null && abs(nearest - v) < snapMs) nearest else null
                 if (near != null && near != snappedTo) haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
                 snappedTo = near ?: -1L
                 dragging = true
                 dragValue = near?.toFloat() ?: v
                 onPreview(dragValue.toLong())
             },
-            onValueChangeFinished = { p.seekTo(dragValue.toLong()); dragging = false; snappedTo = -1L; onPreview(-1L) },
+            onValueChangeFinished = {
+                p.seekTo(dragValue.toLong())
+                dragging = false
+                snappedTo = -1L
+                onPreview(-1L)
+            },
             valueRange = 0f..duration.toFloat().coerceAtLeast(1f),
             enabled = duration > 0 && Playback.pending == null,
-            modifier = Modifier.weight(1f).height(28.dp).padding(horizontal = 8.dp).onSizeChanged { width = it.width.coerceAtLeast(1) }
+            modifier = Modifier
+                .weight(1f)
+                .height(28.dp)
+                .padding(horizontal = 8.dp)
+                .onSizeChanged { width = it.width.coerceAtLeast(1) }
                 .semantics { stateDescription = "${time(pos.toLong())} of ${time(duration)}" },
         )
-        Text(if (duration > 0) time(duration) else "", Modifier.widthIn(min = 36.dp), fontSize = 12.sp, textAlign = TextAlign.End, maxLines = 1)
+        Text(
+            if (duration > 0) time(duration) else "",
+            Modifier.widthIn(min = 36.dp),
+            fontSize = 12.sp,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+        )
     }
 }
 
@@ -392,7 +631,11 @@ private fun time(ms: Long): String {
 @Composable
 private fun SongView() {
     Playback.tick
-    val s = Playback.shown() ?: return if (Playback.restoring) Unit else Centered("Nothing playing. Pick a song in Home, Search or Library.")
+    val s = Playback.shown()
+    if (s == null) {
+        if (!Playback.restoring) Centered("Nothing playing. Pick a song in Home, Search or Library.")
+        return
+    }
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     var dx by remember { mutableFloatStateOf(0f) }
@@ -404,34 +647,48 @@ private fun SongView() {
     val leave = with(LocalDensity.current) { 96.dp.toPx() }
     val pop = remember { Animatable(0f) }
     Box(
-        Modifier.fillMaxSize().onSizeChanged { width = it.width.coerceAtLeast(1) }
+        Modifier
+            .fillMaxSize()
+            .onSizeChanged { width = it.width.coerceAtLeast(1) }
             .pointerInput(Unit) {
                 detectTapGestures(onDoubleTap = {
                     // Only likes, never unlikes: a double tap by accident shouldn't undo one.
                     val song = Playback.shown() ?: return@detectTapGestures
-                    if (!Playback.canLike(song)) return@detectTapGestures haptic.performHapticFeedback(HapticFeedbackType.Reject)
+                    if (!Playback.canLike(song)) {
+                        haptic.performHapticFeedback(HapticFeedbackType.Reject)
+                        return@detectTapGestures
+                    }
                     if (song.id !in Playback.liked) Playback.toggleLike(song)
                     haptic.performHapticFeedback(HapticFeedbackType.ToggleOn)
-                    scope.launch { pop.snapTo(1f); pop.animateTo(0f, tween(700)) }
+                    scope.launch {
+                        pop.snapTo(1f)
+                        pop.animateTo(0f, tween(700))
+                    }
                 })
             }
             .pointerInput(Unit) {
                 val tracker = VelocityTracker()
-                var axis = 0 // 0: not decided yet, 1: sideways, 2: down
+                // 0 while the direction isn't decided yet, 1 for sideways, 2 for down.
+                var axis = 0
                 var armed = false
                 fun settle() = scope.launch {
                     launch { animate(dx, 0f) { v, _ -> dx = v } }
                     animate(dy, 0f) { v, _ -> dy = v }
                 }
                 detectDragGestures(
-                    onDragStart = { tracker.resetTracking(); axis = 0; armed = false },
+                    onDragStart = {
+                        tracker.resetTracking()
+                        axis = 0
+                        armed = false
+                    },
                     onDragCancel = { settle() },
                     onDrag = { change, d ->
                         tracker.addPointerInputChange(change)
                         if (axis == 0) axis = if (abs(d.x) >= abs(d.y)) 1 else 2
                         if (axis == 1) {
                             val target = if (dx + d.x < 0) targets.first else targets.second
-                            dx += if (target < 0) d.x * 0.3f else d.x // nothing there: it resists
+                            // With no song on that side, the page resists the drag.
+                            dx += if (target < 0) d.x * 0.3f else d.x
                             val past = target >= 0 && abs(dx) > width * 0.25f
                             if (past && !armed) haptic.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
                             armed = past
@@ -442,16 +699,25 @@ private fun SongView() {
                     onDragEnd = {
                         val v = tracker.calculateVelocity()
                         if (axis == 2) {
-                            if (dy > leave || v.y > 2000f) { Nav.leavePlayer(); dy = 0f } else settle()
+                            if (dy > leave || v.y > 2000f) {
+                                Nav.leavePlayer()
+                                dy = 0f
+                            } else {
+                                settle()
+                            }
                             return@detectDragGestures
                         }
                         val toNext = dx < 0
                         val target = if (toNext) targets.first else targets.second
                         val flung = abs(v.x) > 1000f && (v.x < 0) == toNext
-                        if (target < 0 || !(armed || flung)) { settle(); return@detectDragGestures }
+                        if (target < 0 || !(armed || flung)) {
+                            settle()
+                            return@detectDragGestures
+                        }
                         scope.launch {
                             animate(dx, if (toNext) -width.toFloat() else width.toFloat()) { x, _ -> dx = x }
-                            Playback.skipTo(target) // the target is shown at once (pending), so the page snaps back under it
+                            // The target is shown at once (as pending), so the page snaps back under it.
+                            Playback.skipTo(target)
                             dx = 0f
                         }
                     },
@@ -459,27 +725,49 @@ private fun SongView() {
             },
     ) {
         // The neighbour is composed only while a drag shows it.
-        val peek = if (side < 0) targets.first else if (side > 0) targets.second else -1
-        Playback.songAt(peek)?.let { n ->
-            SongPage(n, current = false, Modifier.graphicsLayer { translationX = dx + if (dx < 0) width else -width })
+        val peek = when {
+            side < 0 -> targets.first
+            side > 0 -> targets.second
+            else -> -1
+        }
+        val neighbour = Playback.songAt(peek)
+        if (neighbour != null) {
+            SongPage(neighbour, current = false, Modifier.graphicsLayer {
+                val offset = if (dx < 0) width else -width
+                translationX = dx + offset
+            })
         }
         SongPage(s, current = true, Modifier.graphicsLayer {
             translationX = dx
             translationY = dy
             alpha = 1f - (dy / (leave * 3)).coerceIn(0f, 0.5f)
         })
-        if (pop.value > 0f) Icon(
-            Icons.Filled.ThumbUp, null,
-            Modifier.align(Alignment.Center).size(96.dp).graphicsLayer { alpha = pop.value; scaleX = 1.4f - 0.4f * pop.value; scaleY = scaleX },
-            tint = MaterialTheme.colorScheme.primary,
-        )
+        if (pop.value > 0f) {
+            Icon(
+                Icons.Filled.ThumbUp,
+                null,
+                Modifier
+                    .align(Alignment.Center)
+                    .size(96.dp)
+                    .graphicsLayer {
+                        alpha = pop.value
+                        scaleX = 1.4f - 0.4f * pop.value
+                        scaleY = scaleX
+                    },
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
     }
 }
 
 /** A mix from Home while its songs load: its cover and name, then its first song as soon as that's known. */
 @Composable
 private fun OpeningPage(title: String, thumb: String?) {
-    Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
         if (thumb != null) Thumb(shownThumb(thumb, 240.dp), 240.dp, Modifier.size(240.dp).clip(RoundedCornerShape(8.dp)))
         Spacer(Modifier.height(16.dp))
         Text(title, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
@@ -490,35 +778,76 @@ private fun OpeningPage(title: String, thumb: String?) {
 
 @Composable
 private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
-    Column(modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+    Column(
+        modifier.fillMaxSize().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
         // Until the large art arrives, the list's thumbnail of this song (row or card size) stands in, if it's in memory.
         val density = androidx.compose.ui.platform.LocalDensity.current
         val placeholder = listOf(48.dp, 56.dp, 128.dp).firstNotNullOfOrNull { d ->
             val px = with(density) { d.roundToPx() }
-            thumbAt(s.thumb, px)?.let { Images.peek(it, px) }
+            val url = thumbAt(s.thumb, px)
+            if (url == null) null else Images.peek(url, px)
         }
-        ThumbPx(s.thumb?.let(::bigThumb), BIG_PX, Modifier.weight(1f, fill = false).aspectRatio(1f).clip(RoundedCornerShape(8.dp)), placeholder = placeholder)
+        val thumb = s.thumb
+        val big = if (thumb == null) null else bigThumb(thumb)
+        ThumbPx(
+            big,
+            BIG_PX,
+            Modifier
+                .weight(1f, fill = false)
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(8.dp)),
+            placeholder = placeholder,
+        )
         Spacer(Modifier.height(16.dp))
         // Tapping the title opens its album, the artist their page (as More → Go to album / artist). Long-pressing either
         // opens the correction dialog, the same as More → Correct romanization.
         var fixing by remember { mutableStateOf(false) }
-        fun Modifier.goTo(kind: String, id: String?) = combinedClickable(
-            onClickLabel = id?.let { "Go to $kind" }, onLongClickLabel = "Correct romanization".takeIf { s.romanizable }, onLongClick = { fixing = true }.takeIf { s.romanizable },
-        ) { if (id != null) Nav.open(Page(kind, id)) }
-        Column(Modifier.goTo("album", s.album?.id)) { Name(s.title, Store.playerMode, style = MaterialTheme.typography.headlineSmall, center = true) }
+        fun Modifier.goTo(kind: String, id: String?): Modifier {
+            val clickLabel = if (id != null) "Go to $kind" else null
+            val longClickLabel = if (s.romanizable) "Correct romanization" else null
+            var onLongClick: (() -> Unit)? = null
+            if (s.romanizable) onLongClick = { fixing = true }
+            return combinedClickable(
+                onClickLabel = clickLabel,
+                onLongClickLabel = longClickLabel,
+                onLongClick = onLongClick,
+            ) {
+                if (id != null) Nav.open(Page(kind, id))
+            }
+        }
+        Column(Modifier.goTo("album", s.album?.id)) {
+            Name(s.title, Store.playerMode, style = MaterialTheme.typography.headlineSmall, center = true)
+        }
         Spacer(Modifier.height(4.dp))
-        Column(Modifier.goTo("artist", s.firstArtistId)) { Name(s.artistText, Store.playerMode, style = MaterialTheme.typography.titleMedium, center = true) }
+        Column(Modifier.goTo("artist", s.firstArtistId)) {
+            Name(s.artistText, Store.playerMode, style = MaterialTheme.typography.titleMedium, center = true)
+        }
         if (fixing) CorrectDialog(s) { fixing = false }
         if (current && Playback.waitingForNetwork) {
             Spacer(Modifier.height(8.dp))
             Text("Waiting for network…", color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         }
-        if (current) Playback.error?.let {
-            Spacer(Modifier.height(8.dp))
-            Text("Can't play this song: $it", color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
-            Row {
-                TextButton(onClick = { Playback.player.prepare(); Playback.player.play() }) { Text("Retry") }
-                if (Playback.player.hasNextMediaItem()) TextButton(onClick = { Playback.next() }) { Text("Play the next song") }
+        if (current) {
+            val error = Playback.error
+            if (error != null) {
+                Spacer(Modifier.height(8.dp))
+                Text("Can't play this song: $error", color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+                Row {
+                    TextButton(
+                        onClick = {
+                            Playback.player.prepare()
+                            Playback.player.play()
+                        },
+                    ) {
+                        Text("Retry")
+                    }
+                    if (Playback.player.hasNextMediaItem()) {
+                        TextButton(onClick = { Playback.next() }) { Text("Play the next song") }
+                    }
+                }
             }
         }
     }
@@ -533,29 +862,53 @@ private fun QueueView() {
     // The next songs are the likely taps here.
     val shown = LocalTabShown.current
     LaunchedEffect(shown) { if (shown) Playback.prepare(all.drop(cur + 1).map { it.song }) }
-    val rows = ArrayList<Pair<String?, Int>>() // header or entry index
-    if (cur in all.indices) { rows.add("Now" to -1); rows.add(null to cur) }
+    // Each row is a header with -1, or null with an entry's index.
+    val rows = ArrayList<Pair<String?, Int>>()
+    if (cur in all.indices) {
+        rows.add("Now" to -1)
+        rows.add(null to cur)
+    }
     val queued = (cur + 1 until all.size).filter { all[it].section == "queued" }
     val radio = (cur + 1 until all.size).filter { all[it].section == "radio" }
-    if (queued.isNotEmpty()) { rows.add("You queued" to -1); queued.forEach { rows.add(null to it) } }
-    if (radio.isNotEmpty()) { rows.add("Radio" to -1); radio.forEach { rows.add(null to it) } }
-    if (queued.isEmpty() && radio.isEmpty()) rows.add((if (Store.stopAtEnd) "Nothing next: autoplay is off" else "Nothing next yet") to -1)
+    if (queued.isNotEmpty()) {
+        rows.add("You queued" to -1)
+        for (i in queued) rows.add(null to i)
+    }
+    if (radio.isNotEmpty()) {
+        rows.add("Radio" to -1)
+        for (i in radio) rows.add(null to i)
+    }
+    if (queued.isEmpty() && radio.isEmpty()) {
+        val note = if (Store.stopAtEnd) "Nothing next: autoplay is off" else "Nothing next yet"
+        rows.add(note to -1)
+    }
     val list = androidx.compose.foundation.lazy.rememberLazyListState()
     PrefetchCovers(all.drop(cur + 1).map { it.song.thumb }, 48.dp, list)
-    Box { LazyColumn(Modifier.fillMaxSize().padding(top = CHIP_STRIP), list) {
-        itemsIndexed(rows, contentType = { _, (header, _) -> header == null }) { _, (header, i) ->
-            if (header != null) {
-                Text(header, Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-            } else {
-                val e = all[i]
-                // "saved": the whole song is on the phone, so it plays with no network.
-                val extra = listOfNotNull(e.song.reason, "saved".takeIf { Playback.player.fullyCached(e.song.id) }).joinToString(" · ").ifEmpty { null }
-                SongRow(e.song, highlight = i == cur, extra = extra, onMenu = { menuFor = i }) { Playback.skipTo(i) }
+    Box {
+        LazyColumn(Modifier.fillMaxSize().padding(top = CHIP_STRIP), list) {
+            itemsIndexed(rows, contentType = { _, (header, _) -> header == null }) { _, (header, i) ->
+                if (header != null) {
+                    Text(
+                        header,
+                        Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                } else {
+                    val e = all[i]
+                    // "saved" means the whole song is on the phone, so it plays with no network.
+                    val saved = if (Playback.player.fullyCached(e.song.id)) "saved" else null
+                    val extra = listOfNotNull(e.song.reason, saved).joinToString(" · ").ifEmpty { null }
+                    SongRow(e.song, highlight = i == cur, extra = extra, onMenu = { menuFor = i }) { Playback.skipTo(i) }
+                }
             }
         }
+        FastScroll(list)
     }
-    FastScroll(list) }
-    menuFor?.let { i -> if (i in all.indices) SongMenu(all[i].song, queueIndex = i) { menuFor = null } }
+    val menuIndex = menuFor
+    if (menuIndex != null && menuIndex in all.indices) {
+        SongMenu(all[menuIndex].song, queueIndex = menuIndex) { menuFor = null }
+    }
 }
 
 @Composable
@@ -564,17 +917,28 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
     val showTranslation = Store.bool("lyrics.layer.translation", true)
     val wantedLang = Store.str("lyrics.translationLang", "device")
     val shown = remember(found, showTranslation, wantedLang) {
-        attachTranslation(bare, if (showTranslation) pickTranslation(bare, found.translations, Store.translationLanguages()) else null)
+        val translation = if (showTranslation) {
+            pickTranslation(bare, found.translations, Store.translationLanguages())
+        } else {
+            null
+        }
+        attachTranslation(bare, translation)
     }
     val lines = shown.lines
     val synced = shown.synced
-    // The current line and word follow the position: the loop sleeps until the next line or word starts, or until a
-    // player change (Playback.tick: a seek, pause, start or speed change) comes first. Not once per display frame:
-    // at 120 Hz that woke the main thread 120 times a second for a word change every few hundred ms, about 5% of a
-    // core on the phone (2026-10-26). While paused, only a player change moves the position.
+    // The current line and word follow the position. The loop sleeps until the next line or word starts, or until a
+    // player change (Playback.tick: a seek, pause, start or speed change) comes first. It doesn't run once per display
+    // frame: at 120 Hz that would wake the main thread 120 times a second for a word change every few hundred ms.
+    // While paused, only a player change moves the position.
     // The view opens (or the lyrics arrive) already at the current line: it is read from the player here, before the
     // first frame, and the list starts there. Only later line changes scroll smoothly.
-    val startLine = remember(lines) { if (synced && Playback.pending == null) lines.indexOfLast { it.startMs <= Playback.player.currentPosition } else -1 }
+    val startLine = remember(lines) {
+        if (synced && Playback.pending == null) {
+            lines.indexOfLast { it.startMs <= Playback.player.currentPosition }
+        } else {
+            -1
+        }
+    }
     var current by remember(lines) { mutableIntStateOf(startLine) }
     var currentWord by remember(lines) { mutableIntStateOf(-1) }
     // Paused while another tab is shown; back on screen, it starts again from the current position.
@@ -589,10 +953,16 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
             val word = words?.indexOfLast { it.startMs <= pos } ?: -1
             current = line
             currentWord = word
-            val next = minOf(lines.getOrNull(line + 1)?.startMs ?: Long.MAX_VALUE, words?.getOrNull(word + 1)?.startMs ?: Long.MAX_VALUE)
+            val nextLineStart = lines.getOrNull(line + 1)?.startMs ?: Long.MAX_VALUE
+            val nextWordStart = words?.getOrNull(word + 1)?.startMs ?: Long.MAX_VALUE
+            val next = minOf(nextLineStart, nextWordStart)
             val change = snapshotFlow { Playback.tick to Playback.pending }.filter { it != seen }
-            if (!Playback.player.isPlaying || pos < 0 || next == Long.MAX_VALUE) change.first()
-            else withTimeoutOrNull(((next - pos) / Playback.player.speed).toLong().coerceAtLeast(1)) { change.first() }
+            if (!Playback.player.isPlaying || pos < 0 || next == Long.MAX_VALUE) {
+                change.first()
+            } else {
+                val waitMs = ((next - pos) / Playback.player.speed).toLong().coerceAtLeast(1)
+                withTimeoutOrNull(waitMs) { change.first() }
+            }
         }
     }
     val state = remember(lines) { LazyListState(firstVisibleItemIndex = if (startLine > 2) startLine - 2 else 0) }
@@ -601,59 +971,79 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
     val ruby = Store.lyricsRuby
     // Whether the song is Japanese, for the "scripts you read" check: kana in any line, as romanization decides it.
     val sib = remember(lines) { lines.map { it.text }.filter { t -> t.any(Romanizer::isKana) }.take(1) }
-    var fixWord by remember { mutableStateOf<Pair<String, String>?>(null) } // word, its romaji in the line
+    // The word being corrected and its romaji in this line.
+    var fixWord by remember { mutableStateOf<Pair<String, String>?>(null) }
     // At the start line the list is already in place, so this first run doesn't move it.
     LaunchedEffect(current) { if (current > 2) state.animateScrollToItem(current - 2) }
     // Lines scroll out below the chips' strip (Translate, the sleep timer), so a chip never covers one.
-    Box { LazyColumn(Modifier.fillMaxSize().padding(start = 20.dp, end = 20.dp, top = CHIP_STRIP), state = state) {
-        itemsIndexed(lines) { i, line ->
-            val active = i == current
-            val alpha = if (!synced || active) 1f else 0.45f
-            Column(
-                Modifier.fillMaxWidth().dim(alpha)
-                    .pointerInput(line) { detectTapGestures(onTap = { if (synced) Playback.player.seekTo(line.startMs) }) }
-                    .padding(vertical = 8.dp),
-            ) {
-                val wordIndex = if (active) currentWord else -1
-                // Same weight on every line: bolding the active line widened it and re-wrapped long lines mid-song.
-                val big = MaterialTheme.typography.titleLarge.copy(lineBreak = LYRIC_BREAK)
-                val seek = { if (synced) Playback.player.seekTo(line.startMs) }
-                // Karaoke lines show their timed words; other lines their words as romanization splits them.
-                val karaoke = line.words.isNotEmpty()
-                val units = if (karaoke) line.words.map { it.text } else line.pieces
-                val unitLatin = if (karaoke) line.wordLatin else line.pieceLatin
-                val latinShown = showLatin && line.latin.isNotBlank() && line.latin != line.text && Romanizer.hasNonLatin(line.text) && !Store.reads(line.text, sib)
-                // A romaji word covers every syllable of its Japanese word but sits on the first one's slot (さよなら:
-                // "sayonara" on さ, nothing on よなら), so it stays lit while the later syllables play.
-                val latinIndex = (wordIndex downTo 0).firstOrNull { unitLatin.getOrNull(it)?.isNotBlank() == true } ?: wordIndex
-                val fix = { unit: Int -> fixWord = wordAt(line, units, unit) ?: fixWord }
-                if (ruby && showOriginal && latinShown && line.pieces.size == line.pieceLatin.size) {
-                    // Ruby sets whole words, not karaoke syllables (which would scatter 二|人 apart): the word holding
-                    // the syllable being sung is lit.
-                    val piece = if (karaoke && wordIndex >= 0) pieceAt(line, units, wordIndex) else wordIndex
-                    RubyLine(line.pieces, line.pieceLatin, piece, big, onTap = seek) { i -> fixWord = wordAt(line, line.pieces, i) ?: fixWord }
-                } else {
-                    // A line with no romanization shown (Latin, or a script the user reads) shows its original: it is the only text there is.
-                    if ((showOriginal || !latinShown) && line.text.isNotBlank()) WordsText(units, line.text, wordIndex, big, seek, fix)
-                    if (latinShown) WordsText(unitLatin, line.latin, latinIndex, MaterialTheme.typography.bodyLarge, seek, fix)
+    Box {
+        LazyColumn(Modifier.fillMaxSize().padding(start = 20.dp, end = 20.dp, top = CHIP_STRIP), state = state) {
+            itemsIndexed(lines) { i, line ->
+                val active = i == current
+                val alpha = if (!synced || active) 1f else 0.45f
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .dim(alpha)
+                        .pointerInput(line) {
+                            detectTapGestures(onTap = { if (synced) Playback.player.seekTo(line.startMs) })
+                        }
+                        .padding(vertical = 8.dp),
+                ) {
+                    val wordIndex = if (active) currentWord else -1
+                    // Every line has the same weight, because bolding the active line would widen it and re-wrap long
+                    // lines mid-song.
+                    val big = MaterialTheme.typography.titleLarge.copy(lineBreak = LYRIC_BREAK)
+                    val seek = { if (synced) Playback.player.seekTo(line.startMs) }
+                    // Karaoke lines show their timed words; other lines their words as romanization splits them.
+                    val karaoke = line.words.isNotEmpty()
+                    val units = if (karaoke) line.words.map { it.text } else line.pieces
+                    val unitLatin = if (karaoke) line.wordLatin else line.pieceLatin
+                    val latinShown = showLatin &&
+                        line.latin.isNotBlank() &&
+                        line.latin != line.text &&
+                        Romanizer.hasNonLatin(line.text) &&
+                        !Store.reads(line.text, sib)
+                    // A romaji word covers every syllable of its Japanese word but sits on the first one's slot (さよなら:
+                    // "sayonara" on さ, nothing on よなら), so it stays lit while the later syllables play.
+                    val latinIndex = (wordIndex downTo 0).firstOrNull { k -> unitLatin.getOrNull(k)?.isNotBlank() == true } ?: wordIndex
+                    val fix = { unit: Int -> fixWord = wordAt(line, units, unit) ?: fixWord }
+                    if (ruby && showOriginal && latinShown && line.pieces.size == line.pieceLatin.size) {
+                        // Ruby sets whole words, not karaoke syllables (which would scatter 二|人 apart), so the word holding
+                        // the syllable being sung is lit.
+                        val piece = if (karaoke && wordIndex >= 0) pieceAt(line, units, wordIndex) else wordIndex
+                        RubyLine(line.pieces, line.pieceLatin, piece, big, onTap = seek) { pieceIndex ->
+                            fixWord = wordAt(line, line.pieces, pieceIndex) ?: fixWord
+                        }
+                    } else {
+                        // A line with no romanization shown (Latin, or a script the user reads) shows its original, because
+                        // it is the only text there is.
+                        if ((showOriginal || !latinShown) && line.text.isNotBlank()) WordsText(units, line.text, wordIndex, big, seek, fix)
+                        if (latinShown) WordsText(unitLatin, line.latin, latinIndex, MaterialTheme.typography.bodyLarge, seek, fix)
+                    }
+                    val translation = line.translation
+                    if (!translation.isNullOrBlank()) {
+                        Text(translation, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
-                val translation = line.translation
-                if (!translation.isNullOrBlank()) {
-                    Text(translation, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            item {
+                val small = MaterialTheme.typography.labelSmall
+                val c = MaterialTheme.colorScheme.onSurfaceVariant
+                Column(Modifier.padding(top = 16.dp, bottom = 24.dp)) {
+                    Text("Lyrics: ${shown.source}", style = small, color = c)
+                    val translationSource = shown.translationSource
+                    if (translationSource != null) Text("Translation: $translationSource", style = small, color = c)
                 }
             }
         }
-        item {
-            val small = MaterialTheme.typography.labelSmall
-            val c = MaterialTheme.colorScheme.onSurfaceVariant
-            Column(Modifier.padding(top = 16.dp, bottom = 24.dp)) {
-                Text("Lyrics: ${shown.source}", style = small, color = c)
-                shown.translationSource?.let { Text("Translation: $it", style = small, color = c) }
-            }
-        }
+        val hasText = lines.any { it.text.isNotBlank() }
+        TranslateChip(found, hasText && showTranslation, Modifier.align(Alignment.TopEnd))
     }
-    TranslateChip(found, lines.any { it.text.isNotBlank() } && showTranslation, Modifier.align(Alignment.TopEnd)) }
-    fixWord?.let { (w, latin) -> if (songId != null) WordDialog(w, latin, songId) { fixWord = null } }
+    val fixing = fixWord
+    if (fixing != null && songId != null) {
+        WordDialog(fixing.first, fixing.second, songId) { fixWord = null }
+    }
 }
 
 /**
@@ -671,8 +1061,11 @@ private fun wordAt(line: Line, units: List<String>, unit: Int): Pair<String, Str
 /** The index of the piece holding display unit [unit], or -1. */
 private fun pieceAt(line: Line, units: List<String>, unit: Int): Int {
     val u = units.getOrNull(unit) ?: return -1
+    val before = units.take(unit).sumOf { it.length }
+    val leadingSpaces = u.length - u.trimStart().length
     // Karaoke parts join into the line plus, at most, the spaces it was trimmed of.
-    val at = units.take(unit).sumOf { it.length } + (u.length - u.trimStart().length) - units.joinToString("").indexOf(line.text).coerceAtLeast(0)
+    val lineStart = units.joinToString("").indexOf(line.text).coerceAtLeast(0)
+    val at = before + leadingSpaces - lineStart
     var start = 0
     line.pieces.forEachIndexed { k, p ->
         if (at < start + p.length) return k
@@ -713,14 +1106,26 @@ fun RubyLine(
     ) {
         units.forEachIndexed { i, u ->
             if (u.isBlank()) return@forEachIndexed
+            val taps = if (onTap == null) {
+                Modifier
+            } else {
+                Modifier.pointerInput(i) {
+                    detectTapGestures(
+                        onTap = { latest.first?.invoke() },
+                        onLongPress = { latest.second(i) },
+                    )
+                }
+            }
+            val highlight = if (i == current) Modifier.background(hi.copy(alpha = 0.18f)) else Modifier
             Column(
                 Modifier
-                    .then(if (onTap == null) Modifier else Modifier.pointerInput(i) { detectTapGestures(onTap = { latest.first?.invoke() }, onLongPress = { latest.second(i) }) })
-                    .then(if (i == current) Modifier.background(hi.copy(alpha = 0.18f)) else Modifier),
+                    .then(taps)
+                    .then(highlight),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 // An empty slot (punctuation, a word already in Latin letters) keeps the words on one baseline.
-                Text((if (Romanizer.hasNonLatin(u)) latin[i].trim() else "").ifEmpty { " " }, style = latinStyle, color = color(i, latinStyle.color.takeOrElse { on }))
+                val romaji = if (Romanizer.hasNonLatin(u)) latin[i].trim() else ""
+                Text(romaji.ifEmpty { " " }, style = latinStyle, color = color(i, latinStyle.color.takeOrElse { on }))
                 Text(u.trim(), style = style, color = color(i, style.color.takeOrElse { on }))
             }
         }
@@ -732,28 +1137,39 @@ fun RubyLine(
  * tinted background, and words still to come are dimmed. Long-pressing a word offers to fix its reading.
  */
 @Composable
-private fun WordsText(words: List<String>, whole: String, current: Int, style: androidx.compose.ui.text.TextStyle, onTap: () -> Unit, onLongPressUnit: (Int) -> Unit) {
+private fun WordsText(
+    words: List<String>,
+    whole: String,
+    current: Int,
+    style: androidx.compose.ui.text.TextStyle,
+    onTap: () -> Unit,
+    onLongPressUnit: (Int) -> Unit,
+) {
     val hi = MaterialTheme.colorScheme.primary
     val sung = SpanStyle(color = MaterialTheme.colorScheme.onSurface)
     val now = SpanStyle(color = hi, background = hi.copy(alpha = 0.18f))
     val coming = SpanStyle(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f))
     val ranges = ArrayList<IntRange>()
-    val text: AnnotatedString = if (words.isEmpty()) AnnotatedString(whole) else buildAnnotatedString {
-        words.forEachIndexed { i, w ->
-            val start = length
-            val st = when {
-                current < 0 -> null
-                i < current -> sung
-                i == current -> now
-                else -> coming
+    val text: AnnotatedString = if (words.isEmpty()) {
+        AnnotatedString(whole)
+    } else {
+        buildAnnotatedString {
+            words.forEachIndexed { i, w ->
+                val start = length
+                val st = when {
+                    current < 0 -> null
+                    i < current -> sung
+                    i == current -> now
+                    else -> coming
+                }
+                if (st == null) append(w) else withStyle(st) { append(w) }
+                ranges.add(start until length)
             }
-            if (st == null) append(w) else withStyle(st) { append(w) }
-            ranges.add(start until length)
         }
     }
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
-    // The handler reads the latest values instead of restarting with each karaoke step: keyed on the styled text,
-    // a tap or long press on the line being sung was dropped whenever the next word lit up.
+    // The handler reads the latest values instead of restarting with each karaoke step. Keyed on the styled text, it
+    // would drop a tap or long press on the line being sung whenever the next word lit up.
     val latest by rememberUpdatedState(Triple(ranges, onTap, onLongPressUnit))
     Text(
         text,
@@ -766,7 +1182,8 @@ private fun WordsText(words: List<String>, whole: String, current: Int, style: a
                     val offset = layout?.getOffsetForPosition(o) ?: return@detectTapGestures
                     val (rs, _, press) = latest
                     // Past the end of a unit (the gap after a line's last word) counts as the unit before.
-                    val unit = rs.indexOfFirst { offset in it }.takeIf { it >= 0 } ?: rs.indexOfLast { it.first <= offset }
+                    var unit = rs.indexOfFirst { range -> offset in range }
+                    if (unit < 0) unit = rs.indexOfLast { range -> range.first <= offset }
                     if (unit >= 0) press(unit)
                 },
             )
@@ -774,14 +1191,15 @@ private fun WordsText(words: List<String>, whole: String, current: Int, style: a
     )
 }
 
-
 /** The top of the lyrics, comments and queue, where the Translate and sleep chips sit: a chip's height, which grows with the font. */
 internal val CHIP_STRIP: androidx.compose.ui.unit.Dp
     @Composable get() = with(LocalDensity.current) { MaterialTheme.typography.labelMedium.lineHeight.toDp() } + 20.dp
 
 @Composable
 fun Centered(text: String) {
-    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) { Text(text, textAlign = TextAlign.Center) }
+    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+        Text(text, textAlign = TextAlign.Center)
+    }
 }
 
 /** A speech-bubble-like lyrics icon; material-icons-core has none. */

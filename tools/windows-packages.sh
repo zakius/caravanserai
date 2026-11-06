@@ -1,12 +1,13 @@
 #!/bin/bash
-# The Windows packages, from the release app image (createReleaseDistributable, whose Skia ICU data is trimmed):
-# roma ytm's:
+# Builds roma ytm's Windows packages from the release app image (createReleaseDistributable, whose Skia ICU data is
+# trimmed):
 # - dist/roma-ytm-<version>-x64-full.msi, with its own Java;
-# - dist/roma-ytm-<version>-x64.msi and dist/roma-ytm-<version>-windows-x64.zip, small: the app without its Java runtime,
-#   started by packaging/windows/Launcher.cs, which finds Java 21+ on the machine or downloads Temurin's JRE once
-#   (about 49 MB). As finimal's small build, without libmpv. Its image stays in desktop/build/windows-small for CI.
-# Not packageReleaseMsi's .msi: that task unpacks Skia's files again, untrimmed. It runs first for the WiX toolset
-# jpackage needs.
+# - dist/roma-ytm-<version>-x64.msi and dist/roma-ytm-<version>-windows-x64.zip, the small builds: the app without its
+#   Java runtime, started by packaging/windows/Launcher.cs, which finds Java 21 or later on the machine or downloads
+#   Temurin's JRE once (about 49 MB). This follows finimal's small build, minus libmpv. The small app image stays in
+#   desktop/build/windows-small for CI.
+# The .msi from packageReleaseMsi isn't used, because that task unpacks Skia's files again, untrimmed. It still runs
+# first, to fetch the WiX toolset that jpackage needs.
 # Runs on Windows (Git Bash) after :desktop:packageReleaseMsi :desktop:createReleaseDistributable.
 # Usage: tools/windows-packages.sh
 set -euo pipefail
@@ -40,10 +41,11 @@ rm -f "$small/roma-ytm.exe" # jpackage's launcher, read-only
 cp "$tmp/roma-ytm.exe" "$small/roma-ytm.exe"
 (cd "$(dirname "$small")" && 7z a -tzip -mx=9 "$OLDPWD/dist/roma-ytm-$version-windows-x64.zip" roma-ytm > /dev/null)
 
-# The installers: the same upgrade code, so either build replaces the other.
+# Both installers share one upgrade code, so either build replaces the other.
 candle=$(find desktop/build build ~/AppData/Local -name candle.exe 2> /dev/null | head -n 1)
 [ -n "$candle" ] || { echo "No WiX toolset (candle.exe) found" >&2; exit 1; }
-msi() { # app image, output
+# Builds an .msi from an app image. Arguments: app image, output file.
+msi() {
   rm -rf "$tmp/msi"
   PATH="$(dirname "$candle"):$PATH" "$JAVA_HOME/bin/jpackage" --type msi --app-image "$(cygpath -w "$1")" \
     --name roma-ytm --app-version "$version" --vendor zakius --description "YouTube Music, every title and lyric romanized" \

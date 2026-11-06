@@ -19,41 +19,50 @@ import roma.core.LastFm
 
 class MainActivity : ComponentActivity() {
     override fun dispatchTouchEvent(e: android.view.MotionEvent): Boolean {
-        Touch.down = e.actionMasked != android.view.MotionEvent.ACTION_UP && e.actionMasked != android.view.MotionEvent.ACTION_CANCEL
+        val action = e.actionMasked
+        Touch.down = action != android.view.MotionEvent.ACTION_UP && action != android.view.MotionEvent.ACTION_CANCEL
         Touch.last = e.eventTime
-        // A frame while the finger is down wakes the GPU, which sleeps after about 80 ms without frames: waking it took
-        // 7 to 12 ms of the frame that answered the tap (Snapdragon 8 Gen 2, 2026-10-27). A press that draws nothing
-        // of its own (a list row) then left all of that to the tap's frame.
-        if (e.actionMasked == android.view.MotionEvent.ACTION_DOWN) window.decorView.invalidate()
+        // The GPU sleeps after about 80 ms without frames, and waking it costs several milliseconds. Drawing a frame as
+        // the finger goes down wakes it early, so the frame that answers the tap doesn't pay for it. Presses that draw
+        // nothing of their own, such as a list row, need this most.
+        if (action == android.view.MotionEvent.ACTION_DOWN) window.decorView.invalidate()
         return super.dispatchTouchEvent(e)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // The splash goes the moment roma's first frame is ready, instead of after Android's fade-out (about 130 ms).
-        if (Build.VERSION.SDK_INT >= 31) splashScreen.setOnExitAnimationListener { it.remove() }
+        // The splash goes the moment roma's first frame is ready, skipping Android's fade-out of about 130 ms.
+        if (Build.VERSION.SDK_INT >= 31) splashScreen.setOnExitAnimationListener { splash -> splash.remove() }
         enableEdgeToEdge()
-        // Back on Home leaves roma in the background instead of closing it, as Android 12+ does: the next start then
-        // finds the activity and its UI still there.
+        // Back on Home leaves roma in the background instead of closing it, as Android 12 and later do by default. The
+        // next start then finds the activity and its UI still there.
         if (Build.VERSION.SDK_INT < 31) onBackPressedDispatcher.addCallback(this) { moveTaskToBack(true) }
-        // The media notification matters once something plays, so that's when it's asked for, and only once: asking at
-        // every start opened the system's permission activity over ours, even after the user refused for good.
+        // The media notification matters once something plays, so the permission is asked for then, and only once.
+        // Asking at every start opens the system's permission activity over ours, even after the user refused for good.
         val notify = android.Manifest.permission.POST_NOTIFICATIONS
-        if (Build.VERSION.SDK_INT >= 33 && !Store.bool("notify.asked", false) && checkSelfPermission(notify) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+        val canAskToNotify = Build.VERSION.SDK_INT >= 33 && !Store.bool("notify.asked", false)
+        if (canAskToNotify && checkSelfPermission(notify) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             lifecycleScope.launch {
-                snapshotFlow { Playback.tick; Playback.player.isPlaying }.first { it }
+                // Reading Playback.tick makes the flow re-check isPlaying on every tick.
+                snapshotFlow {
+                    Playback.tick
+                    Playback.player.isPlaying
+                }.first { playing -> playing }
                 Store.set("notify.asked", true)
                 requestPermissions(arrayOf(notify), 0)
             }
         }
-        if (savedInstanceState == null) handleLastFm(intent) // a re-created activity would send the used token again
-        Home.start() // before the first frame, so Home's request and its disk copy are on their way
+        // A re-created activity would send the already used token again.
+        if (savedInstanceState == null) handleLastFm(intent)
+        // Before the first frame, so Home's request and its disk copy are already on their way.
+        Home.start()
         setContent { Theme { Root() } }
-        // The first frame is drawn: the start-up work that waited for it runs.
+        // Once the first frame is drawn, the start-up work that waited for it runs.
         val decor = window.decorView
         decor.viewTreeObserver.addOnDrawListener(object : android.view.ViewTreeObserver.OnDrawListener {
             override fun onDraw() {
-                decor.post { // not from inside onDraw
+                // A listener can't be removed from inside onDraw, so this waits for the next message.
+                decor.post {
                     decor.viewTreeObserver.removeOnDrawListener(this)
                     Startup.go()
                 }
@@ -66,11 +75,12 @@ class MainActivity : ComponentActivity() {
         handleLastFm(intent)
     }
 
-    // The media session runs while roma is open, so the system's controls have it. After the first frame: started from
-    // onStart, the service and its media session were created before roma's first frame.
+    // The media session runs while roma is open, so the system's controls can reach it. The service starts in a post
+    // because starting it directly from onStart would create it and its media session before roma's first frame.
     override fun onStart() {
         super.onStart()
-        Home.start() // back in the foreground: a Home older than 30 minutes loads again behind the shown one
+        // Back in the foreground, a Home older than 30 minutes loads again behind the one on screen.
+        Home.start()
         window.decorView.post {
             if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) PlaybackService.start(this)
         }
@@ -79,11 +89,11 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         flavorResumed()
-        window.decorView.post { Dictionary.ensure() } // maybe a dialog: after the first frame
+        // This may show a dialog, so it waits until after the first frame.
+        window.decorView.post { Dictionary.ensure() }
     }
 
-
-    // Last.fm's browser auth returns to roma://lastfm?token=...
+    // Last.fm's browser sign-in returns to roma://lastfm?token=...
     private fun handleLastFm(intent: Intent?) {
         val data = intent?.data ?: return
         if (data.scheme != BuildConfig.SLUG || data.host != "lastfm") return
@@ -91,11 +101,14 @@ class MainActivity : ComponentActivity() {
         val fm = LastFm(Store.str("lastfm.key", ""), Store.str("lastfm.secret", ""))
         CoroutineScope(Dispatchers.Main).launch {
             val result = withContext(Dispatchers.IO) { runCatching { fm.session(token) } }
-            result.onSuccess {
-                Store.set("lastfm.session", it)
+            result.onSuccess { session ->
+                Store.set("lastfm.session", session)
                 Playback.flushScrobbles()
                 Toast.makeText(this@MainActivity, "Last.fm connected", Toast.LENGTH_SHORT).show()
-            }.onFailure { Toast.makeText(this@MainActivity, "Last.fm: ${it.message}", Toast.LENGTH_LONG).show() }
+            }
+            result.onFailure { error ->
+                Toast.makeText(this@MainActivity, "Last.fm: ${error.message}", Toast.LENGTH_LONG).show()
+            }
             Nav.tab = TAB_SETTINGS
         }
     }

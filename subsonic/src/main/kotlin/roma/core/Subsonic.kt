@@ -10,8 +10,9 @@ import java.security.SecureRandom
 import kotlin.math.abs
 
 /**
- * Subsonic ids inside roma: "s." and the server's id, every character but A–Z a–z 0–9 _ - written as "." and two hex
- * digits per UTF-8 byte. No YouTube id holds a dot, and the result is a safe file name and URI host everywhere.
+ * A Subsonic id inside roma is "s." plus the server's id, with every character other than A–Z, a–z, 0–9, _ and -
+ * written as "." and two hex digits per UTF-8 byte. No YouTube id holds a dot, and the result is a safe file name and
+ * URI host everywhere.
  */
 object SubsonicIds {
     const val PREFIX = "s."
@@ -21,7 +22,12 @@ object SubsonicIds {
     fun encode(raw: String) = PREFIX + buildString {
         for (b in raw.toByteArray()) {
             val c = b.toInt().toChar()
-            if (b >= 0 && (c.isLetterOrDigit() || c == '_' || c == '-')) append(c) else append('.').append("%02x".format(b))
+            if (b >= 0 && (c.isLetterOrDigit() || c == '_' || c == '-')) {
+                append(c)
+            } else {
+                append('.')
+                append("%02x".format(b))
+            }
         }
     }
 
@@ -30,13 +36,19 @@ object SubsonicIds {
         val out = java.io.ByteArrayOutputStream()
         var i = 0
         while (i < s.length) {
-            if (s[i] == '.') { out.write(s.substring(i + 1, i + 3).toInt(16)); i += 3 } else out.write(s[i++].code)
+            if (s[i] == '.') {
+                out.write(s.substring(i + 1, i + 3).toInt(16))
+                i += 3
+            } else {
+                out.write(s[i].code)
+                i += 1
+            }
         }
         return out.toString(Charsets.UTF_8)
     }
 }
 
-/** A song as the server lists it: original names, the server's own ids. */
+/** A song as the server lists it, with the original names and the server's own ids. */
 @Serializable
 class SubSong(
     val id: String,
@@ -56,26 +68,67 @@ class SubSong(
     val bitRate: Int = 0,
     /** The file under the server's music folder, when the server gives one. */
     val path: String? = null,
-    /** The server's Latin forms (extension romanization); the original where it sent none. Null without the extension. */
+    /**
+     * The server's Latin forms (extension romanization), or the original where it sent none. Null when the server
+     * lacks the extension.
+     */
     val titleLatin: String? = null,
     val artistLatin: String? = null,
     val albumLatin: String? = null,
-    /** OpenSubsonic replayGain: the track's gain in dB (the album's when the track has none), null when the server sends none. */
+    /**
+     * The track's gain in dB from OpenSubsonic replayGain, or the album's gain when the track has none. Null when the
+     * server sends neither.
+     */
     val gain: Float? = null,
-    /** A public link to the song, shared as is (OpenSubsonic extension shareUrl); null when the server has none. */
+    /** A public link to the song, shared as is (OpenSubsonic extension shareUrl). Null when the server has none. */
     val shareUrl: String? = null,
 )
 
 @Serializable
-class SubAlbum(val id: String, val name: String, val artist: String = "", val artistId: String? = null, val year: Int = 0, val coverArt: String? = null, val songCount: Int = 0, val created: String? = null, val starred: Boolean = false, val releaseType: String? = null, val wanted: String? = null, val wantedError: String? = null, val nameLatin: String? = null, val artistLatin: String? = null)
+class SubAlbum(
+    val id: String,
+    val name: String,
+    val artist: String = "",
+    val artistId: String? = null,
+    val year: Int = 0,
+    val coverArt: String? = null,
+    val songCount: Int = 0,
+    val created: String? = null,
+    val starred: Boolean = false,
+    val releaseType: String? = null,
+    val wanted: String? = null,
+    val wantedError: String? = null,
+    val nameLatin: String? = null,
+    val artistLatin: String? = null,
+)
 
-/** [wanted]: how a starred album or artist the server doesn't hold yet is coming (extension oasis's "oasisWanted": wanted, downloading, failed), [wantedError] why it isn't there yet; null on other servers. */
+/**
+ * [wanted] says how a starred album or artist that the server doesn't hold yet is coming: "wanted", "downloading" or
+ * "failed" (extension oasis's "oasisWanted"). [wantedError] says why it isn't there yet. Both are null on other servers.
+ */
 @Serializable
-class SubArtist(val id: String, val name: String, val coverArt: String? = null, val albumCount: Int = 0, val starred: Boolean = false, val wanted: String? = null, val wantedError: String? = null, val nameLatin: String? = null)
+class SubArtist(
+    val id: String,
+    val name: String,
+    val coverArt: String? = null,
+    val albumCount: Int = 0,
+    val starred: Boolean = false,
+    val wanted: String? = null,
+    val wantedError: String? = null,
+    val nameLatin: String? = null,
+)
 
-/** [mix]: one of the account's personal mixes (extension oasis's "oasisMix"; false on other servers). */
+/** [mix] is true for one of the account's personal mixes (extension oasis's "oasisMix"). It is false on other servers. */
 @Serializable
-class SubPlaylist(val id: String, val name: String, val owner: String = "", val songCount: Int = 0, val coverArt: String? = null, val mix: Boolean = false, val nameLatin: String? = null)
+class SubPlaylist(
+    val id: String,
+    val name: String,
+    val owner: String = "",
+    val songCount: Int = 0,
+    val coverArt: String? = null,
+    val mix: Boolean = false,
+    val nameLatin: String? = null,
+)
 
 /** The whole library as of [syncedAt], with what the server said about itself. */
 @Serializable
@@ -84,21 +137,30 @@ class SubsonicIndex(
     val albums: List<SubAlbum>,
     val artists: List<SubArtist>,
     val syncedAt: Long,
-    /** getOpenSubsonicExtensions: each extension's name and versions ("songLyrics" to [1, 2]); empty for a plain Subsonic server. */
+    /**
+     * Each extension's name and versions from getOpenSubsonicExtensions, such as "songLyrics" to [1, 2]. Empty for a
+     * plain Subsonic server.
+     */
     val extensionVersions: Map<String, List<Int>> = emptyMap(),
-    /** getUser's "scrobblingEnabled": the server sends this user's plays to Last.fm itself; null when it doesn't say. */
+    /**
+     * getUser's "scrobblingEnabled". True means the server sends this user's plays to Last.fm itself. Null when the
+     * server doesn't say.
+     */
     val serverScrobbles: Boolean? = null,
 ) {
     fun supports(extension: String, version: Int = 1) = version in extensionVersions[extension].orEmpty()
 }
 
 /**
- * The server's answer to a call that failed: [code] as Subsonic gives it (40 wrong user or password, 70 not found).
- * [http]: the HTTP status of an answer that wasn't Subsonic's; null when it was.
+ * The server's answer to a call that failed. [code] is the Subsonic error code, such as 40 for a wrong user or password
+ * and 70 for not found. [http] is the HTTP status of an answer that wasn't Subsonic's, and null when it was.
  */
 class SubsonicException(val code: Int, message: String, val http: Int? = null) : Exception(message)
 
-/** Calls to a Subsonic or OpenSubsonic server, with token auth: md5(password + salt), a fresh salt per request. Blocking. */
+/**
+ * Blocking calls to a Subsonic or OpenSubsonic server. Auth uses a token, md5(password + salt), with a fresh salt per
+ * request.
+ */
 class SubsonicClient(url: String, val user: String, private val password: String) {
     /**
      * The server has the OpenSubsonic extension romanization: every call asks for the Latin forms beside the originals
@@ -111,66 +173,113 @@ class SubsonicClient(url: String, val user: String, private val password: String
      */
     @Volatile var oasis = false
     /** An address without a scheme is https. */
-    val base = url.trim().trimEnd('/').let { if ("://" in it) it else "https://$it" }
+    val base = url.trim().trimEnd('/').let { address -> if ("://" in address) address else "https://$address" }
     /** The URL of [method] with auth and [params], for calls and for what the player and image loader fetch. */
     fun url(method: String, params: List<Pair<String, String>> = emptyList()) = "$base/rest/$method?" + query(params)
 
     private fun query(params: List<Pair<String, String>>): String {
-        val salt = ByteArray(8).also { random.nextBytes(it) }.joinToString("") { "%02x".format(it) }
+        val saltBytes = ByteArray(8)
+        random.nextBytes(saltBytes)
+        val salt = saltBytes.joinToString("") { byte -> "%02x".format(byte) }
         val token = md5(password + salt)
-        val all = listOf("u" to user, "t" to token, "s" to salt, "v" to API, "c" to "caravan", "f" to "json") + params + if (oasis) listOf("oasis" to "1") else emptyList()
+        val auth = listOf("u" to user, "t" to token, "s" to salt, "v" to API, "c" to "caravan", "f" to "json")
+        val optIn: List<Pair<String, String>> = if (oasis) listOf("oasis" to "1") else emptyList()
+        val all = auth + params + optIn
         return all.joinToString("&") { (k, v) -> enc(k) + "=" + enc(v) }
     }
 
     /** The answer's "subsonic-response", after checking its status. */
     fun call(method: String, params: List<Pair<String, String>> = emptyList()): JsonObject {
+        val romanizationParams: List<Pair<String, String>> =
+            if (romanization) listOf("romanization" to "both") else emptyList()
         // A big library's getPlaylist, getStarred2 or getArtists runs to tens of MB.
-        val (code, body) = httpCall(url(method, params + if (romanization) listOf("romanization" to "both") else emptyList()), timeoutMs = 30_000, maxBytes = 64 shl 20)
+        val (code, body) = httpCall(url(method, params + romanizationParams), timeoutMs = 30_000, maxBytes = 64 * 1024 * 1024)
         val root = runCatching { Json.parseToJsonElement(body).obj()?.get("subsonic-response").obj() }.getOrNull()
-            ?: throw SubsonicException(0, if (code in 200..299) "Not a Subsonic server: no subsonic-response in the answer" else "The server answered HTTP $code", code)
+        if (root == null) {
+            val message = if (code in 200..299) {
+                "Not a Subsonic server: no subsonic-response in the answer"
+            } else {
+                "The server answered HTTP $code"
+            }
+            throw SubsonicException(0, message, code)
+        }
         if (root["status"].str() != "ok") {
-            val e = root["error"].obj()
-            throw SubsonicException(e?.get("code").str()?.toIntOrNull() ?: 0, e?.get("message").str() ?: "The server refused $method")
+            val error = root["error"].obj()
+            val errorCode = error?.get("code").str()?.toIntOrNull() ?: 0
+            val message = error?.get("message").str() ?: "The server refused $method"
+            throw SubsonicException(errorCode, message)
         }
         return root
     }
 
-    fun ping() { call("ping") }
+    fun ping() {
+        call("ping")
+    }
 
     /**
-     * OpenSubsonic extensions and their versions ("songLyrics" to [1, 2], …). None from a server that doesn't know the
-     * call: a Subsonic error, HTTP 404 or 501, or an answer that isn't Subsonic's. A timeout, a 503 or another failure
-     * throws: the server didn't say, and taking that as "none" would drop what the extensions bring.
+     * OpenSubsonic extensions and their versions ("songLyrics" to [1, 2], …). A server that doesn't know the call has
+     * none: it answers with a Subsonic error, HTTP 404 or 501, or something that isn't Subsonic's. A timeout, a 503 or
+     * another failure throws, because the server didn't say, and taking that as "none" would drop what the extensions
+     * bring.
      */
     fun extensions(): Map<String, List<Int>> = try {
-        call("getOpenSubsonicExtensions")["openSubsonicExtensions"].arr().orEmpty().mapNotNull { it.obj() }
-            .mapNotNull { o -> o["name"].str()?.let { it to o["versions"].arr().orEmpty().mapNotNull { v -> v.str()?.toIntOrNull() } } }.toMap()
+        val list = call("getOpenSubsonicExtensions")["openSubsonicExtensions"].arr().orEmpty()
+        val entries = list.mapNotNull { element -> element.obj() }
+        val pairs = entries.mapNotNull { o ->
+            val name = o["name"].str() ?: return@mapNotNull null
+            val versions = o["versions"].arr().orEmpty().mapNotNull { v -> v.str()?.toIntOrNull() }
+            name to versions
+        }
+        pairs.toMap()
     } catch (e: SubsonicException) {
-        when (e.http) { null, 404, 501, in 200..299 -> emptyMap(); else -> throw e }
+        when (e.http) {
+            null, 404, 501, in 200..299 -> emptyMap()
+            else -> throw e
+        }
     }
 
     /** getUser's "scrobblingEnabled" for this user; null when the server doesn't say. */
-    fun scrobblingEnabled(): Boolean? = runCatching { call("getUser", listOf("username" to user))["user"].obj()?.get("scrobblingEnabled").str()?.toBooleanStrictOrNull() }.getOrNull()
+    fun scrobblingEnabled(): Boolean? = runCatching {
+        val account = call("getUser", listOf("username" to user))["user"].obj()
+        account?.get("scrobblingEnabled").str()?.toBooleanStrictOrNull()
+    }.getOrNull()
 
     /**
-     * The whole library: songs from an empty search3 (`query=""`, which Navidrome and others read as
-     * everything), albums from getAlbumList2, artists from getArtists, [page] at a time. A page shorter than asked
-     * ends a list; so does one with nothing new, in case a server ignores the offset. A server whose empty search
-     * finds nothing (Airsonic and its kind) while it lists artists gives the songs album by album (getAlbum).
+     * The whole library, [page] items at a time: songs from an empty search3 (`query=""`, which Navidrome and others
+     * read as everything), albums from getAlbumList2, and artists from getArtists. A page shorter than asked ends a
+     * list. So does a page with nothing new, in case a server ignores the offset. Some servers (Airsonic and its kind)
+     * find nothing with an empty search while they do list artists. For them the songs come album by album (getAlbum).
      */
     fun sync(page: Int = 500): SubsonicIndex {
         val extensions = extensions()
         romanization = ROMANIZATION in extensions
         oasis = 1 in extensions[OASIS].orEmpty()
         val searched = paged(page, SubSong::id) { offset ->
-            call("search3", listOf("query" to "\"\"", "songCount" to "$page", "songOffset" to "$offset", "albumCount" to "0", "artistCount" to "0"))["searchResult3"].obj()?.get("song").arr().orEmpty().mapNotNull { song(it, romanization) }
+            val params = listOf(
+                "query" to "\"\"",
+                "songCount" to "$page",
+                "songOffset" to "$offset",
+                "albumCount" to "0",
+                "artistCount" to "0",
+            )
+            val result = call("search3", params)["searchResult3"].obj()
+            result?.get("song").arr().orEmpty().mapNotNull { song(it, romanization) }
         }
         val albums = paged(page, SubAlbum::id) { offset ->
-            call("getAlbumList2", listOf("type" to "alphabeticalByName", "size" to "$page", "offset" to "$offset"))["albumList2"].obj()?.get("album").arr().orEmpty().mapNotNull { album(it, romanization, oasis) }
+            val params = listOf("type" to "alphabeticalByName", "size" to "$page", "offset" to "$offset")
+            val result = call("getAlbumList2", params)["albumList2"].obj()
+            result?.get("album").arr().orEmpty().mapNotNull { album(it, romanization, oasis) }
         }
-        val artists = call("getArtists")["artists"].obj()?.get("index").arr().orEmpty()
-            .flatMap { it.obj()?.get("artist").arr().orEmpty() }.mapNotNull { artist(it, romanization, oasis) }.distinctBy { it.id }
-        val songs = if (searched.isEmpty() && artists.isNotEmpty()) albums.flatMap { album(it.id).second }.distinctBy { it.id } else searched
+        val indexes = call("getArtists")["artists"].obj()?.get("index").arr().orEmpty()
+        val artists = indexes
+            .flatMap { index -> index.obj()?.get("artist").arr().orEmpty() }
+            .mapNotNull { artist(it, romanization, oasis) }
+            .distinctBy { it.id }
+        val songs = if (searched.isEmpty() && artists.isNotEmpty()) {
+            albums.flatMap { album(it.id).second }.distinctBy { it.id }
+        } else {
+            searched
+        }
         return SubsonicIndex(songs, albums, artists, System.currentTimeMillis(), extensions, scrobblingEnabled())
     }
 
@@ -184,137 +293,243 @@ class SubsonicClient(url: String, val user: String, private val password: String
         }
     }
 
-    /** "newest", "recent", "frequent", "random", …: the server's album lists. */
-    fun albumList(type: String, size: Int = 20) = call("getAlbumList2", listOf("type" to type, "size" to "$size"))["albumList2"].obj()?.get("album").arr().orEmpty().mapNotNull { album(it, romanization, oasis) }
+    /** One of the server's album lists, by [type]: "newest", "recent", "frequent", "random", and so on. */
+    fun albumList(type: String, size: Int = 20): List<SubAlbum> {
+        val params = listOf("type" to type, "size" to "$size")
+        val result = call("getAlbumList2", params)["albumList2"].obj()
+        return result?.get("album").arr().orEmpty().mapNotNull { album(it, romanization, oasis) }
+    }
 
-    fun playlists() = call("getPlaylists")["playlists"].obj()?.get("playlist").arr().orEmpty().mapNotNull { p ->
-        val o = p.obj() ?: return@mapNotNull null
-        SubPlaylist(o["id"].str() ?: return@mapNotNull null, o["name"].str() ?: "", o["owner"].str() ?: "", o["songCount"].str()?.toIntOrNull() ?: 0, o["coverArt"].str(), oasis && o["oasisMix"].str() == "true", latin(o, "name", romanization))
+    fun playlists(): List<SubPlaylist> {
+        val list = call("getPlaylists")["playlists"].obj()?.get("playlist").arr().orEmpty()
+        return list.mapNotNull { p ->
+            val o = p.obj() ?: return@mapNotNull null
+            val id = o["id"].str() ?: return@mapNotNull null
+            SubPlaylist(
+                id = id,
+                name = o["name"].str() ?: "",
+                owner = o["owner"].str() ?: "",
+                songCount = o["songCount"].str()?.toIntOrNull() ?: 0,
+                coverArt = o["coverArt"].str(),
+                mix = oasis && o["oasisMix"].str() == "true",
+                nameLatin = latin(o, "name", romanization),
+            )
+        }
     }
 
     fun playlist(id: String): Pair<SubPlaylist, List<SubSong>> {
-        val o = call("getPlaylist", listOf("id" to id))["playlist"].obj() ?: throw SubsonicException(70, "No such playlist")
+        val o = call("getPlaylist", listOf("id" to id))["playlist"].obj() ?: throw SubsonicException(NOT_FOUND, "No such playlist")
         val songs = o["entry"].arr().orEmpty().mapNotNull { song(it, romanization) }
-        return SubPlaylist(id, o["name"].str() ?: "", o["owner"].str() ?: "", songs.size, o["coverArt"].str(), nameLatin = latin(o, "name", romanization)) to songs
+        val playlist = SubPlaylist(
+            id,
+            o["name"].str() ?: "",
+            o["owner"].str() ?: "",
+            songs.size,
+            o["coverArt"].str(),
+            nameLatin = latin(o, "name", romanization),
+        )
+        return playlist to songs
     }
 
-    fun starredSongs() = call("getStarred2")["starred2"].obj()?.get("song").arr().orEmpty().mapNotNull { song(it, romanization) }
+    fun starredSongs(): List<SubSong> {
+        val starred = call("getStarred2")["starred2"].obj()
+        return starred?.get("song").arr().orEmpty().mapNotNull { song(it, romanization) }
+    }
 
     /** Songs like the song, album or artist [id] (getSimilarSongs takes any of the three). */
-    fun similarSongs(id: String, count: Int = 50) = call("getSimilarSongs", listOf("id" to id, "count" to "$count"))["similarSongs"].obj()?.get("song").arr().orEmpty().mapNotNull { song(it, romanization) }
+    fun similarSongs(id: String, count: Int = 50): List<SubSong> {
+        val result = call("getSimilarSongs", listOf("id" to id, "count" to "$count"))["similarSongs"].obj()
+        return result?.get("song").arr().orEmpty().mapNotNull { song(it, romanization) }
+    }
 
-    /** An album and its songs, for one the synced lists don't hold (seen in search or radio). */
+    /** An album and its songs, for an album the synced lists don't hold (seen in search or radio). */
     fun album(id: String): Pair<SubAlbum, List<SubSong>> {
-        val a = call("getAlbum", listOf("id" to id))["album"] ?: throw SubsonicException(70, "No such album")
-        return (album(a, romanization, oasis) ?: throw SubsonicException(70, "No such album")) to a.obj()?.get("song").arr().orEmpty().mapNotNull { song(it, romanization) }
+        val a = call("getAlbum", listOf("id" to id))["album"] ?: throw SubsonicException(NOT_FOUND, "No such album")
+        val info = album(a, romanization, oasis) ?: throw SubsonicException(NOT_FOUND, "No such album")
+        val songs = a.obj()?.get("song").arr().orEmpty().mapNotNull { song(it, romanization) }
+        return info to songs
     }
 
     fun artist(id: String): Pair<SubArtist, List<SubAlbum>> {
-        val a = call("getArtist", listOf("id" to id))["artist"] ?: throw SubsonicException(70, "No such artist")
-        return (artist(a, romanization, oasis) ?: throw SubsonicException(70, "No such artist")) to a.obj()?.get("album").arr().orEmpty().mapNotNull { album(it, romanization, oasis) }
+        val a = call("getArtist", listOf("id" to id))["artist"] ?: throw SubsonicException(NOT_FOUND, "No such artist")
+        val info = artist(a, romanization, oasis) ?: throw SubsonicException(NOT_FOUND, "No such artist")
+        val albums = a.obj()?.get("album").arr().orEmpty().mapNotNull { album(it, romanization, oasis) }
+        return info to albums
+    }
+
+    /** The artist's top songs. */
+    fun topSongs(artist: String, count: Int = 50): List<SubSong> {
+        val result = call("getTopSongs", listOf("artist" to artist, "count" to "$count"))["topSongs"].obj()
+        return result?.get("song").arr().orEmpty().mapNotNull { song(it, romanization) }
     }
 
     /** The server's own search. */
-    /** The artist's top songs. */
-    fun topSongs(artist: String, count: Int = 50) = call("getTopSongs", listOf("artist" to artist, "count" to "$count"))["topSongs"].obj()?.get("song").arr().orEmpty().mapNotNull { song(it, romanization) }
-
     fun search(query: String, count: Int = 30): Triple<List<SubSong>, List<SubAlbum>, List<SubArtist>> {
-        val r = call("search3", listOf("query" to query, "songCount" to "$count", "albumCount" to "$count", "artistCount" to "$count"))["searchResult3"].obj()
-        return Triple(r?.get("song").arr().orEmpty().mapNotNull { song(it, romanization) }, r?.get("album").arr().orEmpty().mapNotNull { album(it, romanization, oasis) }, r?.get("artist").arr().orEmpty().mapNotNull { artist(it, romanization, oasis) })
+        val params = listOf("query" to query, "songCount" to "$count", "albumCount" to "$count", "artistCount" to "$count")
+        val r = call("search3", params)["searchResult3"].obj()
+        val songs = r?.get("song").arr().orEmpty().mapNotNull { song(it, romanization) }
+        val albums = r?.get("album").arr().orEmpty().mapNotNull { album(it, romanization, oasis) }
+        val artists = r?.get("artist").arr().orEmpty().mapNotNull { artist(it, romanization, oasis) }
+        return Triple(songs, albums, artists)
     }
 
-    fun song(id: String) = call("getSong", listOf("id" to id))["song"]?.let { song(it, romanization) } ?: throw SubsonicException(70, "No such song")
+    fun song(id: String): SubSong {
+        val element = call("getSong", listOf("id" to id))["song"]
+        val parsed = if (element == null) null else song(element, romanization)
+        return parsed ?: throw SubsonicException(NOT_FOUND, "No such song")
+    }
 
-    /** [param]: "id" for a song, "albumId" or "artistId". */
-    fun star(id: String, on: Boolean, param: String = "id") { call(if (on) "star" else "unstar", listOf(param to id)) }
+    /** [param] is "id" for a song, "albumId" for an album or "artistId" for an artist. */
+    fun star(id: String, on: Boolean, param: String = "id") {
+        val method = if (on) "star" else "unstar"
+        call(method, listOf(param to id))
+    }
 
     /**
      * OpenSubsonic getLyricsBySongId: the synced lyrics if the server has any, else its plain ones; null for none.
-     * With [kinds] (extension romanization: "main", "pronunciation" or both) it asks songLyrics v2's layers, and the
-     * pronunciation entry gives each main line its Latin form, word-timed when both have cueLine. Pronunciation alone
-     * is the lyrics; a song with none (already in Latin script) is asked again for its main lyrics. A server that
-     * ignores kinds sends every layer: main and pronunciation are used, the others left out.
+     * With [kinds] (extension romanization: "main", "pronunciation" or both) it asks for songLyrics v2's layers, and
+     * the pronunciation entry gives each main line its Latin form, word-timed when both have cueLine. Pronunciation
+     * alone is the lyrics. A song with no pronunciation (already in Latin script) is asked again for its main lyrics. A
+     * server that ignores kinds sends every layer; roma uses main and pronunciation and leaves the others out.
      */
     fun lyrics(id: String, source: String, kinds: List<String>? = null): Lyrics? {
-        val params = listOf("id" to id) + if (kinds == null) emptyList() else listOf("enhanced" to "true", "kinds" to kinds.joinToString(","))
-        val list = call("getLyricsBySongId", params)["lyricsList"].obj()?.get("structuredLyrics").arr().orEmpty().mapNotNull { it.obj() }
-        fun pick(kind: String) = list.filter { (it["kind"].str() ?: "main") == kind }.let { l -> l.firstOrNull { it["synced"].str() == "true" } ?: l.firstOrNull() }
+        val enhanced: List<Pair<String, String>> =
+            if (kinds == null) emptyList() else listOf("enhanced" to "true", "kinds" to kinds.joinToString(","))
+        val params = listOf("id" to id) + enhanced
+        val lyricsList = call("getLyricsBySongId", params)["lyricsList"].obj()
+        val list = lyricsList?.get("structuredLyrics").arr().orEmpty().mapNotNull { it.obj() }
+
+        fun pick(kind: String): JsonObject? {
+            val ofKind = list.filter { entry -> (entry["kind"].str() ?: "main") == kind }
+            return ofKind.firstOrNull { entry -> entry["synced"].str() == "true" } ?: ofKind.firstOrNull()
+        }
+
         val main = pick("main")
         val pron = if (kinds == null) null else pick("pronunciation")
-        val base = main ?: pron ?: return if (kinds == listOf("pronunciation")) lyrics(id, source, listOf("main")) else null
+        val base = main ?: pron
+        if (base == null) {
+            return if (kinds == listOf("pronunciation")) lyrics(id, source, listOf("main")) else null
+        }
         val synced = base["synced"].str() == "true"
         val latin = if (main != null && pron != null) lines(pron) else emptyList()
         val pronSynced = pron?.get("synced").str() == "true"
         val own = lines(base)
         val lines = own.mapIndexed { i, line ->
-            // The layers pair line by line (the extension's rule); only a server whose counts differ pairs by start time.
-            val p = (if (latin.size == own.size) latin[i] else if (synced && pronSynced) latin.minByOrNull { abs(it.startMs - line.startMs) }?.takeIf { abs(it.startMs - line.startMs) <= 1000 } else null)
-                ?: return@mapIndexed line
-            // Each timed word gets the romaji timed from its start to the next word's; romaji sung before the first word goes on it.
-            val wordLatin = if (line.words.isEmpty() || p.words.isEmpty()) emptyList() else line.words.mapIndexed { k, w ->
-                val end = line.words.getOrNull(k + 1)?.startMs ?: Long.MAX_VALUE
-                p.words.filter { it.startMs < end && (k == 0 || it.startMs >= w.startMs) }.joinToString("") { it.text }
+            // The layers pair line by line (the extension's rule). Only when a server's line counts differ do they
+            // pair by start time.
+            val p = if (latin.size == own.size) {
+                latin[i]
+            } else if (synced && pronSynced) {
+                val nearest = latin.minByOrNull { candidate -> abs(candidate.startMs - line.startMs) }
+                if (nearest != null && abs(nearest.startMs - line.startMs) <= PAIRING_WINDOW_MS) nearest else null
+            } else {
+                null
+            }
+            if (p == null) return@mapIndexed line
+            // Each timed word gets the romaji timed from its start to the next word's start. Romaji sung before the
+            // first word goes on the first word.
+            val wordLatin = if (line.words.isEmpty() || p.words.isEmpty()) {
+                emptyList()
+            } else {
+                line.words.mapIndexed { k, w ->
+                    val end = line.words.getOrNull(k + 1)?.startMs ?: Long.MAX_VALUE
+                    val sung = p.words.filter { pw -> pw.startMs < end && (k == 0 || pw.startMs >= w.startMs) }
+                    sung.joinToString("") { pw -> pw.text }
+                }
             }
             Line(line.startMs, line.text, line.words, latin = p.text.ifBlank { line.text }, wordLatin = wordLatin)
         }
-        return Lyrics(source, lines, synced, lang = base["lang"].str()).takeIf { lines.any { it.text.isNotBlank() } }
+        val lyrics = Lyrics(source, lines, synced, lang = base["lang"].str())
+        return if (lines.any { it.text.isNotBlank() }) lyrics else null
     }
 
-    // One structuredLyrics entry's lines; with cueLine, their timed words.
+    // One structuredLyrics entry's lines, and with cueLine their timed words.
     private fun lines(l: JsonObject): List<Line> {
         val synced = l["synced"].str() == "true"
-        // OpenSubsonic: a positive offset shows the lyrics sooner.
+        // In OpenSubsonic, a positive offset shows the lyrics sooner.
         val offset = l["offset"].str()?.toLongOrNull() ?: 0
-        // Several cueLines on one line are its voices, the main one first.
-        val cues = l["cueLine"].arr().orEmpty().mapNotNull { it.obj() }.groupBy { it["index"].int() }.mapValues { it.value.first() }
-        return l["line"].arr().orEmpty().mapNotNull { it.obj() }.mapIndexed { i, o ->
-            Line(if (synced) (o["start"].str()?.toLongOrNull() ?: 0) - offset else 0, o["value"].str() ?: "", if (synced) cues[i]?.let { words(it, offset) }.orEmpty() else emptyList())
+        // Several cueLines on one line are its voices, with the main one first.
+        val cues = l["cueLine"].arr().orEmpty()
+            .mapNotNull { it.obj() }
+            .groupBy { cue -> cue["index"].int() }
+            .mapValues { entry -> entry.value.first() }
+        val entries = l["line"].arr().orEmpty().mapNotNull { it.obj() }
+        return entries.mapIndexed { i, o ->
+            val start: Long = if (synced) (o["start"].str()?.toLongOrNull() ?: 0) - offset else 0
+            val text = o["value"].str() ?: ""
+            val cue = cues[i]
+            val timedWords = if (synced && cue != null) words(cue, offset) else emptyList()
+            Line(start, text, timedWords)
         }
     }
 
-    // A cueLine's cues as words. Each runs from its first byte to the next one's, so the words join into the line,
-    // the untimed spaces between them included.
+    // A cueLine's cues as words. Each word runs from its cue's first byte to the next cue's, so the words join into
+    // the whole line, including the untimed spaces between them.
     private fun words(c: JsonObject, offset: Long): List<Word> {
         val bytes = (c["value"].str() ?: "").toByteArray()
         val cues = c["cue"].arr().orEmpty().mapNotNull { it.obj() }
         return cues.mapIndexed { i, q ->
             val from = if (i == 0) 0 else q["byteStart"].int()
             val to = cues.getOrNull(i + 1)?.get("byteStart")?.int() ?: bytes.size
-            val text = if (from in 0..to && to <= bytes.size) String(bytes, from, to - from, Charsets.UTF_8) else q["value"].str() ?: ""
+            val text = if (from in 0..to && to <= bytes.size) {
+                String(bytes, from, to - from, Charsets.UTF_8)
+            } else {
+                q["value"].str() ?: ""
+            }
             val start = q["start"].str()?.toLongOrNull() ?: 0
-            val end = q["end"].str()?.toLongOrNull() ?: cues.getOrNull(i + 1)?.get("start").str()?.toLongOrNull() ?: c["end"].str()?.toLongOrNull() ?: start
+            val end = q["end"].str()?.toLongOrNull()
+                ?: cues.getOrNull(i + 1)?.get("start").str()?.toLongOrNull()
+                ?: c["end"].str()?.toLongOrNull()
+                ?: start
             Word(start - offset, end - offset, text)
         }
     }
 
     /**
-     * Reports plays: now playing with [submission] false (one id, no time), finished ones with true and each play's
-     * start in ms since the epoch, which the server stores.
+     * Reports plays. Now playing uses [submission] false with one id and no time. Finished plays use true, with each
+     * play's start in ms since the epoch, which the server stores.
      */
     fun scrobble(ids: List<String>, timesMs: List<Long>, submission: Boolean) {
-        call("scrobble", ids.map { "id" to it } + timesMs.map { "time" to "$it" } + listOf("submission" to "$submission"))
+        val idParams = ids.map { id -> "id" to id }
+        val timeParams = timesMs.map { time -> "time" to "$time" }
+        call("scrobble", idParams + timeParams + listOf("submission" to "$submission"))
     }
 
     /**
-     * Finished plays ([scrobble] with submission). A song the server no longer has (70) fails the whole call, which
-     * would stay queued for good: then they go one by one, and the missing songs' are dropped. Returns how many of the
-     * first plays are done with; another failure one by one stops there. Throws when the first call fails otherwise.
+     * Submits finished plays ([scrobble] with submission). A song the server no longer has (70) fails the whole call,
+     * which would then stay queued for good. In that case the plays go one by one, and the missing songs' plays are
+     * dropped. Returns how many of the first plays are done with: another failure while going one by one stops there.
+     * Throws when the first call fails for any other reason.
      */
     fun submit(ids: List<String>, timesMs: List<Long>): Int {
-        try { scrobble(ids, timesMs, submission = true); return ids.size } catch (e: SubsonicException) { if (e.code != 70) throw e }
-        return ids.indices.firstOrNull { i ->
-            runCatching { scrobble(listOf(ids[i]), listOf(timesMs[i]), submission = true) }.exceptionOrNull().let { it != null && (it !is SubsonicException || it.code != 70) }
-        } ?: ids.size
+        try {
+            scrobble(ids, timesMs, submission = true)
+            return ids.size
+        } catch (e: SubsonicException) {
+            if (e.code != NOT_FOUND) throw e
+        }
+        val firstFailure = ids.indices.firstOrNull { i ->
+            val error = runCatching { scrobble(listOf(ids[i]), listOf(timesMs[i]), submission = true) }.exceptionOrNull()
+            error != null && (error !is SubsonicException || error.code != NOT_FOUND)
+        }
+        return firstFailure ?: ids.size
     }
 
     fun streamUrl(id: String) = url("stream", listOf("id" to id))
-    fun coverUrl(id: String, size: Int?) = url("getCoverArt", listOf("id" to id) + listOfNotNull(size?.let { "size" to "$it" }))
+
+    fun coverUrl(id: String, size: Int?): String {
+        val sizeParams: List<Pair<String, String>> = if (size == null) emptyList() else listOf("size" to "$size")
+        return url("getCoverArt", listOf("id" to id) + sizeParams)
+    }
 
     companion object {
         const val API = "1.16.1"
+        private const val NOT_FOUND = 70
+        // How far apart in time a main line and a pronunciation line may start and still pair.
+        private const val PAIRING_WINDOW_MS = 1000L
         private val random = SecureRandom()
         private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
-        fun md5(s: String) = MessageDigest.getInstance("MD5").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
+        fun md5(s: String) = MessageDigest.getInstance("MD5").digest(s.toByteArray()).joinToString("") { byte -> "%02x".format(byte) }
 
         const val ROMANIZATION = "romanization"
         const val OASIS = "oasis"
@@ -324,47 +539,106 @@ class SubsonicClient(url: String, val user: String, private val password: String
         const val SHARE_URL = "shareUrl"
 
         /**
-         * Plain http only to a server on the user's own network: localhost, a private, link-local or CGNAT (Tailscale)
-         * address, a name without a dot or under .local, .lan, .home.arpa or .internal, or a name that resolves to
-         * such addresses only. Blocking: it may resolve [host].
+         * Plain http is allowed only to a server on the user's own network: localhost, a private, link-local or CGNAT
+         * (Tailscale) address, a name without a dot or under .local, .lan, .home.arpa or .internal, or a name that
+         * resolves to such addresses only. Blocking, because it may resolve [host].
          */
         fun localHost(host: String): Boolean {
             val h = host.lowercase().trim('[', ']').trimEnd('.')
             if (h.isEmpty()) return false
-            if (h == "localhost" || '.' !in h && ':' !in h || listOf(".localhost", ".local", ".lan", ".home.arpa", ".internal").any { h.endsWith(it) }) return true
+            if (h == "localhost") return true
+            if ('.' !in h && ':' !in h) return true
+            val localSuffixes = listOf(".localhost", ".local", ".lan", ".home.arpa", ".internal")
+            if (localSuffixes.any { suffix -> h.endsWith(suffix) }) return true
             val addresses = runCatching { java.net.InetAddress.getAllByName(h) }.getOrNull() ?: return false
             return addresses.isNotEmpty() && addresses.all { a ->
                 val b = a.address
-                a.isLoopbackAddress || a.isSiteLocalAddress || a.isLinkLocalAddress ||
-                    (b.size == 4 && (b[0].toInt() and 0xff) == 100 && (b[1].toInt() and 0xc0) == 64) || // 100.64.0.0/10
-                    (b.size == 16 && (b[0].toInt() and 0xfe) == 0xfc) // fc00::/7
+                // 100.64.0.0/10: the first byte is 100 and the top two bits of the second are 01.
+                val carrierNat = b.size == 4 && (b[0].toInt() and 0xff) == 100 && (b[1].toInt() and 0xc0) == 64
+                // fc00::/7: the top seven bits of the first byte are 1111110.
+                val uniqueLocal = b.size == 16 && (b[0].toInt() and 0xfe) == 0xfc
+                a.isLoopbackAddress || a.isSiteLocalAddress || a.isLinkLocalAddress || carrierNat || uniqueLocal
             }
         }
 
-        /** [o]'s "<field>Latin" with [latin] (asked with romanization=both), the original where the server sent none; else null. */
-        fun latin(o: JsonObject, field: String, latin: Boolean) = if (latin) o[field + "Latin"].str() ?: o[field].str() ?: "" else null
+        /**
+         * [o]'s "<field>Latin" when [latin] is set (asked with romanization=both), or the original where the server
+         * sent none. Null when [latin] is not set.
+         */
+        fun latin(o: JsonObject, field: String, latin: Boolean): String? {
+            if (!latin) return null
+            return o[field + "Latin"].str() ?: o[field].str() ?: ""
+        }
 
         fun song(e: JsonElement, latin: Boolean = false): SubSong? {
             val o = e.obj() ?: return null
             if (o["isVideo"].str() == "true") return null
+            val id = o["id"].str() ?: return null
+            val albumLatin = if (o["album"] != null) latin(o, "album", latin) else null
+            val replayGain = o["replayGain"].obj()
+            val gain = if (replayGain == null) null else (replayGain["trackGain"] ?: replayGain["albumGain"]).str()?.toFloatOrNull()
             return SubSong(
-                o["id"].str() ?: return null, o["title"].str() ?: "", o["artist"].str() ?: "", o["artistId"].str(), o["album"].str(), o["albumId"].str(),
-                o["track"].int(), o["discNumber"].int(), o["year"].int(), o["duration"].int(), o["coverArt"].str(), o["starred"] != null, o["created"].str(),
-                o["suffix"].str(), o["bitRate"].int(), o["path"].str(), latin(o, "title", latin), latin(o, "artist", latin), latin(o, "album", latin)?.takeIf { o["album"] != null },
-                o["replayGain"].obj()?.let { g -> (g["trackGain"] ?: g["albumGain"]).str()?.toFloatOrNull() }, o["shareUrl"].str(),
+                id = id,
+                title = o["title"].str() ?: "",
+                artist = o["artist"].str() ?: "",
+                artistId = o["artistId"].str(),
+                album = o["album"].str(),
+                albumId = o["albumId"].str(),
+                track = o["track"].int(),
+                disc = o["discNumber"].int(),
+                year = o["year"].int(),
+                duration = o["duration"].int(),
+                coverArt = o["coverArt"].str(),
+                starred = o["starred"] != null,
+                created = o["created"].str(),
+                suffix = o["suffix"].str(),
+                bitRate = o["bitRate"].int(),
+                path = o["path"].str(),
+                titleLatin = latin(o, "title", latin),
+                artistLatin = latin(o, "artist", latin),
+                albumLatin = albumLatin,
+                gain = gain,
+                shareUrl = o["shareUrl"].str(),
             )
         }
 
-        /** [oasis]: the server has the extension oasis, so its oasisWanted fields count. */
+        /** [oasis] says the server has the extension oasis, so its oasisWanted fields count. */
         fun album(e: JsonElement, latin: Boolean = false, oasis: Boolean = false): SubAlbum? {
             val o = e.obj() ?: return null
             val name = o["name"].str() ?: o["title"].str() ?: ""
-            return SubAlbum(o["id"].str() ?: return null, name, o["artist"].str() ?: "", o["artistId"].str(), o["year"].int(), o["coverArt"].str(), o["songCount"].int(), o["created"].str(), o["starred"] != null, o["releaseTypes"].arr()?.firstOrNull().str(), o["oasisWanted"].str()?.takeIf { oasis }, o["oasisWantedError"].str()?.takeIf { oasis }, if (latin) o["nameLatin"].str() ?: o["titleLatin"].str() ?: name else null, latin(o, "artist", latin))
+            val id = o["id"].str() ?: return null
+            val nameLatin = if (latin) o["nameLatin"].str() ?: o["titleLatin"].str() ?: name else null
+            return SubAlbum(
+                id = id,
+                name = name,
+                artist = o["artist"].str() ?: "",
+                artistId = o["artistId"].str(),
+                year = o["year"].int(),
+                coverArt = o["coverArt"].str(),
+                songCount = o["songCount"].int(),
+                created = o["created"].str(),
+                starred = o["starred"] != null,
+                releaseType = o["releaseTypes"].arr()?.firstOrNull().str(),
+                wanted = if (oasis) o["oasisWanted"].str() else null,
+                wantedError = if (oasis) o["oasisWantedError"].str() else null,
+                nameLatin = nameLatin,
+                artistLatin = latin(o, "artist", latin),
+            )
         }
 
         fun artist(e: JsonElement, latin: Boolean = false, oasis: Boolean = false): SubArtist? {
             val o = e.obj() ?: return null
-            return SubArtist(o["id"].str() ?: return null, o["name"].str() ?: "", o["coverArt"].str(), o["albumCount"].int(), o["starred"] != null, o["oasisWanted"].str()?.takeIf { oasis }, o["oasisWantedError"].str()?.takeIf { oasis }, latin(o, "name", latin))
+            val id = o["id"].str() ?: return null
+            return SubArtist(
+                id = id,
+                name = o["name"].str() ?: "",
+                coverArt = o["coverArt"].str(),
+                albumCount = o["albumCount"].int(),
+                starred = o["starred"] != null,
+                wanted = if (oasis) o["oasisWanted"].str() else null,
+                wantedError = if (oasis) o["oasisWantedError"].str() else null,
+                nameLatin = latin(o, "name", latin),
+            )
         }
 
         private fun JsonElement?.int() = str()?.toIntOrNull() ?: 0
@@ -372,32 +646,55 @@ class SubsonicClient(url: String, val user: String, private val password: String
 }
 
 /** A Subsonic cover in a song or card: "subsonic:" and its encoded id. The app turns it into a getCoverArt URL. */
-fun subsonicCover(id: String?) = id?.let { "subsonic:" + SubsonicIds.encode(it).removePrefix(SubsonicIds.PREFIX) }
+fun subsonicCover(id: String?): String? {
+    if (id == null) return null
+    return "subsonic:" + SubsonicIds.encode(id).removePrefix(SubsonicIds.PREFIX)
+}
 
-// Names the server romanized (extension romanization) take its Latin forms (Romanizer.text's served); the others are romanized here.
+// Names the server already romanized (extension romanization) use its Latin forms, which Romanizer.text takes as
+// served. Other names are romanized here.
 fun Romanizer.song(s: SubSong): Song {
     val id = SubsonicIds.encode(s.id)
     val artistId = s.artistId?.let(SubsonicIds::encode)
     val title = text(s.title, listOf(s.artist) + listOfNotNull(s.album), id, artistId, titleOf = true, served = s.titleLatin)
     val artist = Named(artistId, text(s.artist, listOf(s.title) + listOfNotNull(s.album), id, artistId, served = s.artistLatin))
-    val album = s.album?.let { Named(s.albumId?.let(SubsonicIds::encode), text(it, listOf(s.title, s.artist), id, artistId, titleOf = true, served = s.albumLatin)) }
+    val albumName = s.album
+    val album = if (albumName == null) {
+        null
+    } else {
+        val albumId = s.albumId?.let(SubsonicIds::encode)
+        val albumText = text(albumName, listOf(s.title, s.artist), id, artistId, titleOf = true, served = s.albumLatin)
+        Named(albumId, albumText)
+    }
     return Song(id, title, listOf(artist), album, s.duration, subsonicCover(s.coverArt))
 }
 
-fun Romanizer.item(a: SubAlbum): Item =
-    Item("album", SubsonicIds.encode(a.id), text(a.name, listOf(a.artist), titleOf = true, served = a.nameLatin), text(a.artist, listOf(a.name), artistId = a.artistId?.let(SubsonicIds::encode), served = a.artistLatin), subsonicCover(a.coverArt))
+fun Romanizer.item(a: SubAlbum): Item {
+    val id = SubsonicIds.encode(a.id)
+    val title = text(a.name, listOf(a.artist), titleOf = true, served = a.nameLatin)
+    val artistId = a.artistId?.let(SubsonicIds::encode)
+    val artist = text(a.artist, listOf(a.name), artistId = artistId, served = a.artistLatin)
+    return Item("album", id, title, artist, subsonicCover(a.coverArt))
+}
 
 fun Romanizer.item(a: SubArtist): Item {
     val id = SubsonicIds.encode(a.id)
     return Item("artist", id, text(a.name, artistId = id, served = a.nameLatin), Text("", ""), subsonicCover(a.coverArt))
 }
 
-// The owner is a user name, which the server doesn't romanize.
-fun Romanizer.item(p: SubPlaylist): Item = Item("playlist", SubsonicIds.encode(p.id), text(p.name, served = p.nameLatin), text(p.owner, served = p.owner.takeIf { p.nameLatin != null }), subsonicCover(p.coverArt))
+fun Romanizer.item(p: SubPlaylist): Item {
+    val id = SubsonicIds.encode(p.id)
+    val name = text(p.name, served = p.nameLatin)
+    // The owner is a user name, which the server doesn't romanize. When the server romanizes, the owner is passed as
+    // already served so roma leaves it as written.
+    val ownerServed = if (p.nameLatin != null) p.owner else null
+    val owner = text(p.owner, served = ownerServed)
+    return Item("playlist", id, name, owner, subsonicCover(p.coverArt))
+}
 
 /**
  * The server's own lyrics (OpenSubsonic songLyrics), the reference the other providers' text is matched against.
- * [kinds]: the layers to ask for (extension romanization), null without it.
+ * [kinds] gives the layers to ask for (extension romanization), and is null without that extension.
  */
 class SubsonicLyrics(private val client: () -> SubsonicClient, private val kinds: () -> List<String>?) : LyricsProvider {
     override val id = "subsonic"

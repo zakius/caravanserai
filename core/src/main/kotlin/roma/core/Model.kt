@@ -31,9 +31,19 @@ class Song(
 fun Romanizer.again(s: Song): Song {
     val artistNames = s.artists.map { it.name.original }
     val albumName = s.album?.name?.original
-    val title = text(s.title.original, artistNames + listOfNotNull(albumName), s.id, s.firstArtistId, titleOf = true, served = s.title.served)
-    val artists = s.artists.map { a -> Named(a.id, text(a.name.original, listOf(s.title.original) + listOfNotNull(albumName), s.id, a.id, served = a.name.served)) }
-    val album = s.album?.let { Named(it.id, text(it.name.original, listOf(s.title.original) + artistNames, s.id, s.firstArtistId, titleOf = true, served = it.name.served)) }
+    val titleContext = artistNames + listOfNotNull(albumName)
+    val title = text(s.title.original, titleContext, s.id, s.firstArtistId, titleOf = true, served = s.title.served)
+    val artists = s.artists.map { a ->
+        val artistContext = listOf(s.title.original) + listOfNotNull(albumName)
+        Named(a.id, text(a.name.original, artistContext, s.id, a.id, served = a.name.served))
+    }
+    val oldAlbum = s.album
+    var album: Named? = null
+    if (oldAlbum != null) {
+        val albumContext = listOf(s.title.original) + artistNames
+        val name = text(oldAlbum.name.original, albumContext, s.id, s.firstArtistId, titleOf = true, served = oldAlbum.name.served)
+        album = Named(oldAlbum.id, name)
+    }
     return Song(s.id, title, artists, album, s.durationSec, s.thumb, s.video, s.reason)
 }
 
@@ -48,19 +58,28 @@ fun matchDistance(song: Song, query: String): Int? =
 fun matchDistance(texts: List<String>, query: String): Int? {
     val q = fold(query)
     if (q.isEmpty()) return null
-    val allowed = when { q.length >= 9 -> 2; q.length >= 5 -> 1; else -> 0 }
-    return texts.minOf { substringDistance(q, fold(it)) }.takeIf { it <= allowed }
+    val allowed = when {
+        q.length >= 9 -> 2
+        q.length >= 5 -> 1
+        else -> 0
+    }
+    val best = texts.minOf { substringDistance(q, fold(it)) }
+    return if (best <= allowed) best else null
 }
 
 fun matches(song: Song, query: String) = matchDistance(song, query) != null
 
 // Fewest edits that turn q into some substring of text (Sellers' algorithm).
 private fun substringDistance(q: String, text: String): Int {
-    var prev = IntArray(text.length + 1) // row 0: q is empty, so any start in text costs nothing
+    // Row 0 is all zeros: with q empty, any start in text costs nothing.
+    var prev = IntArray(text.length + 1)
     for (i in 1..q.length) {
         val row = IntArray(text.length + 1)
         row[0] = i
-        for (j in 1..text.length) row[j] = minOf(prev[j - 1] + if (q[i - 1] == text[j - 1]) 0 else 1, prev[j] + 1, row[j - 1] + 1)
+        for (j in 1..text.length) {
+            val substitution = prev[j - 1] + if (q[i - 1] == text[j - 1]) 0 else 1
+            row[j] = minOf(substitution, prev[j] + 1, row[j - 1] + 1)
+        }
         prev = row
     }
     return prev.min()
@@ -87,11 +106,19 @@ fun newerVersion(a: String, b: String): Boolean {
  * The latest release's version at a GitHub [releases] page ("0.1.55"), from where its "latest" link redirects: one
  * HEAD request, no API token. Null when the check fails. Blocking.
  */
-fun latestRelease(releases: String): String? = runCatching {
-    val c = java.net.URI("$releases/latest").toURL().openConnection() as java.net.HttpURLConnection
-    c.instanceFollowRedirects = false
-    c.requestMethod = "HEAD"
-    c.connectTimeout = 15_000
-    c.readTimeout = 15_000
-    try { c.getHeaderField("Location") } finally { c.disconnect() }
-}.getOrNull()?.substringAfter("/tag/v", "")?.takeIf { it.isNotEmpty() }
+fun latestRelease(releases: String): String? {
+    val location = runCatching {
+        val c = java.net.URI("$releases/latest").toURL().openConnection() as java.net.HttpURLConnection
+        c.instanceFollowRedirects = false
+        c.requestMethod = "HEAD"
+        c.connectTimeout = 15_000
+        c.readTimeout = 15_000
+        try {
+            c.getHeaderField("Location")
+        } finally {
+            c.disconnect()
+        }
+    }.getOrNull() ?: return null
+    val version = location.substringAfter("/tag/v", "")
+    return if (version.isEmpty()) null else version
+}

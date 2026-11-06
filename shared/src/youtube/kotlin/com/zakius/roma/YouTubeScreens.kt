@@ -97,36 +97,75 @@ import roma.core.song
 val SIGN_IN = Page("source", "login")
 
 /**
- * Always first on Home and never gone: the mixes as tiles (see [mixGrid]), any found during the run in a row below.
- * Signed out or with no mixes it holds a dimmed hint instead.
+ * Always first on Home and never gone: the mixes as tiles (see [mixGrid]), with any found during the run in a row
+ * below. When signed out or with no mixes, it holds a dimmed hint instead.
  */
 @Composable
 internal fun MixTiles(mixes: List<Item>?, read: Boolean) {
     @Composable
-    fun Hint(text: String) = Text(text, Modifier.padding(horizontal = 16.dp, vertical = 8.dp).dim(0.5f), style = MaterialTheme.typography.bodyMedium)
-    if (!YouTubeMusic.signedIn) return TextButton(onClick = { Nav.open(SIGN_IN) }, Modifier.padding(horizontal = 4.dp)) { Text("Sign in to see your mixes") }
+    fun Hint(text: String) = Text(
+        text,
+        Modifier.padding(horizontal = 16.dp, vertical = 8.dp).dim(0.5f),
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    if (!YouTubeMusic.signedIn) {
+        TextButton(onClick = { Nav.open(SIGN_IN) }, Modifier.padding(horizontal = 4.dp)) {
+            Text("Sign in to see your mixes")
+        }
+        return
+    }
     val width = screenSizeDp().width
     val list = mixes.orEmpty()
-    fun play(m: Item) { Playback.playMix(m.id, title = Store.shown(m.title), thumb = m.thumb); Nav.tab = TAB_PLAYER }
-    val (cols, fit, side) = mixGrid(width, Home.gridFor.takeIf { it > 0 } ?: list.size)
-    val shown = minOf(fit - 1, list.size) // mixes in the grid; Liked music is the last tile
+    fun play(m: Item) {
+        Playback.playMix(m.id, title = Store.shown(m.title), thumb = m.thumb)
+        Nav.tab = TAB_PLAYER
+    }
+    val gridFor = Home.gridFor
+    val (cols, fit, side) = mixGrid(width, if (gridFor > 0) gridFor else list.size)
+    // The mixes in the grid. Liked music is the last tile.
+    val shown = minOf(fit - 1, list.size)
     val textStyle = MaterialTheme.typography.bodySmall
     @Composable
-    fun Tile(title: String, locked: Boolean, onClick: () -> Unit, picture: @Composable () -> Unit) =
-        Column(Modifier.width(side).dim(if (locked) 0.35f else 1f).clickable(enabled = !locked, onClick = onClick)) {
-            picture()
-            Spacer(Modifier.height(4.dp))
-            Text(title, Modifier.height(with(androidx.compose.ui.platform.LocalDensity.current) { (textStyle.lineHeight * 3).toDp() }), style = textStyle, maxLines = 3, overflow = TextOverflow.Ellipsis)
-        }
+    fun Tile(title: String, locked: Boolean, onClick: () -> Unit, picture: @Composable () -> Unit) = Column(
+        Modifier
+            .width(side)
+            .dim(if (locked) 0.35f else 1f)
+            .clickable(enabled = !locked, onClick = onClick),
+    ) {
+        picture()
+        Spacer(Modifier.height(4.dp))
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val threeLines = with(density) { (textStyle.lineHeight * 3).toDp() }
+        Text(title, Modifier.height(threeLines), style = textStyle, maxLines = 3, overflow = TextOverflow.Ellipsis)
+    }
     Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        for (line in (list.take(shown) + listOf<Item?>(null)).chunked(cols)) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        // The null entry stands for the Liked music tile.
+        val gridItems = list.take(shown) + listOf<Item?>(null)
+        for (line in gridItems.chunked(cols)) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             for (m in line) {
-                if (m == null) Tile("Liked music", false, { Playback.playMix("LM", title = "Liked music"); Nav.tab = TAB_PLAYER }) {
-                    Box(Modifier.size(side).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Filled.ThumbUp, null, Modifier.size(side / 3), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                if (m == null) {
+                    Tile(
+                        "Liked music",
+                        false,
+                        {
+                            Playback.playMix("LM", title = "Liked music")
+                            Nav.tab = TAB_PLAYER
+                        },
+                    ) {
+                        Box(
+                            Modifier
+                                .size(side)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.secondaryContainer),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Filled.ThumbUp, null, Modifier.size(side / 3), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                        }
                     }
-                } else Tile(Store.shown(m.title), m.id in Home.updating, { play(m) }) {
-                    Thumb(shownThumb(m.thumb, side), side, Modifier.size(side).clip(RoundedCornerShape(8.dp)))
+                } else {
+                    Tile(Store.shown(m.title), m.id in Home.updating, { play(m) }) {
+                        Thumb(shownThumb(m.thumb, side), side, Modifier.size(side).clip(RoundedCornerShape(8.dp)))
+                    }
                 }
             }
         }
@@ -138,15 +177,26 @@ internal fun MixTiles(mixes: List<Item>?, read: Boolean) {
     }
     if (list.size > shown) {
         PrefetchCovers(list.drop(shown).map { it.thumb }, 128.dp)
-        LazyRow { items(list.drop(shown)) { m -> Card(m) { play(m) } } }
+        LazyRow {
+            items(list.drop(shown)) { m ->
+                Card(m) { play(m) }
+            }
+        }
     }
 }
 
-/** Signed in on the platform's sign-in page (LoginScreen): the account's cookie and its ids are kept. */
+/** Called after signing in on the platform's sign-in page (LoginScreen). Keeps the account's cookie and its ids. */
 fun signedIn(cookie: String, visitorData: String?, dataSyncId: String?) {
     YouTube.cookie = cookie
-    visitorData?.let { YouTube.visitorData = it; Store.set("visitorData", it) }
-    dataSyncId?.let { YouTube.dataSyncId = it.substringBefore("||"); Store.set("dataSyncId", it.substringBefore("||")) }
+    if (visitorData != null) {
+        YouTube.visitorData = visitorData
+        Store.set("visitorData", visitorData)
+    }
+    if (dataSyncId != null) {
+        val id = dataSyncId.substringBefore("||")
+        YouTube.dataSyncId = id
+        Store.set("dataSyncId", id)
+    }
     Store.set("cookie", cookie)
     toast("Signed in")
     Nav.stacks[Nav.tab].clear()
@@ -157,11 +207,15 @@ fun signedIn(cookie: String, visitorData: String?, dataSyncId: String?) {
 internal fun YouTubeSettings() = LazyColumn(Modifier.fillMaxSize()) {
     item { Header("YouTube") }
     item {
-        if (YouTubeMusic.signedIn) Row1("Signed in to YouTube Music", "Tap to sign out") {
-            forgetSignIn()
-            YouTube.cookie = null
-            Store.set("cookie", null)
-        } else Row1("Sign in to YouTube Music", "For your library and likes") { Nav.open(SIGN_IN) }
+        if (YouTubeMusic.signedIn) {
+            Row1("Signed in to YouTube Music", "Tap to sign out") {
+                forgetSignIn()
+                YouTube.cookie = null
+                Store.set("cookie", null)
+            }
+        } else {
+            Row1("Sign in to YouTube Music", "For your library and likes") { Nav.open(SIGN_IN) }
+        }
     }
     item { Options("Shared links open", "share.site", "music", SITES) }
 }

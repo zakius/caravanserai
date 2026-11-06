@@ -34,7 +34,8 @@ object Images {
     private lateinit var dir: File
     private val memory = Lru()
     private val loading = ConcurrentHashMap<String, Deferred<Pic?>>()
-    // ponytail: 6 at a time (6 connections over HTTP/1.1); a priority queue for the visible rows if scrolling lags.
+    // ponytail: 6 downloads at a time, matching the usual 6 connections per host over HTTP/1.1. If scrolling lags,
+    // a priority queue for the visible rows is the next step.
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val io = Dispatchers.IO.limitedParallelism(6)
     private val scope = CoroutineScope(SupervisorJob() + io)
@@ -44,12 +45,13 @@ object Images {
         dir = File(cache, "img")
         memory.max = memoryBytes
         scope.launch {
-            File(cache, "image_cache").deleteRecursively() // Coil's, up to 0.1.39
+            // Coil's cache, left behind by versions up to 0.1.39.
+            File(cache, "image_cache").deleteRecursively()
             trim()
         }
     }
 
-    /** Drops every cover, in memory and on disk: another server's covers have the same names (SubsonicSource.forget). */
+    /** Drops every cover, in memory and on disk. SubsonicSource.forget needs this because another server's covers can have the same names. */
     fun clear() {
         memory.clear()
         scope.launch { dir.deleteRecursively() }
@@ -61,38 +63,57 @@ object Images {
         private val map = LinkedHashMap<String, Pic>(64, 0.75f, true)
         private var size = 0L
         @Synchronized fun get(k: String) = map[k]
-        @Synchronized fun clear() { map.clear(); size = 0 }
+        @Synchronized fun clear() {
+            map.clear()
+            size = 0
+        }
         @Synchronized fun put(k: String, v: Pic) {
-            map.put(k, v)?.let { size -= picBytes(it) }
+            val replaced = map.put(k, v)
+            if (replaced != null) size -= picBytes(replaced)
             size += picBytes(v)
             val i = map.values.iterator()
-            while (size > max && i.hasNext()) { size -= picBytes(i.next()); i.remove() }
+            while (size > max && i.hasNext()) {
+                size -= picBytes(i.next())
+                i.remove()
+            }
         }
     }
 
-    // ponytail: oldest files out past 100 MB, checked once per start; Coil kept 2% of free space.
+    private const val DISK_MAX_BYTES = 100L * 1024 * 1024
+
+    // ponytail: deletes the oldest files past 100 MB, checked once per start. Coil kept 2% of free space instead.
     private fun trim() {
         val files = dir.listFiles().orEmpty().sortedByDescending { it.lastModified() }
         var kept = 0L
-        for (f in files) { kept += f.length(); if (kept > 100L shl 20) f.delete() }
+        for (f in files) {
+            kept += f.length()
+            if (kept > DISK_MAX_BYTES) f.delete()
+        }
     }
 
-    private fun key(url: String, px: Int, exact: Boolean, software: Boolean) = "$url@$px${if (exact) "e" else ""}${if (software) "s" else ""}"
+    private fun key(url: String, px: Int, exact: Boolean, software: Boolean): String {
+        val exactMark = if (exact) "e" else ""
+        val softwareMark = if (software) "s" else ""
+        return "$url@$px$exactMark$softwareMark"
+    }
 
-    /** In memory already: drawn in the first frame, no flash of an empty box. */
+    /** The cover if it is in memory already, so it is drawn in the first frame without a flash of an empty box. */
     fun peek(url: String, px: Int, exact: Boolean = false) = memory.get(key(url, px, exact, false))
 
     /**
-     * [px]: the side it's shown at; the bitmap is at least that, so it stays sharp. [exact]: scaled to [px] across
-     * (the blurred backdrop, the colour sample). [software]: pixels readable with getPixel.
+     * [px] is the side it's shown at. The bitmap is at least that big, so it stays sharp. [exact] scales it to exactly
+     * [px] across, for the blurred backdrop and the colour sample. [software] makes the pixels readable with getPixel.
      */
     suspend fun load(url: String, px: Int, exact: Boolean = false, software: Boolean = false): Pic? {
         val k = key(url, px, exact, software)
-        memory.get(k)?.let { return it }
+        val cached = memory.get(k)
+        if (cached != null) return cached
         val job = loading.computeIfAbsent(k) {
             scope.async(start = CoroutineStart.LAZY) {
                 try {
-                    runCatching { decodePic(bytes(url), px, exact, software) }.getOrNull()?.also { memory.put(k, it) }
+                    val pic = runCatching { decodePic(bytes(url), px, exact, software) }.getOrNull()
+                    if (pic != null) memory.put(k, pic)
+                    pic
                 } finally {
                     loading.remove(k)
                 }
@@ -106,14 +127,20 @@ object Images {
     }
 
     /**
-     * Onto disk only, not decoded: a screen's worth of covers below the fold would crowd the visible ones out of
-     * memory, and decoding a file takes a few ms where downloading it takes a round trip.
+     * Downloads onto disk only, without decoding. A screen's worth of covers below the fold would crowd the visible
+     * ones out of memory, and decoding a file takes a few ms where downloading it takes a round trip.
      */
     suspend fun download(url: String) {
-        withContext(io) { if (!file(url).exists()) runCatching { bytes(url) } }
+        withContext(io) {
+            if (!file(url).exists()) runCatching { bytes(url) }
+        }
     }
 
-    private fun file(url: String) = File(dir, MessageDigest.getInstance("SHA-1").digest(url.toByteArray()).joinToString("") { "%02x".format(it) })
+    private fun file(url: String): File {
+        val digest = MessageDigest.getInstance("SHA-1").digest(url.toByteArray())
+        val name = digest.joinToString("") { byte -> "%02x".format(byte) }
+        return File(dir, name)
+    }
 
     private fun bytes(url: String): ByteArray {
         val f = file(url)
@@ -135,7 +162,7 @@ object Images {
     }
 }
 
-/** A cover at [size]; empty until it's loaded, or [placeholder] meanwhile. */
+/** A cover at [size]. Until it's loaded it shows [placeholder], or nothing. */
 @Composable
 fun Thumb(
     url: String?,
@@ -161,12 +188,25 @@ fun ThumbPx(
     placeholder: Pic? = null,
 ) {
     // Keyed on the picture: a row reused for another song never shows the previous one's cover.
-    val state = remember(url, px) { mutableStateOf(url?.let { Images.peek(it, px, exact) } ?: placeholder) }
-    // Also when the picture arrived in memory after the first composition: a decode started at launch may finish
-    // between composing this and running the effect, and the box then stayed empty until something recomposed it.
-    LaunchedEffect(url, px) { if (url != null) Images.load(url, px, exact)?.let { state.value = it } }
+    val state = remember(url, px) {
+        val cached = if (url != null) Images.peek(url, px, exact) else null
+        mutableStateOf(cached ?: placeholder)
+    }
+    // Loads even when peek missed only by a moment: a decode started at launch can finish between composing this and
+    // running the effect, and without the load the box would stay empty until something else recomposed it.
+    LaunchedEffect(url, px) {
+        if (url != null) {
+            val pic = Images.load(url, px, exact)
+            if (pic != null) state.value = pic
+        }
+    }
     val b = state.value
-    if (b == null) Box(modifier) else Image(remember(b) { b.toImage() }, null, modifier, contentScale = contentScale, alpha = alpha)
+    if (b == null) {
+        Box(modifier)
+    } else {
+        val image = remember(b) { b.toImage() }
+        Image(image, null, modifier, contentScale = contentScale, alpha = alpha)
+    }
 }
 
 /**
@@ -178,12 +218,23 @@ fun ThumbPx(
 @Composable
 fun PrefetchCovers(urls: List<String?>, size: Dp, list: LazyListState? = null, near: Int = 30) {
     val px = with(LocalDensity.current) { size.roundToPx() }
-    // ponytail: list rows taken for the urls' indices; headers above them shift the window by a few rows.
-    // In steps of 10 rows, so scrolling restarts it now and then rather than at every row.
-    val from by remember(list) { derivedStateOf { (list?.firstVisibleItemIndex ?: 0) / 10 * 10 } }
+    // ponytail: list row indices are used as indices into urls, so headers above the rows shift the window by a few.
+    // The start moves in steps of 10 rows, so scrolling restarts the prefetch now and then rather than at every row.
+    val from by remember(list) {
+        derivedStateOf {
+            val firstVisible = list?.firstVisibleItemIndex ?: 0
+            firstVisible / 10 * 10
+        }
+    }
     LaunchedEffect(urls, px, from) {
         if (Playback.thrifty()) return@LaunchedEffect
-        for (u in urls.drop(from).take(near)) thumbAt(u, px)?.let { Images.load(it, px) }
-        for (u in urls) thumbAt(u, px)?.let { Images.download(it) }
+        for (u in urls.drop(from).take(near)) {
+            val thumb = thumbAt(u, px)
+            if (thumb != null) Images.load(thumb, px)
+        }
+        for (u in urls) {
+            val thumb = thumbAt(u, px)
+            if (thumb != null) Images.download(thumb)
+        }
     }
 }

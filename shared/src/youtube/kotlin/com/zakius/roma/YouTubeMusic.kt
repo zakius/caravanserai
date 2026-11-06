@@ -27,7 +27,7 @@ val backend: Source = YouTubeMusic
 /** YouTube Music through innertube. */
 object YouTubeMusic : Source {
     override val name = "YouTube Music"
-    // YouTube Music's red, a shade off YouTube's own; as the icon (app/src/youtube/res/values/app_icon.xml).
+    // YouTube Music's red, a shade off YouTube's own, the same as the app icon (app/src/youtube/res/values/app_icon.xml).
     override val brandColor = 0xFFE62117.toInt()
     override val account get() = cookie
 
@@ -40,12 +40,14 @@ object YouTubeMusic : Source {
         val prefs = Store.prefs
         cookie = prefs.getString("cookie", null)
         YouTube.cookie = cookie
-        // InnerTubeX sends the account cookies on browse and next calls (home, radio) only with this on; without it
+        // InnerTubeX sends the account cookies on browse and next calls (home, radio) only with this on. Without it,
         // Home is the anonymous one and never has the personal mixes. Metrolist turns it on too.
         YouTube.useLoginForBrowse = true
-        // English, as the app is: InnerTubeX would send the phone's language, and in Polish YouTube Music's Songs search
-        // leaves out the original "Youngblood" (5SOS) while English finds it first. The region stays the phone's.
-        YouTube.locale = com.metrolist.innertube.models.YouTubeLocale(gl = java.util.Locale.getDefault().country.ifEmpty { "US" }, hl = "en")
+        // The language is English, like the app. InnerTubeX would send the phone's language, and in Polish YouTube
+        // Music's Songs search leaves out the original "Youngblood" (5SOS) while English finds it first. The region
+        // stays the phone's.
+        val region = java.util.Locale.getDefault().country.ifEmpty { "US" }
+        YouTube.locale = com.metrolist.innertube.models.YouTubeLocale(gl = region, hl = "en")
         prefs.getString("visitorData", null)?.let { YouTube.visitorData = it }
         prefs.getString("dataSyncId", null)?.let { YouTube.dataSyncId = it }
         Streams.refuseVisionOs = BuildConfig.REFUSE_VISIONOS
@@ -55,19 +57,23 @@ object YouTubeMusic : Source {
     override fun start() {
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             Streams.keepIn(File(Store.cache, "streams.txt"))
-            // The first stream lookup of a run sets up NewPipe and asks YouTube for visitor data. Do it now so the first
-            // tap doesn't pay for it, on the song Play would resume: its URL is then known too (kept 5 hours).
-            (Playback.resumeId() ?: Store.anySong()?.id)?.let { id -> runCatching { Playback.streamUrl(id) } }
-            // A song needed the InnerTubeX fallback in the last week: warm that path too (its player script, cipher
-            // config and the PoToken WebView, a few seconds cold), within the same limits as the guesses below. Later,
-            // not at launch: creating the first WebView blocks the main thread while Home is still coming in.
+            // The first stream lookup of a run sets up NewPipe and asks YouTube for visitor data. Doing it now means
+            // the first tap doesn't pay for it. It uses the song Play would resume, so that song's URL is then known
+            // too (kept 5 hours).
+            val resumeId = Playback.resumeId() ?: Store.anySong()?.id
+            if (resumeId != null) runCatching { Playback.streamUrl(resumeId) }
+            // When a song needed the InnerTubeX fallback in the last week, warm that path too: its player script,
+            // cipher config and the PoToken WebView take a few seconds cold. Like other speculative work, it is skipped
+            // on a metered or data-saving connection (Playback.thrifty). It waits instead of running at launch, because
+            // creating the first WebView blocks the main thread while Home is still coming in.
             if (Playback.thrifty()) return@launch
             delay(10_000)
-            Streams.recentFallback()?.let { id -> runCatching { Playback.streamUrl(id) } }
+            val fallbackId = Streams.recentFallback()
+            if (fallbackId != null) runCatching { Playback.streamUrl(fallbackId) }
         }
     }
 
-    // Signing in or out: the mixes are the account's, and every page holds the account's things.
+    // Signing in or out changes everything: the mixes are the account's, and every page holds the account's things.
     override fun changes(key: String): Boolean {
         if (key != "cookie") return false
         cookie = Store.prefs.getString("cookie", null)
@@ -80,7 +86,8 @@ object YouTubeMusic : Source {
         if (YouTube.visitorData != null) return
         val v = YouTube.visitorData().getOrNull() ?: return
         YouTube.visitorData = v
-        Store.prefs.edit().putString("visitorData", v).apply() // not set(): that bumps version and reloads every page
+        // Not Store.set(), which bumps the version and reloads every page.
+        Store.prefs.edit().putString("visitorData", v).apply()
     }
 
     override suspend fun home(from: String?): Pair<String?, List<Section>> {
@@ -107,11 +114,12 @@ object YouTubeMusic : Source {
     override suspend fun suggestions(query: String) = YouTube.searchSuggestions(query).getOrNull()?.queries.orEmpty()
 
     override suspend fun search(query: String, filter: Int, asTyped: String?, partial: suspend (Found) -> Unit): Found {
-        val r = YouTube.search(query, asTyped?.let { YouTube.SearchFilter(it) } ?: FILTERS[filter]).getOrThrow()
+        val searchFilter = if (asTyped != null) YouTube.SearchFilter(asTyped) else FILTERS[filter]
+        val r = YouTube.search(query, searchFilter).getOrThrow()
         val items = r.items
             .filter { it !is SongItem || !it.isVideoSong || filter != 0 }
             .mapNotNull { Store.romanizer.item(it) }
-            .also { list -> Store.remember(list.mapNotNull { it.song }) }
+        Store.remember(items.mapNotNull { it.song })
         return Found(items, r.correctedQuery, r.autoCorrected, r.originalParams)
     }
 
@@ -121,12 +129,12 @@ object YouTubeMusic : Source {
     private val LIBRARY = listOf("FEmusic_liked_playlists", "FEmusic_liked_albums", "FEmusic_library_corpus_track_artists")
     override fun libraryKey(tab: Int) = LIBRARY[tab]
 
-    /** All pages of a library tab: the first page holds only about 25 items; each page shows as it arrives. */
+    /** Loads every page of a library tab, because the first page holds only about 25 items. Each page shows as it arrives. */
     override suspend fun library(tab: Int, partial: suspend (List<Item>) -> Unit): List<Item> {
         val first = YouTube.library(LIBRARY[tab]).getOrThrow()
         val all = first.items.mapNotNull { Store.romanizer.item(it) }.toMutableList()
         var cont = first.continuation
-        // ponytail: stops at 50 pages (about 1,250 items); raise it if a library is bigger.
+        // ponytail: stops at 50 pages (about 1,250 items). Raise it if a library is bigger.
         repeat(50) {
             val c = cont ?: return@repeat
             partial(all.toList())
@@ -145,20 +153,27 @@ object YouTubeMusic : Source {
                 val artists = a.album.artists.orEmpty().joinToString(", ") { it.name }
                 val songs = a.songs.map { r.song(it) }
                 Store.remember(songs)
-                Detail(r.text(a.album.title, listOf(artists)), listOfNotNull(r.text(artists).latin, a.album.year?.toString()).joinToString(" · "), a.album.thumbnail, songs, emptyList())
+                val title = r.text(a.album.title, listOf(artists))
+                val subtitle = listOfNotNull(r.text(artists).latin, a.album.year?.toString()).joinToString(" · ")
+                Detail(title, subtitle, a.album.thumbnail, songs, emptyList())
             }
             "playlist" -> {
                 val id = p.id.removePrefix("VL")
                 val pl = YouTube.playlist(id).getOrThrow()
                 val title = r.text(pl.playlist.title)
-                val author = pl.playlist.author?.name?.let { r.text(it).latin } ?: ""
-                // Generated playlists (RD…) loop: their continuations return songs already listed.
+                val authorName = pl.playlist.author?.name
+                val author = if (authorName == null) "" else r.text(authorName).latin
+                // Generated playlists (RD…) loop, so their continuations return songs already listed.
                 val songs = ArrayList<Song>()
                 val seen = HashSet<String>()
-                fun add(items: List<SongItem>) = items.filter { seen.add(it.id) }.map { r.song(it) }.also { songs += it; Store.remember(it) }
+                fun add(items: List<SongItem>) {
+                    val fresh = items.filter { seen.add(it.id) }.map { r.song(it) }
+                    songs += fresh
+                    Store.remember(fresh)
+                }
                 add(pl.songs)
                 var cont = pl.songsContinuation
-                // ponytail: loads at most 10 continuation pages (about 1000 songs); page on scroll if libraries get bigger.
+                // ponytail: loads at most 10 continuation pages (about 1000 songs). Page on scroll if libraries get bigger.
                 repeat(10) {
                     val c = cont ?: return@repeat
                     partial(Detail(title, author, pl.playlist.thumbnail, songs.toList(), emptyList()))
@@ -174,7 +189,9 @@ object YouTubeMusic : Source {
                 val songs = a.sections.flatMap { it.items }.filterIsInstance<SongItem>().map { r.song(it) }
                 Store.remember(songs)
                 val items = a.sections.flatMap { it.items }.filter { it !is SongItem }.mapNotNull { r.item(it) }
-                Detail(r.text(a.artist.title, artistId = a.artist.id), a.monthlyListenerCount ?: a.subscriberCountText ?: "", a.artist.thumbnail, songs, items)
+                val title = r.text(a.artist.title, artistId = a.artist.id)
+                val subtitle = a.monthlyListenerCount ?: a.subscriberCountText ?: ""
+                Detail(title, subtitle, a.artist.thumbnail, songs, items)
             }
         }
     }
@@ -194,7 +211,10 @@ object YouTubeMusic : Source {
     }
 
     override suspend fun playlist(id: String, from: String?): SongPage? {
-        if (from != null) return YouTube.playlistContinuation(from).getOrNull()?.let { p -> SongPage(p.songs.map { Store.romanizer.song(it) }, p.continuation) }
+        if (from != null) {
+            val next = YouTube.playlistContinuation(from).getOrNull() ?: return null
+            return SongPage(next.songs.map { Store.romanizer.song(it) }, next.continuation)
+        }
         val page = YouTube.playlist(id.removePrefix("VL")).getOrNull() ?: return null
         return SongPage(page.songs.map { Store.romanizer.song(it) }, page.songsContinuation)
     }
@@ -205,14 +225,26 @@ object YouTubeMusic : Source {
     override fun like(id: String, like: Boolean) = kotlinx.coroutines.runBlocking { YouTube.likeVideo(id, like).isSuccess }
     override fun liked(id: String) = kotlinx.coroutines.runBlocking { YouTube.likeStatus(id).getOrNull() }
 
-    // An album is saved through its audio playlist, an artist by subscribing: the page says which and its state.
+    // An album is saved through its audio playlist and an artist by subscribing. The page says which target to use
+    // and its state.
     private val libraryTargets = java.util.concurrent.ConcurrentHashMap<String, String>()
-    override fun saved(p: Page) = if (!signedIn || p.kind !in setOf("album", "artist")) null else
-        kotlinx.coroutines.runBlocking { YouTube.libraryState(p.id).getOrNull() }?.let { (saved, target) -> libraryTargets[p.id] = target; InLibrary(saved) }
-    override fun save(p: Page, on: Boolean) = libraryTargets[p.id]?.let { kotlinx.coroutines.runBlocking { YouTube.saveToLibrary(it, on).isSuccess } } ?: false
+
+    override fun saved(p: Page): InLibrary? {
+        if (!signedIn || p.kind !in setOf("album", "artist")) return null
+        val state = kotlinx.coroutines.runBlocking { YouTube.libraryState(p.id).getOrNull() } ?: return null
+        val (saved, target) = state
+        libraryTargets[p.id] = target
+        return InLibrary(saved)
+    }
+
+    override fun save(p: Page, on: Boolean): Boolean {
+        val target = libraryTargets[p.id] ?: return false
+        return kotlinx.coroutines.runBlocking { YouTube.saveToLibrary(target, on).isSuccess }
+    }
 
     override fun streamUrl(id: String, full: Boolean): String {
-        kotlinx.coroutines.runBlocking { ensureVisitorData() } // without it YouTube refuses the direct path's client as a bot
+        // Without visitor data, YouTube refuses the direct path's client as a bot.
+        kotlinx.coroutines.runBlocking { ensureVisitorData() }
         return Streams.audio(id, full = full).url
     }
     // YouTube's loudness is relative to its reference level.
@@ -220,11 +252,15 @@ object YouTubeMusic : Source {
     override val knowsLoudness = true
     override val hasVideos = true
 
-    // Google-hosted art takes its size in the URL: innertube hands over the largest thumbnail (often 544 px or more,
-    // 80–115 KB). YouTube video stills come in fixed sizes; for the player, hqdefault (480 px) always exists.
-    override fun thumbAt(url: String, px: Int) = if ("googleusercontent.com/" !in url) url else url.replace(SIZE_WH, "=w$px-h$px").replace(SIZE_S, "=s$px")
+    // Google-hosted art takes its size in the URL, and innertube hands over the largest thumbnail (often 544 px or
+    // more, 80–115 KB). YouTube video stills come in fixed sizes. For the player, hqdefault (480 px) always exists.
+    override fun thumbAt(url: String, px: Int): String {
+        if ("googleusercontent.com/" !in url) return url
+        return url.replace(SIZE_WH, "=w$px-h$px").replace(SIZE_S, "=s$px")
+    }
     override fun bigThumb(url: String) = url.replace(SIZE_WH, "=w$BIG_PX-h$BIG_PX").replace(SMALL_STILL, "/hqdefault.jpg")
-    // Compiled once: thumbAt runs for every row drawn while a list scrolls, bigThumb for each song of a 1,000-song playlist.
+    // Compiled once, because thumbAt runs for every row drawn while a list scrolls, and bigThumb for each song of a
+    // 1,000-song playlist.
     private val SIZE_WH = Regex("=w\\d+-h\\d+")
     private val SIZE_S = Regex("=s\\d+")
     private val SMALL_STILL = Regex("/(default|mqdefault)\\.jpg")
@@ -238,10 +274,13 @@ object YouTubeMusic : Source {
     override fun shareUrl(s: Song) = link(s.id)
     override val canShare = true
 
-    // The same video ID plays on both: on YouTube a song is its "Topic" upload.
-    fun link(videoId: String) = if (Store.str("share.site", "music") == "music") "https://music.youtube.com/watch?v=$videoId" else "https://www.youtube.com/watch?v=$videoId"
+    // The same video ID plays on both sites. On YouTube, a song is its "Topic" upload.
+    fun link(videoId: String): String {
+        val onMusic = Store.str("share.site", "music") == "music"
+        return if (onMusic) "https://music.youtube.com/watch?v=$videoId" else "https://www.youtube.com/watch?v=$videoId"
+    }
 
-    // YouTube Music never hears of plays from roma (not even its history); Last.fm does.
+    // YouTube Music never hears of plays from roma, not even in its history. Last.fm does.
     override val lastFm = true
     override fun nowPlaying(s: Song) {}
     override fun played(s: roma.core.Scrobble) {}

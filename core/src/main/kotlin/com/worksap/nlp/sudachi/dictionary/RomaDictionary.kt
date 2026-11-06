@@ -31,6 +31,28 @@ import java.nio.CharBuffer
  * (only split modes A and B read it). Sudachi's Entries and Strings blocks are empty and its matrix is 0 x 0: an
  * older roma fails on this dictionary instead of misreading it.
  */
+// RomaEntries: per word, a long (params index, cost, headword) and then an int (the reading).
+private const val ENTRY_BYTES = 12
+private const val READING_OFFSET = 8
+private const val PARAMS_INDEX_MASK = 0x3fffL // bits 0-13
+private const val COST_SHIFT = 14 // bits 14-29
+private const val HEADWORD_SHIFT = 30 // bits 30-61
+
+// RomaParams: left id, right id and part of speech, a short each.
+private const val PARAMS_BYTES = 6
+private const val RIGHT_ID_OFFSET = 2
+private const val POS_OFFSET = 4
+private const val SHORT_MASK = 0xffffL
+
+// RomaForms: two ints (the group count and padding) before the per-group bitmaps.
+private const val FORMS_HEADER_BYTES = 8
+
+// String reference: bit 31 picks the pool (set for RomaKana), bits 23-30 the length, bits 0-22 the offset.
+private const val LENGTH_SHIFT = 23
+private const val LENGTH_MASK = 0xff
+private const val OFFSET_MASK = 0x7fffff
+private const val KATAKANA_BASE = 0x30a0
+
 class RomaDictionary(bytes: ByteBuffer) : BinaryDictionary(bytes) {
     private val lexicon = RomaLexicon(bytes, dictionaryHeader)
     private val matrix = dictionaryHeader.slice(bytes, "RomaMatrix")
@@ -42,7 +64,10 @@ class RomaDictionary(bytes: ByteBuffer) : BinaryDictionary(bytes) {
     override fun getLexicon(): DoubleArrayLexicon = lexicon
 
     /** A tokenizer with [config] on this dictionary, its lattice reading roma's matrix (RomaLattice). */
-    fun tokenizer(config: Config): Tokenizer = RomaLattice.install(Dictionary.load(config.systemDictionary(this)).tokenizer(), matrix)
+    fun tokenizer(config: Config): Tokenizer {
+        val sudachiTokenizer = Dictionary.load(config.systemDictionary(this)).tokenizer()
+        return RomaLattice.install(sudachiTokenizer, matrix)
+    }
 }
 
 private class RomaLexicon(bytes: ByteBuffer, header: Description, private val entries: RomaEntries = RomaEntries(bytes, header)) :
@@ -51,7 +76,10 @@ private class RomaLexicon(bytes: ByteBuffer, header: Description, private val en
         WordIdTable(header.slice(bytes, Block.WORD_POINTERS)),
         null,
         entries,
-        DoubleArray().apply { val a = header.slice(bytes, Block.TRIE_INDEX).asIntBuffer(); setArray(a, a.limit()) },
+        DoubleArray().apply {
+            val trie = header.slice(bytes, Block.TRIE_INDEX).asIntBuffer()
+            setArray(trie, trie.limit())
+        },
         CompactedStrings(CharBuffer.allocate(0)),
     ) {
     override fun parameters(wordId: Int): Long = entries.parameters(wordId)
@@ -67,45 +95,56 @@ private class RomaEntries(bytes: ByteBuffer, header: Description) : WordInfoList
     private val text = header.slice(bytes, "RomaText").asCharBuffer()
     private val groups = forms.getInt(0)
 
-    private fun at(wordId: Int) = (WordId.word(wordId) shr 2) * 12
+    private fun at(wordId: Int) = (WordId.word(wordId) shr 2) * ENTRY_BYTES
 
-    /** Packed as Sudachi's WordParameters reads them: left, right, cost, part of speech. */
+    /** Packed as Sudachi's WordParameters reads them: left, right, cost, part of speech, 16 bits each. */
     fun parameters(wordId: Int): Long {
-        val w = entries.getLong(at(wordId))
-        val p = (w and 0x3fff).toInt() * 6
-        return (params.getShort(p).toLong() and 0xffff) or
-            (params.getShort(p + 2).toLong() and 0xffff shl 16) or
-            (w ushr 14 and 0xffff shl 32) or
-            (params.getShort(p + 4).toLong() and 0xffff shl 48)
+        val word = entries.getLong(at(wordId))
+        val p = (word and PARAMS_INDEX_MASK).toInt() * PARAMS_BYTES
+        val left = params.getShort(p).toLong() and SHORT_MASK
+        val right = params.getShort(p + RIGHT_ID_OFFSET).toLong() and SHORT_MASK
+        val cost = (word ushr COST_SHIFT) and SHORT_MASK
+        val partOfSpeech = params.getShort(p + POS_OFFSET).toLong() and SHORT_MASK
+        return left or (right shl 16) or (cost shl 32) or (partOfSpeech shl 48)
     }
 
     private fun dictionaryForm(wordId: Int): Int {
         val k = WordId.word(wordId) shr 2
-        val bits = forms.getLong(8 + (k ushr 6) * 8)
+        val group = k ushr 6
+        val bits = forms.getLong(FORMS_HEADER_BYTES + group * 8)
         val bit = 1L shl (k and 63)
-        if (bits and bit == 0L) return WordId.word(wordId)
-        val rank = forms.getInt(8 + groups * 8 + (k ushr 6) * 4) + java.lang.Long.bitCount(bits and (bit - 1))
-        return forms.getInt(8 + groups * 12 + rank * 4) shl 2
+        if ((bits and bit) == 0L) return WordId.word(wordId)
+        val countBefore = forms.getInt(FORMS_HEADER_BYTES + groups * 8 + group * 4)
+        val rank = countBefore + java.lang.Long.bitCount(bits and (bit - 1))
+        return forms.getInt(FORMS_HEADER_BYTES + groups * 12 + rank * 4) shl 2
     }
 
     override fun getWordInfo(wordId: Int): WordInfo {
         val e = at(wordId)
-        val w = entries.getLong(e)
+        val word = entries.getLong(e)
+        val partOfSpeech = params.getShort((word and PARAMS_INDEX_MASK).toInt() * PARAMS_BYTES + POS_OFFSET)
+        val headword = (word ushr HEADWORD_SHIFT).toInt()
+        val reading = entries.getInt(e + READING_OFFSET)
         val none = Ints.EMPTY_ARRAY
         return WordInfo(
-            0, params.getShort((w and 0x3fff).toInt() * 6 + 4), (w ushr 30).toInt(), entries.getInt(e + 8),
+            0, partOfSpeech, headword, reading,
             WordId.word(wordId), dictionaryForm(wordId), none, none, none, none, none, "",
         )
     }
 
-    override fun headwordPtr(wordId: Int): Int = (entries.getLong(at(wordId)) ushr 30).toInt()
+    override fun headwordPtr(wordId: Int): Int = (entries.getLong(at(wordId)) ushr HEADWORD_SHIFT).toInt()
 
-    override fun readingPtr(wordId: Int): Int = entries.getInt(at(wordId) + 8)
+    override fun readingPtr(wordId: Int): Int = entries.getInt(at(wordId) + READING_OFFSET)
 
     fun string(ref: Int): String {
-        val length = ref ushr 23 and 0xff
-        val offset = ref and 0x7fffff
+        val length = (ref ushr LENGTH_SHIFT) and LENGTH_MASK
+        val offset = ref and OFFSET_MASK
+        // A clear bit 31 (a non-negative ref) means RomaText.
         if (ref >= 0) return text.subSequence(offset, offset + length).toString()
-        return String(CharArray(length) { (0x30a0 + (kana.get(offset + it).toInt() and 0xff)).toChar() })
+        val chars = CharArray(length) { i ->
+            val code = kana.get(offset + i).toInt() and 0xff
+            (KATAKANA_BASE + code).toChar()
+        }
+        return String(chars)
     }
 }

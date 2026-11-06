@@ -83,7 +83,7 @@ def cold_tabs(res, pairs):
         sh(f"am force-stop {PKG}"); time.sleep(0.3)
         sh(f"am start -W -n {PKG}/.MainActivity >/dev/null"); time.sleep(3); hide_ime()
         res.setdefault(f"first {a}->{b}", []).append(response(tap(TABS[b])))
-        time.sleep(1.2)  # ui.tab saved
+        time.sleep(1.2)  # wait until ui.tab is saved
         hide_ime()
 
 
@@ -92,13 +92,13 @@ def views(res):
     order = circuit(["song", *VIEWS])
     for a, b in zip(order, order[1:]):
         res.setdefault(f"view {a}->{b}", []).append(response(tap(VIEWS[b] if b != "song" else VIEWS[a])))
-        time.sleep(1.5)  # the comments and lyrics are in before the next switch
+        time.sleep(1.5)  # let the comments and lyrics load before the next switch
 
 
 def page(res):
     sh(tap(TABS["Library"])); time.sleep(0.6)
     res.setdefault("page Library->page", []).append(response(tap(ROW)))
-    time.sleep(1.5)  # the page is in
+    time.sleep(1.5)  # let the page load
     res.setdefault("page page->Library", []).append(response("input keyevent BACK"))
 
 
@@ -113,9 +113,9 @@ def main():
         if "first" in groups:
             locked(lambda: (sh(tap(TABS[order[0]])), time.sleep(1.2), hide_ime(), cold_tabs(res, pairs[:10])))
             locked(lambda: cold_tabs(res, pairs[10:]))
-        else:  # each round in a fresh process, so the first view switches are first ones again
+        else:  # each round starts a fresh process, so its first view switches are true first switches
             sh(f"am force-stop {PKG}")
-        # The page twice: its first open shows a spinner, the second the page from memory.
+        # The page runs twice: its first open shows a spinner, the second shows the page from memory.
         locked(lambda: [fn(res) for g, fn in (("tab", warm_tabs), ("view", views), ("page", page), ("page", page)) if g in groups])
     med = {k: statistics.median(f for f, _ in v) for k, v in sorted(res.items())}
     main = {k: statistics.median(m for _, m in v) for k, v in res.items()}

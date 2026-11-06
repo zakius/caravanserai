@@ -17,12 +17,16 @@ class GoldenCasesTest {
         "parts" -> r.parts(input.split("|"), siblings).joinToString("|")
         "pieces" -> r.pieces(input, siblings).joinToString("|")
         "chinese" -> r.looksChinese(input).toString()
-        "lyrics" -> r.romanizeLyrics(Lyrics("", input.split("\\n").map { Line(0, it) }, false), siblings, "").lines.joinToString("\\n") { it.latin }
+        "lyrics" -> {
+            val lyrics = Lyrics("", input.split("\\n").map { Line(0, it) }, false)
+            r.romanizeLyrics(lyrics, siblings, "").lines.joinToString("\\n") { it.latin }
+        }
         else -> error("unknown kind $kind")
     }
 
     @Test fun sameAsOasis() {
-        val cases = javaClass.getResource("/romanization-cases.tsv")!!.readText().lines().filter { it.isNotEmpty() && !it.startsWith("#") }.map { it.split("\t") }
+        val file = javaClass.getResource("/romanization-cases.tsv")!!.readText()
+        val cases = file.lines().filter { it.isNotEmpty() && !it.startsWith("#") }.map { it.split("\t") }
         val wrong = cases.mapNotNull { (kind, input, siblings, expected) ->
             val got = run(kind, input, siblings.split("|").filter { it.isNotEmpty() })
             if (got == expected) null else "$kind\t$input\t$siblings\texpected $expected\tgot $got"

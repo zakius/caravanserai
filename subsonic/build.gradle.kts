@@ -1,5 +1,5 @@
-// Subsonic and OpenSubsonic servers: the client, the library index and its sync. Only the Subsonic app
-// (the subsonic flavor) has it (docs/subsonic.md, Two apps).
+// The client for Subsonic and OpenSubsonic servers, the library index and its sync. Only the Subsonic app (the
+// subsonic flavor) uses this module (docs/subsonic.md, Two apps).
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -19,7 +19,7 @@ dependencies {
     testImplementation(testFixtures(project(":core")))
 }
 
-// The tests romanize Japanese names: the slim dictionary, as :core's tests read it.
+// The tests romanize Japanese names, so they read the slim dictionary the same way :core's tests do.
 evaluationDependsOn(":core")
 tasks.test {
     useJUnitPlatform()

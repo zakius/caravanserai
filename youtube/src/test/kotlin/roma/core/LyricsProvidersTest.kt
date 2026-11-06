@@ -20,14 +20,15 @@ class LyricsProvidersTest {
         assertEquals("Hello (oh)", yrc[0].text)
         val lrc = parseLrc("[00:01.00]Hello <00:01.50>world")
         assertEquals("Hello world", lrc[0].text)
-        assertEquals(1000L to 1500L, lrc[0].words[0].let { it.startMs to it.endMs })
+        val first = lrc[0].words[0]
+        assertEquals(1000L to 1500L, first.startMs to first.endMs)
     }
 
     @Test fun lyricsPlus() {
         val body = """{"type":"Word","metadata":{"source":"Apple","title":"Spring Day"},"lyrics":[
             {"time":1000,"duration":2000,"text":"보고 싶다 (보고 싶다)","syllabus":[{"time":1000,"duration":500,"text":"보고 "},{"time":1500,"duration":500,"text":"싶다 "},{"time":2000,"duration":1000,"text":"(보고 싶다)","isBackground":true}],"translation":{"lang":"en","text":"I miss you"}},
             {"time":4000,"duration":1000,"text":"Line only"}]}"""
-        val q = LyricsQuery("v", "Spring Day", "BTS", null, 0) // duration unknown: the timing isn't checked
+        val q = LyricsQuery("v", "Spring Day", "BTS", null, 0) // An unknown duration, so the timing isn't checked.
         val l = LyricsPlus.parse(body, q)!!
         assertEquals("LyricsPlus · Apple", l.source)
         assertEquals("보고 싶다 (보고 싶다)", l.lines[0].text)
@@ -35,8 +36,8 @@ class LyricsProvidersTest {
         assertEquals("I miss you", l.lines[0].translation)
         assertEquals("Line only", l.lines[1].text)
         assertTrue(l.synced && l.wordLevel)
-        assertEquals(null, LyricsPlus.parse(body, LyricsQuery("v", "Lemon", "BTS", null, 0))) // the server matched another song
-        assertEquals(null, LyricsPlus.parse(body, LyricsQuery("v", "Spring Day", "BTS", null, 600))) // over at 0:05 of a 10-minute song
+        assertEquals(null, LyricsPlus.parse(body, LyricsQuery("v", "Lemon", "BTS", null, 0))) // The server matched another song.
+        assertEquals(null, LyricsPlus.parse(body, LyricsQuery("v", "Spring Day", "BTS", null, 600))) // The lyrics end at 0:05 of a 10-minute song.
     }
 
     @Test fun translationMerge() {

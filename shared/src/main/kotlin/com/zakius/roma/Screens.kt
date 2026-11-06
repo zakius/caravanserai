@@ -90,8 +90,6 @@ import roma.core.Song
 import roma.core.item
 import roma.core.song
 
-// ---------------------------------------------------------------- Shared pieces
-
 /** A name in the chosen display mode: romanized, both (Latin, original small underneath), ruby (reading above) or original. */
 @Composable
 fun Name(t: roma.core.Text, mode: String, style: TextStyle = MaterialTheme.typography.bodyLarge, center: Boolean = false, maxLines: Int = 2) {
@@ -106,10 +104,16 @@ fun Name(t: roma.core.Text, mode: String, style: TextStyle = MaterialTheme.typog
         mode == "romanized" -> Text(t.latin, mod, style = wrapping, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
         mode == "original" -> Text(t.original, mod, style = wrapping, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
         mode == "ruby" -> {
-            if (t.pieces.size == t.pieceLatin.size && t.pieces.isNotEmpty()) Box(mod, contentAlignment = if (center) Alignment.TopCenter else Alignment.TopStart) { RubyLine(t.pieces, t.pieceLatin, -1, wrapping, small.copy(color = dim), center, maxLines) }
-            else Column(mod) {
-                Text(t.latin, Modifier.fillMaxWidth(), style = small, color = dim, textAlign = align, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(t.original, Modifier.fillMaxWidth(), style = style, textAlign = align, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (t.pieces.size == t.pieceLatin.size && t.pieces.isNotEmpty()) {
+                val boxAlign = if (center) Alignment.TopCenter else Alignment.TopStart
+                Box(mod, contentAlignment = boxAlign) {
+                    RubyLine(t.pieces, t.pieceLatin, -1, wrapping, small.copy(color = dim), center, maxLines)
+                }
+            } else {
+                Column(mod) {
+                    Text(t.latin, Modifier.fillMaxWidth(), style = small, color = dim, textAlign = align, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(t.original, Modifier.fillMaxWidth(), style = style, textAlign = align, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
         else -> Column(mod) {
@@ -119,7 +123,7 @@ fun Name(t: roma.core.Text, mode: String, style: TextStyle = MaterialTheme.typog
     }
 }
 
-/** Art at the size it is drawn, where the source can size it: a 48–128 dp image doesn't need the largest one. */
+/** Art at the size it is drawn, where the source can size it, because a 48–128 dp image doesn't need the largest one. */
 @Composable
 fun shownThumb(url: String?, size: Dp): String? = thumbAt(url, with(LocalDensity.current) { size.roundToPx() })
 
@@ -128,16 +132,32 @@ fun thumbAt(url: String?, px: Int): String? = url?.let { backend.thumbAt(it, px)
 @Composable
 fun SongRow(s: Song, highlight: Boolean = false, extra: String? = null, onMenu: () -> Unit, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().lookUpOnPress(s).clickable(onClick = onClick).padding(start = 16.dp, top = 6.dp, bottom = 6.dp),
+        Modifier
+            .fillMaxWidth()
+            .lookUpOnPress(s)
+            .clickable(onClick = onClick)
+            .padding(start = 16.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Thumb(shownThumb(s.thumb, 48.dp), 48.dp, Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            val style = if (highlight) MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary) else MaterialTheme.typography.bodyLarge
+            val body = MaterialTheme.typography.bodyLarge
+            val style = if (highlight) {
+                body.copy(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            } else {
+                body
+            }
             Name(s.title, Store.listMode, style)
-            val sub = s.artistLatin + (extra?.let { " · $it" } ?: "")
-            Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val suffix = if (extra != null) " · $extra" else ""
+            val sub = s.artistLatin + suffix
+            Text(
+                sub,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
         IconButton(onClick = onMenu) { Icon(Icons.Default.MoreVert, "Song menu") }
     }
@@ -145,32 +165,62 @@ fun SongRow(s: Song, highlight: Boolean = false, extra: String? = null, onMenu: 
 
 @Composable
 fun ItemRow(item: Item, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().lookUpOnPress(item.playable).clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Thumb(shownThumb(item.thumb, 56.dp), 56.dp, Modifier.size(56.dp).clip(if (item.kind == "artist") CircleShape else RoundedCornerShape(4.dp)))
+    val rowModifier = Modifier
+        .fillMaxWidth()
+        .lookUpOnPress(item.playable)
+        .clickable(onClick = onClick)
+        .padding(horizontal = 16.dp, vertical = 6.dp)
+    Row(rowModifier, verticalAlignment = Alignment.CenterVertically) {
+        val shape = if (item.kind == "artist") CircleShape else RoundedCornerShape(4.dp)
+        Thumb(shownThumb(item.thumb, 56.dp), 56.dp, Modifier.size(56.dp).clip(shape))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Name(item.title, Store.listMode)
-            if (item.subtitle.latin.isNotBlank()) Text(item.subtitle.latin, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            if (item.subtitle.latin.isNotBlank()) {
+                Text(
+                    item.subtitle.latin,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
         }
     }
 }
 
 @Composable
 internal fun Card(item: Item, onClick: () -> Unit) {
-    Column(Modifier.width(140.dp).lookUpOnPress(item.playable).clickable(onClick = onClick).padding(6.dp)) {
-        Thumb(shownThumb(item.thumb, 128.dp), 128.dp, Modifier.size(128.dp).clip(if (item.kind == "artist") CircleShape else RoundedCornerShape(6.dp)))
+    val cardModifier = Modifier
+        .width(140.dp)
+        .lookUpOnPress(item.playable)
+        .clickable(onClick = onClick)
+        .padding(6.dp)
+    Column(cardModifier) {
+        val shape = if (item.kind == "artist") CircleShape else RoundedCornerShape(6.dp)
+        Thumb(shownThumb(item.thumb, 128.dp), 128.dp, Modifier.size(128.dp).clip(shape))
         Spacer(Modifier.height(4.dp))
         Name(item.title, Store.listMode, MaterialTheme.typography.bodyMedium)
-        if (item.subtitle.latin.isNotBlank()) Text(item.subtitle.latin, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (item.subtitle.latin.isNotBlank()) {
+            Text(
+                item.subtitle.latin,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
-/** The song a tap on this card or row plays; null when the tap opens a page. */
-private val Item.playable get() = song?.takeIf { kind == "song" }
+/** The song a tap on this card or row plays, or null when the tap opens a page. */
+private val Item.playable get() = if (kind == "song") song else null
 
 /** Starts the song's stream lookup when a finger lands on its row, so it is under way before the tap is recognized. */
 private fun Modifier.lookUpOnPress(s: Song?) = if (s == null) this else pointerInput(s.id) {
-    awaitEachGesture { awaitFirstDown(requireUnconsumed = false); Playback.touched(s) }
+    awaitEachGesture {
+        awaitFirstDown(requireUnconsumed = false)
+        Playback.touched(s)
+    }
 }
 
 /** A song plays alone and YouTube's autoplay follows; anything else opens its page. */
@@ -179,10 +229,12 @@ fun openItem(item: Item) {
     if (s != null) {
         Playback.play(listOf(s))
         Nav.tab = TAB_PLAYER
-    } else Nav.open(Page(item.kind, item.id))
+    } else {
+        Nav.open(Page(item.kind, item.id))
+    }
 }
 
-/** The ⋯ menu of a song: the same items in the same order everywhere; unavailable ones are dimmed. */
+/** The ⋯ menu of a song. It has the same items in the same order everywhere, and unavailable ones are dimmed. */
 @Composable
 fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
     var fixing by remember { mutableStateOf(false) }
@@ -191,7 +243,7 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
     LaunchedEffect(s.id) { Playback.checkLike(s) }
     val link by produceState<String?>(null, s.id) { value = withContext(Dispatchers.IO) { backend.shareUrl(s) } }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-    // Fully open at once: half open, the bans at the bottom would need a drag first.
+    // It opens fully at once, because half open, the bans at the bottom would need a drag first.
     ModalBottomSheet(onDismissRequest = onClose, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.padding(bottom = 24.dp)) {
             Column(Modifier.padding(horizontal = 24.dp)) {
@@ -200,31 +252,63 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
             }
             Spacer(Modifier.height(8.dp))
             HorizontalDivider()
-            MenuItem("Play next", true) { Playback.playNext(s); onClose() }
-            MenuItem("Add to queue", true) { Playback.addToQueue(s); onClose() }
-            MenuItem("Start radio", true) { Playback.startRadio(s); Nav.tab = TAB_PLAYER; onClose() }
-            MenuItem(if (liked) "Unlike" else "Like", backend.canLike) { Playback.toggleLike(s); onClose() }
-            MenuItem("Go to artist", s.firstArtistId != null) { Nav.open(Page("artist", s.firstArtistId!!)); onClose() }
-            MenuItem("Go to album", s.album?.id != null) { Nav.open(Page("album", s.album!!.id!!)); onClose() }
-            if (backend.canShare) MenuItem("Share…", link != null) {
-                share(link!!, "${s.title.latin} · ${s.artistLatin}")
+            MenuItem("Play next", true) {
+                Playback.playNext(s)
                 onClose()
+            }
+            MenuItem("Add to queue", true) {
+                Playback.addToQueue(s)
+                onClose()
+            }
+            MenuItem("Start radio", true) {
+                Playback.startRadio(s)
+                Nav.tab = TAB_PLAYER
+                onClose()
+            }
+            MenuItem(if (liked) "Unlike" else "Like", backend.canLike) {
+                Playback.toggleLike(s)
+                onClose()
+            }
+            MenuItem("Go to artist", s.firstArtistId != null) {
+                Nav.open(Page("artist", s.firstArtistId!!))
+                onClose()
+            }
+            MenuItem("Go to album", s.album?.id != null) {
+                Nav.open(Page("album", s.album!!.id!!))
+                onClose()
+            }
+            if (backend.canShare) {
+                MenuItem("Share…", link != null) {
+                    share(link!!, "${s.title.latin} · ${s.artistLatin}")
+                    onClose()
+                }
             }
             MenuItem("Correct romanization…", s.romanizable) { fixing = true }
             val titleKept = Store.keptOriginal("song", s.id, s.title.original)
             MenuItem(if (titleKept) "Romanize title" else "Don't romanize title", titleKept || !s.title.isLatin) {
-                Store.toggleKeepOriginal("song", s.id, s.title.original); onClose()
+                Store.toggleKeepOriginal("song", s.id, s.title.original)
+                onClose()
             }
             val artist = s.artists.firstOrNull { it.id != null }
             val artistKept = artist != null && Store.keptOriginal("artist", artist.id, artist.name.original)
-            MenuItem(if (artistKept) "Romanize artist" else "Don't romanize artist", artist != null && (artistKept || !artist.name.isLatin)) {
-                Store.toggleKeepOriginal("artist", artist!!.id!!, artist.name.original); onClose()
+            val artistLabel = if (artistKept) "Romanize artist" else "Don't romanize artist"
+            MenuItem(artistLabel, artist != null && (artistKept || !artist.name.isLatin)) {
+                Store.toggleKeepOriginal("artist", artist!!.id!!, artist.name.original)
+                onClose()
             }
-            MenuItem("Remove from queue", inQueue) { Playback.remove(queueIndex!!); onClose() }
+            MenuItem("Remove from queue", inQueue) {
+                Playback.remove(queueIndex!!)
+                onClose()
+            }
             MenuItem("Ban song", true) {
                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.Reject)
-                if (Playback.current()?.song?.id == s.id) Playback.never() // bans it, skips it and offers Undo
-                else { Store.ban("song", s.id, s.title.latin); toast("Banned ${s.title.latin}") }
+                if (Playback.current()?.song?.id == s.id) {
+                    // Bans the playing song, skips it and offers Undo.
+                    Playback.never()
+                } else {
+                    Store.ban("song", s.id, s.title.latin)
+                    toast("Banned ${s.title.latin}")
+                }
                 onClose()
             }
             MenuItem("Ban artist", s.firstArtistId != null) {
@@ -236,42 +320,63 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
             }
         }
     }
-    if (fixing) CorrectDialog(s) { fixing = false; onClose() }
+    if (fixing) {
+        CorrectDialog(s) {
+            fixing = false
+            onClose()
+        }
+    }
 }
 
 @Composable
 private fun MenuItem(label: String, enabled: Boolean, onClick: () -> Unit) {
     Text(
         label,
-        Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).dim(if (enabled) 1f else 0.35f).padding(horizontal = 24.dp, vertical = 14.dp),
+        Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled, onClick = onClick)
+            .dim(if (enabled) 1f else 0.35f)
+            .padding(horizontal = 24.dp, vertical = 14.dp),
         style = MaterialTheme.typography.bodyLarge,
     )
 }
 
-/** Some name of the song is in a non-Latin script: only then is there a romanization to correct. */
+/** Whether some name of the song is in a non-Latin script. Only then is there a romanization to correct. */
 val Song.romanizable get() = !title.isLatin || artists.any { !it.name.isLatin } || album?.name?.isLatin == false
 
 /**
- * Correct the Latin form of the song's title, an artist or the album, for this string, this song or this artist; or,
- * through the field's words underneath, one word's reading.
+ * Corrects the Latin form of the song's title, an artist or the album, for this string, this song or this artist.
+ * The field's words underneath lead to correcting one word's reading instead.
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun CorrectDialog(song: Song, onDone: () -> Unit) {
     // The song it was opened for, even if the player moves on to the next one meanwhile.
     val s = remember { song }
-    // Only names with something to romanize, each saying what it is: a title and its album are often the same string.
-    val named = (listOf("Title" to s.title) + s.artists.map { "Artist" to it.name } + listOfNotNull(s.album?.name?.let { "Album" to it })).filter { !it.second.isLatin }
+    // Only names with something to romanize, each labelled with what it is, because a title and its album are often
+    // the same string.
+    val titleField = listOf("Title" to s.title)
+    val artistFields = s.artists.map { artist -> "Artist" to artist.name }
+    val albumName = s.album?.name
+    val albumField = if (albumName != null) listOf("Album" to albumName) else emptyList()
+    val named = (titleField + artistFields + albumField).filter { !it.second.isLatin }
     val fields = named.map { it.second }
     var field by remember { mutableIntStateOf(0) }
     var scope by remember { mutableStateOf("song") }
     var latin by remember(field) { mutableStateOf(fields[field].latin) }
     var word by remember { mutableStateOf<String?>(null) }
-    word?.let { w -> return WordDialog(w, null, s.id, onDone) }
-    // The field's words, each a button that opens its reading: only when there is more than one to choose from.
+    val pickedWord = word
+    if (pickedWord != null) {
+        WordDialog(pickedWord, null, s.id, onDone)
+        return
+    }
+    // The field's words, each a button that opens its reading. They show only when there is more than one.
     val words = remember(field) {
         val f = fields[field]
-        Store.romanizer.pieces(f.original, fields.map { it.original }).map { it.trim() }.filter { Romanizer.hasNonLatin(it) }
+        val pieces = Store.romanizer.pieces(f.original, fields.map { it.original })
+        pieces
+            .map { piece -> piece.trim() }
+            .filter { piece -> Romanizer.hasNonLatin(piece) }
     }
     AlertDialog(
         onDismissRequest = onDone,
@@ -281,7 +386,11 @@ fun CorrectDialog(song: Song, onDone: () -> Unit) {
                 named.forEachIndexed { i, (what, t) -> Choice("$what: ${t.original}", field == i) { field = i } }
                 if (words.size > 1) {
                     Text("Or one word's reading:", style = MaterialTheme.typography.bodySmall)
-                    androidx.compose.foundation.layout.FlowRow { words.forEach { w -> TextButton(onClick = { word = w }) { Text(w) } } }
+                    androidx.compose.foundation.layout.FlowRow {
+                        words.forEach { w ->
+                            TextButton(onClick = { word = w }) { Text(w) }
+                        }
+                    }
                 }
                 HorizontalDivider()
                 Choice("Only this song", scope == "song") { scope = "song" }
@@ -292,7 +401,11 @@ fun CorrectDialog(song: Song, onDone: () -> Unit) {
         },
         confirmButton = {
             TextButton(onClick = {
-                val id = when (scope) { "song" -> s.id; "artist" -> s.firstArtistId ?: ""; else -> "" }
+                val id = when (scope) {
+                    "song" -> s.id
+                    "artist" -> s.firstArtistId ?: ""
+                    else -> ""
+                }
                 Store.saveOverride(Override(scope, id, fields[field].original, latin.trim()))
                 onDone()
             }) { Text("Save") }
@@ -300,7 +413,11 @@ fun CorrectDialog(song: Song, onDone: () -> Unit) {
         dismissButton = {
             Row {
                 TextButton(onClick = {
-                    val id = when (scope) { "song" -> s.id; "artist" -> s.firstArtistId ?: ""; else -> "" }
+                    val id = when (scope) {
+                        "song" -> s.id
+                        "artist" -> s.firstArtistId ?: ""
+                        else -> ""
+                    }
                     Store.saveOverride(Override(scope, id, fields[field].original, fields[field].original))
                     onDone()
                 }) { Text("Keep original") }
@@ -312,16 +429,29 @@ fun CorrectDialog(song: Song, onDone: () -> Unit) {
 
 /**
  * A word's reading: what the dictionary says (kana, romaji, dictionary form, part of speech), and the user's own
- * reading for this song or everywhere. [inContext] is the romaji the word has where it was picked; it fills the field.
- * The scope last used is offered first, so a run of fixes during a song needs no extra tap.
+ * reading for this song or everywhere. [inContext] is the romaji the word has where it was picked, and it fills the
+ * field. The scope last used is offered first, so a run of fixes during a song needs no extra tap.
  */
 @Composable
 fun WordDialog(word: String, inContext: String?, songId: String, onDone: () -> Unit) {
     val existing = Store.wordOverride(word, songId)
     val info = remember(word) { runCatching { Store.romanizer.lookUp(word) }.getOrDefault(emptyList()) }
-    var everywhere by remember { mutableStateOf(existing?.let { it.id == "" } ?: Store.bool("fix.everywhere", false)) }
-    // In context the word may carry the line's capital ("Kimi" first in a line); the reading itself doesn't.
-    var latin by remember { mutableStateOf(existing?.latin ?: (inContext ?: Store.romanizer.machine(word, sentence = true, songId = songId)).let { if (it.getOrNull(1)?.isUpperCase() == true) it else it.replaceFirstChar(Char::lowercase) }) }
+    var everywhere by remember {
+        val initial = if (existing != null) existing.id == "" else Store.bool("fix.everywhere", false)
+        mutableStateOf(initial)
+    }
+    var latin by remember {
+        val initial = if (existing != null) {
+            existing.latin
+        } else {
+            val guess = inContext ?: Store.romanizer.machine(word, sentence = true, songId = songId)
+            // In context the word may carry the line's capital ("Kimi" first in a line), but the reading itself
+            // doesn't. A word whose second letter is a capital too, such as an acronym, keeps its case.
+            val keepsCase = guess.getOrNull(1)?.isUpperCase() == true
+            if (keepsCase) guess else guess.replaceFirstChar(Char::lowercase)
+        }
+        mutableStateOf(initial)
+    }
     fun save(value: String) {
         Store.set("fix.everywhere", everywhere)
         Store.saveWord(word, songId, everywhere, value)
@@ -359,7 +489,12 @@ fun TextInputDialog(title: String, initial: String, onDone: () -> Unit, onSave: 
         onDismissRequest = onDone,
         title = { Text(title) },
         text = { OutlinedTextField(value, { value = it }, singleLine = true, autoFocus = true) },
-        confirmButton = { TextButton(onClick = { onSave(value); onDone() }) { Text("Save") } },
+        confirmButton = {
+            TextButton(onClick = {
+                onSave(value)
+                onDone()
+            }) { Text("Save") }
+        },
         dismissButton = { TextButton(onClick = onDone) { Text("Cancel") } },
     )
 }
@@ -368,8 +503,11 @@ fun TextInputDialog(title: String, initial: String, onDone: () -> Unit, onSave: 
 internal fun Choice(label: String, selected: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
     // The row is the one radio button TalkBack sees, with its label.
     Row(
-        Modifier.fillMaxWidth().selectable(selected, enabled, role = androidx.compose.ui.semantics.Role.RadioButton, onClick = onClick)
-            .dim(if (enabled) 1f else 0.4f).padding(vertical = 2.dp),
+        Modifier
+            .fillMaxWidth()
+            .selectable(selected, enabled, role = androidx.compose.ui.semantics.Role.RadioButton, onClick = onClick)
+            .dim(if (enabled) 1f else 0.4f)
+            .padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         RadioButton(selected, null)
@@ -380,8 +518,9 @@ internal fun Choice(label: String, selected: Boolean, enabled: Boolean = true, o
 /** A loaded page, when it was fetched, and with which [Store.dataVersion]. */
 private class Kept(val value: Any, val at: Long, val dataVersion: Int)
 
-// The last results by key, so going back to a page or a tab shows it at once (with its scroll position, see Root).
-// ponytail: 20 entries, enough for a few tabs' back stacks; the disk keeps pages beyond that.
+// The last results by key, so going back to a page or a tab shows it at once, with its scroll position (see Root).
+// The map is in access order, so the least recently used page goes first. ponytail: 20 entries are enough for a few
+// tabs' back stacks, and the disk keeps pages beyond that.
 private val loaded = object : LinkedHashMap<String, Kept>(32, 0.75f, true) {
     override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Kept>) = size > 20
 }
@@ -404,7 +543,9 @@ private fun <T : Any> Loader(
     list: LazyListState? = null,
     rows: ((T) -> List<Any?>)? = null,
     disk: KSerializer<T>? = null,
-    loading: @Composable () -> Unit = { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() } },
+    loading: @Composable () -> Unit = {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+    },
     content: @Composable (T) -> Unit,
 ) {
     @Suppress("UNCHECKED_CAST")
@@ -414,27 +555,48 @@ private fun <T : Any> Loader(
     LaunchedEffect(key, attempt, Store.dataVersion) {
         failed = null
         val kept = loaded[key]
-        if (attempt == 0 && kept != null && kept.dataVersion == Store.dataVersion && System.currentTimeMillis() - kept.at < 10 * 60_000) return@LaunchedEffect
+        val keptIsRecent = kept != null &&
+            kept.dataVersion == Store.dataVersion &&
+            System.currentTimeMillis() - kept.at < 10 * 60_000
+        if (attempt == 0 && keptIsRecent) return@LaunchedEffect
         if (shown == null && disk != null) shown = withContext(Dispatchers.IO) { Store.readPage(key, disk) }
         var partial = false
         val result = withContext(Dispatchers.IO) {
-            runCatching { load { p -> withContext(Dispatchers.Main) { if (shown == null || partial) { shown = p; partial = true } } } }
+            runCatching {
+                load { p ->
+                    withContext(Dispatchers.Main) {
+                        if (shown == null || partial) {
+                            shown = p
+                            partial = true
+                        }
+                    }
+                }
+            }
         }
-        val fresh = result.getOrElse { if (shown == null || partial) failed = plainError(it); return@LaunchedEffect }
+        val fresh = result.getOrElse { error ->
+            if (shown == null || partial) failed = plainError(error)
+            return@LaunchedEffect
+        }
         loaded[key] = Kept(fresh, System.currentTimeMillis(), Store.dataVersion)
         if (disk != null) Store.writePage(key, fresh, disk)
         val old = shown
         if (old != null && !partial && rows != null && list != null) {
             val a = rows(old)
             val b = rows(fresh)
-            snapshotFlow { list.layoutInfo.visibleItemsInfo.map { it.index } }.first { on -> on.all { a.getOrNull(it) == b.getOrNull(it) } }
+            // Waits until every row on screen is the same in both copies.
+            val visibleRows = snapshotFlow { list.layoutInfo.visibleItemsInfo.map { it.index } }
+            visibleRows.first { on -> on.all { i -> a.getOrNull(i) == b.getOrNull(i) } }
         }
         shown = fresh
     }
     val f = failed
     val r = shown
     when {
-        f != null -> Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        f != null -> Column(
+            Modifier.fillMaxSize().padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
             Text("Couldn't load this page.", textAlign = TextAlign.Center)
             Text(f, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
             TextButton(onClick = { attempt++ }) { Text("Retry") }
@@ -445,23 +607,25 @@ private fun <T : Any> Loader(
 }
 
 /**
- * Dimmed by multiplying each drawing's alpha, not by drawing into an offscreen layer first as Modifier.alpha does: the
- * GPU then doesn't switch buffers for every dimmed control. Fine where the content's own parts don't overlap.
+ * Dims by multiplying each drawing's alpha instead of drawing into an offscreen layer first, as Modifier.alpha does, so
+ * the GPU doesn't switch buffers for every dimmed control. The result is only right where the content's own parts
+ * don't overlap.
  */
-fun Modifier.dim(alpha: Float) = graphicsLayer { this.alpha = alpha; compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha }
+fun Modifier.dim(alpha: Float) = graphicsLayer {
+    this.alpha = alpha
+    compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
+}
 
 @Composable
 internal fun Header(text: String) {
     Text(text, Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp), style = MaterialTheme.typography.titleMedium)
 }
 
-// ---------------------------------------------------------------- Home
-
 private const val MIX_PAGES = 10
 
 /**
- * Home: the pinned "Your mixes" tiles, then YouTube's shelves. Signed in, the first [MIX_PAGES] pages load at once
- * to collect the mixes; after that a page loads when the user nears the end.
+ * Home: the pinned "Your mixes" tiles, then YouTube's shelves. When signed in, the first [MIX_PAGES] pages load at
+ * once to collect the mixes. After that a page loads when the user nears the end.
  *
  * The state lives here rather than in the screen, so going back to Home shows it at once, where it was, and the
  * first page starts loading before the screen is drawn ([start] runs in MainActivity.onCreate). The last Home is
@@ -473,15 +637,15 @@ private const val MIX_PAGES = 10
 object Home {
     var sections by mutableStateOf(listOf<Section>())
         private set
-    // Read from disk with the shelves, off the main thread; until then the row keeps its place, empty.
+    // Read from disk with the shelves, off the main thread. Until then the row keeps its place, empty.
     var mixes by mutableStateOf<List<Item>?>(null)
         private set
     var mixesRead by mutableStateOf(false)
         private set
-    /** Mixes whose tiles are being changed: dimmed and not tappable until their new picture and title are in. */
+    /** Mixes whose tiles are being changed. They are dimmed and not tappable until their new picture and title are in. */
     var updating by mutableStateOf(emptySet<String>())
         private set
-    /** How many mixes the grid holds this run: mixes found meanwhile go in the row below it, so no tile moves. */
+    /** How many mixes the grid holds this run. Mixes found later go in the row below it, so no tile moves. */
     var gridFor = 0
         private set
     var more by mutableStateOf(true)
@@ -495,13 +659,13 @@ object Home {
     private var dataVersion = -1
     private var account: String? = null
     private var fetchedAt = 0L
-    // Where paging stands; kept across Retry so it carries on from the failed page.
+    // Where paging stands. It is kept across Retry, so paging carries on from the failed page.
     private var cont: String? = null
     private var page = 0
     private val found = ArrayList<Item>()
     private var looking = false
-    // This run's shelves: what the disk copy becomes, with the shelves of the last copy this run hasn't fetched again.
-    // Otherwise a start closed after its first page left a one-page copy, and the next start showed only that.
+    // This run's shelves. The disk copy is these plus the last copy's shelves that this run hasn't fetched again, so
+    // an app closed after its first page doesn't leave a one-page copy for the next start.
     private val fresh = ArrayList<Section>()
     private var saved = emptyList<Section>()
     // New contents for shelves that were on screen, by shelf index.
@@ -518,7 +682,8 @@ object Home {
             account = backend.account
             if (job != null) {
                 sections = emptyList()
-                mixes = null // Store.set dropped the other account's mixes from disk
+                // Store.set has already dropped the other account's mixes from disk.
+                mixes = null
                 gridFor = 0
                 waiting.clear()
                 mixJob?.cancel()
@@ -541,20 +706,23 @@ object Home {
 
     @Volatile private var preloaded: java.util.concurrent.FutureTask<Pair<List<Item>?, List<Section>?>>? = null
 
-    /** When Home is the screen a start shows, its copy on disk is read beside the rest of start-up. */
+    /** When a start shows Home first, this reads its copy on disk alongside the rest of start-up. */
     fun preload() {
         val read = java.util.concurrent.FutureTask { Store.mixes to Store.readPage("home", ListSerializer(Section.serializer())) }
         preloaded = read
         kotlin.concurrent.thread(name = "home") { read.run() }
     }
 
-    // The pictures of the first screen, the mix tiles, decoded into the memory cache now so the first frame has them
+    // Decodes the pictures of the first screen, the mix tiles, into the memory cache now, so the first frame has them
     // instead of the next few.
     private fun decodeFirstPictures(mixes: List<Item>?) {
         if (mixes.isNullOrEmpty()) return
         val (_, shown, _) = mixGrid(screenWidthDp(), mixes.size)
         val px = tilePx(mixes.size)
-        mixes.take(shown - 1).forEach { item -> thumbAt(item.thumb, px)?.let { Images.prefetch(it, px) } }
+        for (item in mixes.take(shown - 1)) {
+            val thumb = thumbAt(item.thumb, px)
+            if (thumb != null) Images.prefetch(thumb, px)
+        }
     }
 
     private fun tilePx(n: Int) = (mixGrid(screenWidthDp(), n).third.value * screenDensity()).roundToInt()
@@ -565,73 +733,123 @@ object Home {
     }
 
     /**
-     * Fresh mixes into the tiles without changing anything under a finger. Known mixes keep their place (one YouTube
-     * dropped stays until the next start) and new ones go after them. A tile whose picture or title changed waits for
-     * a second without touches, is dimmed and locked while its new picture loads, then shows it with the new title.
+     * Puts fresh mixes into the tiles without changing anything under a finger. Known mixes keep their place (one
+     * that YouTube dropped stays until the next start) and new ones go after them. A tile whose picture or title
+     * changed waits for a second without touches, is dimmed and locked while its new picture loads, and then shows it
+     * with the new title.
      */
     private fun updateMixes(m: List<Item>) {
         val old = mixes.orEmpty()
         fun key(i: Item) = i.id.removePrefix("VL")
         val byKey = m.associateBy(::key)
-        val merged = old.map { byKey[key(it)] ?: it } + m.filter { n -> old.none { key(it) == key(n) } }
+        val updated = old.map { o -> byKey[key(o)] ?: o }
+        val added = m.filter { n -> old.none { o -> key(o) == key(n) } }
+        val merged = updated + added
         Store.mixes = merged.filter { key(it) in byKey }
-        val changed = merged.filter { n -> old.any { key(it) == key(n) && (it.thumb != n.thumb || it.title.original != n.title.original) } }
+        val changed = merged.filter { n ->
+            old.any { o -> key(o) == key(n) && (o.thumb != n.thumb || o.title.original != n.title.original) }
+        }
         mixJob?.cancel()
-        if (changed.isEmpty()) return showMixes(merged)
+        if (changed.isEmpty()) {
+            showMixes(merged)
+            return
+        }
         mixJob = scope.launch {
             Touch.awaitIdle()
             updating = changed.map { it.id }.toSet()
-            val px = tilePx(gridFor.takeIf { it > 0 } ?: merged.size)
-            // ponytail: 5 s, then the tiles change anyway and a picture still missing loads as usual.
+            val tiles = if (gridFor > 0) gridFor else merged.size
+            val px = tilePx(tiles)
+            // ponytail: waits at most 5 s, then the tiles change anyway and a picture still missing loads as usual.
             withTimeoutOrNull(5_000) {
-                changed.map { i -> async { thumbAt(i.thumb, px)?.let { Images.load(it, px) } } }.awaitAll()
+                val loads = changed.map { i ->
+                    async {
+                        val thumb = thumbAt(i.thumb, px)
+                        if (thumb != null) Images.load(thumb, px) else null
+                    }
+                }
+                loads.awaitAll()
             }
             showMixes(merged)
-            delay(300) // a tap already on its way when the tile changed is not taken for one on the new mix
+            // A tap already on its way when the tile changed must not count as a tap on the new mix.
+            delay(300)
             updating = emptySet()
         }
     }
 
     private suspend fun load() = coroutineScope {
-        if (sections.isEmpty()) launch {
-            val (savedMixes, disk) = withContext(Dispatchers.IO) {
-                val pre = preloaded?.get()?.also { preloaded = null }
-                pre?.let { decodeFirstPictures(it.first) }
-                pre ?: (Store.mixes to Store.readPage("home", ListSerializer(Section.serializer())))
+        if (sections.isEmpty()) {
+            launch {
+                val (savedMixes, disk) = withContext(Dispatchers.IO) {
+                    val pre = preloaded?.get()
+                    if (pre != null) {
+                        preloaded = null
+                        decodeFirstPictures(pre.first)
+                    }
+                    pre ?: (Store.mixes to Store.readPage("home", ListSerializer(Section.serializer())))
+                }
+                if (!mixesRead) {
+                    if (mixes == null) showMixes(savedMixes)
+                    mixesRead = true
+                }
+                if (disk != null) saved = disk
+                if (sections.isEmpty() && disk != null) sections = disk
             }
-            if (!mixesRead) { if (mixes == null) showMixes(savedMixes); mixesRead = true }
-            if (disk != null) saved = disk
-            if (sections.isEmpty() && disk != null) sections = disk
         }
         // Waiting contents go in as their shelf leaves the screen. This runs only when the list scrolls.
         launch {
             snapshotFlow { list.layoutInfo.visibleItemsInfo.map { it.index }.toSet() }.collect { on ->
-                val off = waiting.keys.filter { it + 1 !in on }
-                if (off.isNotEmpty()) sections = sections.toMutableList().also { l -> off.forEach { l[it] = waiting.remove(it)!! } }
+                // LazyColumn item i + 1 is shelf i.
+                val off = waiting.keys.filter { shelf -> shelf + 1 !in on }
+                if (off.isNotEmpty()) {
+                    val updated = sections.toMutableList()
+                    for (shelf in off) updated[shelf] = waiting.remove(shelf)!!
+                    sections = updated
+                }
             }
         }
         while (more) {
-            if (!looking && page > 0) snapshotFlow { list.layoutInfo.run { (visibleItemsInfo.lastOrNull()?.index ?: 0) >= totalItemsCount - 3 } }.first { it }
+            if (!looking && page > 0) {
+                // Waits until the user nears the end of the list.
+                val nearEnd = snapshotFlow {
+                    val info = list.layoutInfo
+                    val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: 0
+                    lastVisible >= info.totalItemsCount - 3
+                }
+                nearEnd.first { near -> near }
+            }
             val from = cont
             val result = withContext(Dispatchers.IO) {
                 runCatching { backend.home(from) }
             }
-            val (next, shelves) = result.getOrElse { failed = plainError(it); fetchedAt = 0; return@coroutineScope }
-            if (account != backend.account) return@coroutineScope // loaded for the account before a switch: not shown or saved
+            val (next, shelves) = result.getOrElse { error ->
+                failed = plainError(error)
+                fetchedAt = 0
+                return@coroutineScope
+            }
+            // A page loaded for the account before a switch is neither shown nor saved.
+            if (account != backend.account) return@coroutineScope
             page++
             cont = next
             more = next != null
             val before = found.size
             val mixes = backend.mixesIn(shelves.flatMap { it.items })
-            found += mixes.filter { m -> found.none { it.id.removePrefix("VL") == m.id.removePrefix("VL") } }
+            found += mixes.filter { m -> found.none { f -> f.id.removePrefix("VL") == m.id.removePrefix("VL") } }
             // The mixes live in the pinned row only.
-            val add = shelves.map { Section(it.title, it.items.filter { i -> mixes.none { it.id == i.id } }) }.filter { it.items.isNotEmpty() }
+            val add = shelves
+                .map { shelf ->
+                    val items = shelf.items.filter { i -> mixes.none { m -> m.id == i.id } }
+                    Section(shelf.title, items)
+                }
+                .filter { shelf -> shelf.items.isNotEmpty() }
             fresh += add
-            Store.writePage("home", fresh + saved.filter { s -> fresh.none { it.title.original == s.title.original } }, ListSerializer(Section.serializer()))
+            val notFetchedAgain = saved.filter { s -> fresh.none { f -> f.title.original == s.title.original } }
+            Store.writePage("home", fresh + notFetchedAgain, ListSerializer(Section.serializer()))
             merge(add)
             // The mixes are spread over several pages (the numbered ones often come after the Supermix), so the
-            // row waits for the first MIX_PAGES pages; mixes on pages after those still join it.
-            if (looking && (page >= MIX_PAGES || !more) || !looking && found.size > before) {
+            // row waits for the first MIX_PAGES pages. Mixes on later pages still join it.
+            val lookingDone = looking && (page >= MIX_PAGES || !more)
+            val foundMoreLater = !looking && found.size > before
+            if (lookingDone || foundMoreLater) {
                 looking = false
                 updateMixes(backend.mixesIn(found))
             }
@@ -642,7 +860,7 @@ object Home {
 
     private fun sameItems(a: List<Item>, b: List<Item>) = a.map { it.id } == b.map { it.id }
 
-    /** Fresh shelves into the shown ones, by title; see [Home]. LazyColumn item i + 1 is shelf i. */
+    /** Merges fresh shelves into the shown ones by title, as [Home] describes. LazyColumn item i + 1 is shelf i. */
     private fun merge(add: List<Section>) {
         val shown = sections.toMutableList()
         val on = visible()
@@ -654,7 +872,12 @@ object Home {
                 shown += s
             } else {
                 matched += i
-                if (sameItems(shown[i].items, s.items) || i + 1 !in on) { shown[i] = s; waiting.remove(i) } else waiting[i] = s
+                if (sameItems(shown[i].items, s.items) || i + 1 !in on) {
+                    shown[i] = s
+                    waiting.remove(i)
+                } else {
+                    waiting[i] = s
+                }
             }
         }
         sections = shown
@@ -664,38 +887,54 @@ object Home {
 @Composable
 fun HomeScreen() {
     LaunchedEffect(Store.dataVersion) { Home.start() }
-    // The first frame holds the mixes only, the reason Home is opened; the shelves (YouTube's, which change from start
-    // to start) and their pictures come in the frame after.
+    // The first frame holds only the mixes, which are what Home is opened for. The shelves (YouTube's, which change
+    // from start to start) and their pictures come in the frame after.
     var shelves by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { Startup.later { shelves = true } }
     // The mixes take at least the first screen, so the shelves begin below it even when there are few mixes.
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
         val height = maxHeight
-        // Out here, not in a row: a row is composed only once it scrolls into view. The first cards of every shelf
-        // come before the later ones of any.
-        if (shelves) PrefetchCovers(Home.sections.flatMap { it.items.withIndex() }.sortedBy { it.index }.map { it.value.thumb }, 128.dp, near = 40)
+        // This sits out here, not in a row, because a row is composed only once it scrolls into view. The first cards
+        // of every shelf come before the later cards of any.
+        if (shelves) {
+            val byPosition = Home.sections.flatMap { it.items.withIndex() }.sortedBy { it.index }
+            PrefetchCovers(byPosition.map { it.value.thumb }, 128.dp, near = 40)
+        }
         LazyColumn(Modifier.fillMaxSize(), Home.list) {
             // A library's shelves don't change from start to start, so on a server they follow the tiles at once.
             item(key = "mixes") {
                 Column(if (backend.mixes) Modifier.heightIn(min = height) else Modifier) {
-                    Text(if (backend.mixes) "Your mixes" else "Your library", Modifier.padding(start = 16.dp, top = 16.dp), style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        if (backend.mixes) "Your mixes" else "Your library",
+                        Modifier.padding(start = 16.dp, top = 16.dp),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
                     backend.HomeTiles(Home.mixes, Home.mixesRead)
                 }
             }
             if (!shelves) return@LazyColumn
             items(Home.sections) { sec ->
-                Box(Modifier.padding(start = 16.dp, top = 16.dp)) { Name(sec.title, Store.listMode, MaterialTheme.typography.titleMedium) }
-                LazyRow { items(sec.items) { item -> Card(item) { openItem(item) } } }
+                Box(Modifier.padding(start = 16.dp, top = 16.dp)) {
+                    Name(sec.title, Store.listMode, MaterialTheme.typography.titleMedium)
+                }
+                LazyRow {
+                    items(sec.items) { item -> Card(item) { openItem(item) } }
+                }
             }
             item(key = "end") {
                 val f = Home.failed
                 when {
-                    f != null -> Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    f != null -> Column(
+                        Modifier.fillMaxWidth().padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
                         Text("Couldn't load Home.", textAlign = TextAlign.Center)
                         Text(f, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
                         TextButton(onClick = { Home.start() }) { Text("Retry") }
                     }
-                    Home.more -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                    Home.more -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
                 }
             }
         }
@@ -706,10 +945,11 @@ fun HomeScreen() {
  * The mixes' grid: three columns, every mix and then the Liked music tile, as (columns, tiles shown, tile side).
  * Titles get three lines whatever they say, so a tile's height never depends on its text.
  */
-internal fun mixGrid(widthDp: Int, n: Int): Triple<Int, Int, Dp> =
-    Triple(3, n + 1, ((widthDp - 16 * 2 - 12 * 2) / 3).dp)
-
-// ---------------------------------------------------------------- Search
+internal fun mixGrid(widthDp: Int, n: Int): Triple<Int, Int, Dp> {
+    // 16 dp of padding on each side, and 12 dp between each pair of the three columns.
+    val side = (widthDp - 16 * 2 - 12 * 2) / 3
+    return Triple(3, n + 1, side.dp)
+}
 
 private val FILTERS = listOf("Songs", "Albums", "Artists", "Playlists")
 
@@ -718,17 +958,28 @@ fun SearchScreen() {
     var query by rememberSaveable { mutableStateOf("") }
     var submitted by rememberSaveable { mutableStateOf("") }
     var filter by rememberSaveable { mutableIntStateOf(0) }
-    // Set by "Search for … instead": YouTube's params for the query as typed, without its spelling correction.
+    // Set by "Search as typed" to YouTube's params for the query without its spelling correction.
     var asTyped by rememberSaveable { mutableStateOf<String?>(null) }
     var menuFor by remember { mutableStateOf<Song?>(null) }
     val focus = remember { FocusRequester() }
-    // The keyboard comes up for a new search, not when coming back to results; it goes when another tab is shown
-    // (this one stays composed, focus included).
+    // The keyboard comes up for a new search, not when coming back to results. It goes away when another tab is
+    // shown, because this one stays composed, focus included.
     val shown = LocalTabShown.current
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
-    LaunchedEffect(shown) { if (!shown) focusManager.clearFocus() else if (query.isEmpty()) focus.requestFocus() }
-    // The results take the keyboard's place.
-    fun search(q: String) { query = q; submitted = q.trim(); asTyped = null; focusManager.clearFocus() }
+    LaunchedEffect(shown) {
+        if (!shown) {
+            focusManager.clearFocus()
+        } else if (query.isEmpty()) {
+            focus.requestFocus()
+        }
+    }
+    fun search(q: String) {
+        query = q
+        submitted = q.trim()
+        asTyped = null
+        // Hides the keyboard, so the results take its place.
+        focusManager.clearFocus()
+    }
     val source = backend
     Column(Modifier.fillMaxSize()) {
         OutlinedTextField(
@@ -738,145 +989,252 @@ fun SearchScreen() {
             singleLine = true,
             onSearch = { search(query) },
         )
-        // Fixed order; videos are left out on purpose. With a large system font they wrap onto a second line, in the
-        // same order, instead of squeezing the last one into a column of letters.
-        androidx.compose.foundation.layout.FlowRow(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FILTERS.forEachIndexed { i, label -> FilterChip(filter == i, { filter = i; asTyped = null }, label = { Text(label) }) }
+        // The filters keep a fixed order, and videos are left out on purpose. With a large system font they wrap onto a
+        // second line, in the same order, instead of squeezing the last one into a column of letters.
+        androidx.compose.foundation.layout.FlowRow(
+            Modifier.padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            FILTERS.forEachIndexed { i, label ->
+                val onClick = {
+                    filter = i
+                    asTyped = null
+                }
+                FilterChip(filter == i, onClick, label = { Text(label) })
+            }
         }
         // While the text differs from the last search, YouTube's suggestions take the results' place. The ones shown
-        // stay while the next keystroke's load, so typing doesn't flash the old results between them.
+        // stay while the next keystroke's suggestions load, so typing doesn't flash the old results between them.
         var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
         LaunchedEffect(query) {
-            if (query.isBlank() || query.trim() == submitted) { suggestions = emptyList(); return@LaunchedEffect }
+            if (query.isBlank() || query.trim() == submitted) {
+                suggestions = emptyList()
+                return@LaunchedEffect
+            }
             delay(250)
             suggestions = withContext(Dispatchers.IO) { source.suggestions(query) }
         }
         if (suggestions.isNotEmpty() && query.trim() != submitted) {
             LazyColumn(Modifier.fillMaxSize()) {
-                items(suggestions) { q -> Text(q, Modifier.fillMaxWidth().clickable { search(q) }.padding(horizontal = 16.dp, vertical = 12.dp)) }
+                items(suggestions) { q ->
+                    val rowModifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { search(q) }
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                    Text(q, rowModifier)
+                }
             }
         } else if (submitted.isNotEmpty()) {
             // Songs played before, by their Latin forms, so "kimi no" finds 君の声 even though YouTube wouldn't. These rows
             // show as soon as the local lookup is done and keep their place when YouTube's results arrive below them.
             // The lookup runs off the main thread, once per search, before this search's own results join the index.
             val local by produceState(emptyList<Song>(), submitted, filter) {
-                value = if (filter == 0 && !source.searchIsLocal) withContext(Dispatchers.IO) { Store.searchLocal(submitted) } else emptyList()
+                value = if (filter == 0 && !source.searchIsLocal) {
+                    withContext(Dispatchers.IO) { Store.searchLocal(submitted) }
+                } else {
+                    emptyList()
+                }
             }
-            // The top row is the likely tap: the first "Seen before" song at once, YouTube's top song when it comes.
+            // The top row is the likely tap, so the first "Seen before" song is prepared at once, and YouTube's top
+            // song when it comes.
             LaunchedEffect(local) { Playback.prepare(local.take(1)) }
             fun LazyListScope.localRows() {
                 if (local.isEmpty()) return
                 item { Header("Seen before") }
-                items(local) { s -> SongRow(s, onMenu = { menuFor = s }) { Playback.play(listOf(s)); Nav.tab = TAB_PLAYER } }
+                items(local) { s ->
+                    SongRow(s, onMenu = { menuFor = s }) {
+                        Playback.play(listOf(s))
+                        Nav.tab = TAB_PLAYER
+                    }
+                }
                 item { Header(source.name) }
             }
-            Loader(listOf(submitted, filter, asTyped).toString(), { partial -> source.search(submitted, filter, asTyped, partial) }, loading = {
-                LazyColumn(Modifier.fillMaxSize()) {
-                    localRows()
-                    item { Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
-                }
-            }) { found ->
-                PrefetchCovers(local.map { it.thumb } + found.items.filter { it.song != null }.map { it.thumb }, 48.dp)
+            val searchKey = listOf(submitted, filter, asTyped).toString()
+            Loader(
+                searchKey,
+                { partial -> source.search(submitted, filter, asTyped, partial) },
+                loading = {
+                    LazyColumn(Modifier.fillMaxSize()) {
+                        localRows()
+                        item {
+                            Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator()
+                            }
+                        }
+                    }
+                },
+            ) { found ->
+                val songThumbs = local.map { it.thumb } + found.items.filter { it.song != null }.map { it.thumb }
+                PrefetchCovers(songThumbs, 48.dp)
                 PrefetchCovers(found.items.filter { it.song == null }.map { it.thumb }, 56.dp)
-                LaunchedEffect(found) { Playback.prepare((local.take(1) + listOfNotNull(found.items.firstOrNull()?.playable)).distinctBy { it.id }) }
+                LaunchedEffect(found) {
+                    val topFound = listOfNotNull(found.items.firstOrNull()?.playable)
+                    val likely = (local.take(1) + topFound).distinctBy { it.id }
+                    Playback.prepare(likely)
+                }
                 LazyColumn(Modifier.fillMaxSize()) {
                     localRows()
                     // YouTube's spelling correction, one line above its results. The corrected query gives way to "…",
                     // so the action stays readable on one line.
                     val corrected = found.corrected
-                    if (corrected != null) item {
-                        Row(
-                            Modifier.fillMaxWidth().clickable { if (found.autoCorrected) asTyped = found.originalParams else search(corrected) }
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
-                        ) {
-                            val style = MaterialTheme.typography.bodyMedium
-                            val color = MaterialTheme.colorScheme.primary
-                            val (lead, action) = if (found.autoCorrected) "Showing results for “$corrected”" to " · Search as typed" else "Did you mean “$corrected”" to "?"
-                            Text(lead, Modifier.weight(1f, fill = false), style = style, color = if (found.autoCorrected) Color.Unspecified else color, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(action, style = style, color = color, maxLines = 1)
+                    if (corrected != null) {
+                        item {
+                            val rowModifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    if (found.autoCorrected) {
+                                        asTyped = found.originalParams
+                                    } else {
+                                        search(corrected)
+                                    }
+                                }
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                            Row(rowModifier) {
+                                val style = MaterialTheme.typography.bodyMedium
+                                val color = MaterialTheme.colorScheme.primary
+                                val lead: String
+                                val action: String
+                                if (found.autoCorrected) {
+                                    lead = "Showing results for “$corrected”"
+                                    action = " · Search as typed"
+                                } else {
+                                    lead = "Did you mean “$corrected”"
+                                    action = "?"
+                                }
+                                Text(
+                                    lead,
+                                    Modifier.weight(1f, fill = false),
+                                    style = style,
+                                    color = if (found.autoCorrected) Color.Unspecified else color,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(action, style = style, color = color, maxLines = 1)
+                            }
                         }
                     }
-                    if (found.items.isEmpty()) item { Text("No results for “$submitted”. Check the spelling, or try another filter above.", Modifier.padding(16.dp)) }
+                    if (found.items.isEmpty()) {
+                        item {
+                            Text("No results for “$submitted”. Check the spelling, or try another filter above.", Modifier.padding(16.dp))
+                        }
+                    }
                     items(found.items) { item ->
                         val s = item.song
-                        if (s != null) SongRow(s, onMenu = { menuFor = s }) { openItem(item) } else ItemRow(item) { openItem(item) }
+                        if (s != null) {
+                            SongRow(s, onMenu = { menuFor = s }) { openItem(item) }
+                        } else {
+                            ItemRow(item) { openItem(item) }
+                        }
                     }
                 }
             }
         }
     }
-    menuFor?.let { SongMenu(it, null) { menuFor = null } }
+    val menuSong = menuFor
+    if (menuSong != null) SongMenu(menuSong, null) { menuFor = null }
 }
-
-// ---------------------------------------------------------------- Library
 
 @Composable
 fun LibraryScreen() {
     val source = backend
     if (!source.libraryReady) {
-        Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            Modifier.fillMaxSize().padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
             Text(source.libraryHint, textAlign = TextAlign.Center)
             Spacer(Modifier.height(12.dp))
-            Button(onClick = { Nav.open(source.libraryHintPage) }) { Text(if (source.libraryHintPage.kind == "settings") "Settings" else "Sign in") }
+            Button(onClick = { Nav.open(source.libraryHintPage) }) {
+                Text(if (source.libraryHintPage.kind == "settings") "Settings" else "Sign in")
+            }
         }
         return
     }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val tabs = listOf("Playlists", "Albums", "Artists")
     Column(Modifier.fillMaxSize()) {
-        TabRow(tab) { tabs.forEachIndexed { i, label -> Tab(tab == i, { tab = i }, text = { Text(label) }) } }
+        TabRow(tab) {
+            tabs.forEachIndexed { i, label ->
+                Tab(tab == i, { tab = i }, text = { Text(label) })
+            }
+        }
         val list = key(tab) { rememberLazyListState() }
-        Loader("library:${source.libraryKey(tab)}", { partial -> source.library(tab, partial) }, list, { items -> items.map { it.id } }, ListSerializer(Item.serializer())) { items ->
+        Loader(
+            "library:${source.libraryKey(tab)}",
+            { partial -> source.library(tab, partial) },
+            list,
+            { items -> items.map { it.id } },
+            ListSerializer(Item.serializer()),
+        ) { items ->
             PrefetchCovers(items.map { it.thumb }, 56.dp, list)
             if (items.isEmpty()) Centered("Nothing here yet. ${tabs[tab]} you save in ${source.name} show here.")
             Box {
-                LazyColumn(Modifier.fillMaxSize(), list) { items(items) { item -> ItemRow(item) { openItem(item) } } }
+                LazyColumn(Modifier.fillMaxSize(), list) {
+                    items(items) { item -> ItemRow(item) { openItem(item) } }
+                }
                 FastScroll(list)
             }
         }
     }
 }
 
-// ---------------------------------------------------------------- Album, playlist, artist pages
-
 @Composable
 fun PageScreen(p: Page) {
-    if (p.kind == "source") return backend.OwnPage(p.id)
-    if (p.kind == "settings") return SettingsPage(p.id)
+    if (p.kind == "source") {
+        backend.OwnPage(p.id)
+        return
+    }
+    if (p.kind == "settings") {
+        SettingsPage(p.id)
+        return
+    }
     var menuFor by remember { mutableStateOf<Song?>(null) }
     val list = rememberLazyListState()
     Loader("${p.kind}:${p.id}", { partial -> backend.detail(p, partial) }, list, ::detailRows, Detail.serializer()) { d ->
-        // Play and the first row are the likely taps; not while another page covers this one.
+        // Play and the first row are the likely taps, but not while another page covers this one.
         val shown = LocalTabShown.current
-        LaunchedEffect(d.songs.firstOrNull()?.id, shown) { if (shown) Playback.prepare(d.songs.take(1)) }
+        LaunchedEffect(d.songs.firstOrNull()?.id, shown) {
+            if (shown) Playback.prepare(d.songs.take(1))
+        }
         PrefetchCovers(d.songs.map { it.thumb }, 48.dp, list)
         PrefetchCovers(d.items.map { it.thumb }, 56.dp)
         Box {
-        LazyColumn(Modifier.fillMaxSize(), list) {
-            item {
-                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Thumb(shownThumb(d.thumb, 96.dp), 96.dp, Modifier.size(96.dp).clip(if (p.kind == "artist") CircleShape else RoundedCornerShape(6.dp)))
-                    Spacer(Modifier.width(16.dp))
-                    Column(Modifier.weight(1f)) {
-                        Name(d.title, Store.listMode, MaterialTheme.typography.titleLarge)
-                        if (d.subtitle.isNotBlank()) Text(d.subtitle, style = MaterialTheme.typography.bodySmall)
-                        PageButtons(p, d)
+            LazyColumn(Modifier.fillMaxSize(), list) {
+                item {
+                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        val shape = if (p.kind == "artist") CircleShape else RoundedCornerShape(6.dp)
+                        Thumb(shownThumb(d.thumb, 96.dp), 96.dp, Modifier.size(96.dp).clip(shape))
+                        Spacer(Modifier.width(16.dp))
+                        Column(Modifier.weight(1f)) {
+                            Name(d.title, Store.listMode, MaterialTheme.typography.titleLarge)
+                            if (d.subtitle.isNotBlank()) Text(d.subtitle, style = MaterialTheme.typography.bodySmall)
+                            PageButtons(p, d)
+                        }
                     }
                 }
+                itemsIndexed(d.songs) { i, s ->
+                    SongRow(s, onMenu = { menuFor = s }) {
+                        Playback.play(d.songs, i)
+                        Nav.tab = TAB_PLAYER
+                    }
+                }
+                if (d.items.isNotEmpty()) {
+                    item { Header("Albums and more") }
+                    items(d.items) { item -> ItemRow(item) { openItem(item) } }
+                }
             }
-            itemsIndexed(d.songs) { i, s -> SongRow(s, onMenu = { menuFor = s }) { Playback.play(d.songs, i); Nav.tab = TAB_PLAYER } }
-            if (d.items.isNotEmpty()) {
-                item { Header("Albums and more") }
-                items(d.items) { item -> ItemRow(item) { openItem(item) } }
-            }
-        }
-        FastScroll(list)
+            FastScroll(list)
         }
     }
-    menuFor?.let { SongMenu(it, null) { menuFor = null } }
+    val menuSong = menuFor
+    if (menuSong != null) SongMenu(menuSong, null) { menuFor = null }
 }
 
-/** Play, and Add to library / Remove from library on a page its source can save (none until the source has said). */
+/**
+ * Play, and Add to library or Remove from library on a page its source can save. Those buttons stay hidden until the
+ * source has said whether the page is saved.
+ */
 @Composable
 private fun PageButtons(p: Page, d: Detail) {
     val scope = rememberCoroutineScope()
@@ -884,39 +1242,53 @@ private fun PageButtons(p: Page, d: Detail) {
     var state by remember(p) { mutableStateOf<InLibrary?>(null) }
     LaunchedEffect(p) { state = withContext(Dispatchers.IO) { source.saved(p) } }
     Row {
-        if (d.songs.isNotEmpty()) TextButton(onClick = { playList(p, d.songs); Nav.tab = TAB_PLAYER }) { Text("Play") }
-        state?.let { now ->
+        if (d.songs.isNotEmpty()) {
+            TextButton(onClick = {
+                playList(p, d.songs)
+                Nav.tab = TAB_PLAYER
+            }) { Text("Play") }
+        }
+        val now = state
+        if (now != null) {
             TextButton(onClick = {
                 state = InLibrary(!now.saved)
                 scope.launch {
-                    // Read back after a change: the server may have started getting it.
-                    state = if (!withContext(Dispatchers.IO) { source.save(p, !now.saved) }) now.also { toast("Couldn't reach the server") }
-                        else withContext(Dispatchers.IO) { source.saved(p) } ?: InLibrary(!now.saved)
+                    val accepted = withContext(Dispatchers.IO) { source.save(p, !now.saved) }
+                    if (!accepted) {
+                        toast("Couldn't reach the server")
+                        state = now
+                    } else {
+                        // Read back after a change, because the server may have started getting it.
+                        val readBack = withContext(Dispatchers.IO) { source.saved(p) }
+                        state = readBack ?: InLibrary(!now.saved)
+                    }
                 }
             }) { Text(if (now.saved) "Remove from library" else "Add to library") }
         }
     }
-    state?.note?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    val note = state?.note
+    if (note != null) {
+        Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
-/** Generated playlists (mixes, editorial RD… lists) page on as they play; anything else plays what the page holds. */
+/** Generated playlists (mixes, editorial RD… lists) load more pages as they play. Anything else plays what the page holds. */
 private fun playList(p: Page, songs: List<Song>) =
     if (p.kind == "playlist" && p.id.removePrefix("VL").startsWith("RD")) Playback.playMix(p.id, songs) else Playback.play(songs)
 
-/** What each LazyColumn item of a page shows, in order: see [Loader]. */
-private fun detailRows(d: Detail): List<Any?> =
-    listOf(listOf(d.title.original, d.subtitle, d.thumb, d.songs.isEmpty())) + d.songs.map { it.id } +
-        (if (d.items.isEmpty()) emptyList() else listOf("more") + d.items.map { it.id })
+/** What each LazyColumn item of a page shows, in order, for [Loader]. */
+private fun detailRows(d: Detail): List<Any?> {
+    val header = listOf(d.title.original, d.subtitle, d.thumb, d.songs.isEmpty())
+    val more = if (d.items.isEmpty()) emptyList() else listOf("more") + d.items.map { it.id }
+    return listOf<Any?>(header) + d.songs.map { it.id } + more
+}
 
-// ---------------------------------------------------------------- Sign-in
-
-// ---------------------------------------------------------------- Settings
-
-/** The Settings tab: one row per category, each opening its own page ([SettingsPage]) with what it holds right now. */
+/** The Settings tab: one row per category, each opening its own page ([SettingsPage]) and summing up what it holds. */
 @Composable
 fun SettingsScreen() {
     Store.version
-    // Read here, not in the rows: neither is state, and a lazy row only recomposes when what it reads or holds changes.
+    // These are read here, not in the rows. They aren't snapshot state, and a lazy row only recomposes when the state
+    // it reads or the values it holds change.
     val corrections = Store.romanizer.overrides.size
     val bannedSongs = Store.banned.count { it.kind != "artist" }
     val bannedArtists = Store.banned.size - bannedSongs
@@ -924,15 +1296,32 @@ fun SettingsScreen() {
     val place = PLACES.first { it.first == Store.place }.second.lowercase()
     val dictionary = if (Dictionary.installed || backend.romanizes) "" else " · no Japanese dictionary"
     LazyColumn(Modifier.fillMaxSize()) {
-        Update.available?.let { v ->
-            item { Row1("Update to ${BuildConfig.APP_NAME} $v", Update.status ?: "Restarts ${BuildConfig.APP_NAME}, so the music stops") { Update.install() } }
+        val update = Update.available
+        if (update != null) {
+            item {
+                val status = Update.status ?: "Restarts ${BuildConfig.APP_NAME}, so the music stops"
+                Row1("Update to ${BuildConfig.APP_NAME} $update", status) { Update.install() }
+            }
         }
         item { Category("source", backend.settingsTitle, backend.settingsSummary()) }
-        item { Category("romanization", "Romanization", "Placement: $place · schemes · ${count(corrections, "correction") ?: "0 corrections"}$dictionary") }
+        item {
+            val correctionCount = count(corrections, "correction") ?: "0 corrections"
+            Category("romanization", "Romanization", "Placement: $place · schemes · $correctionCount$dictionary")
+        }
         item { Category("lyrics", "Lyrics", "Providers · original, romanization and translation lines") }
-        item { Category("playback", "Queue and radio", "Radio drift · filters · " + if (backend.knowsLoudness) "loudness · downloading ahead" else "downloading ahead") }
+        item {
+            val last = if (backend.knowsLoudness) "loudness · downloading ahead" else "downloading ahead"
+            Category("playback", "Queue and radio", "Radio drift · filters · $last")
+        }
         item { Category("appearance", "Appearance", "Left-handed controls · true black · accent colour") }
-        item { Category("banned", "Banned", if (bannedSongs + bannedArtists == 0) "Nothing banned" else listOfNotNull(count(bannedSongs, "song"), count(bannedArtists, "artist")).joinToString(" · ")) }
+        item {
+            val summary = if (bannedSongs + bannedArtists == 0) {
+                "Nothing banned"
+            } else {
+                listOfNotNull(count(bannedSongs, "song"), count(bannedArtists, "artist")).joinToString(" · ")
+            }
+            Category("banned", "Banned", summary)
+        }
         item { Category("lastfm", "Last.fm", if (lastFm) "Scrobbling" else "Not connected") }
         item { Text("${BuildConfig.APP_NAME} ${BuildConfig.VERSION_NAME}", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall) }
     }
@@ -969,39 +1358,81 @@ private fun AppearanceSettings() = LazyColumn(Modifier.fillMaxSize()) {
 private fun RomanizationSettings() = LazyColumn(Modifier.fillMaxSize()) {
     item { Header("Romanization") }
     item { Options("Placement", Store.PLACE_KEY, Store.place, PLACES) }
-    // Custom: each surface on its own, with the modes a single place can't express (Latin only, original only).
+    // Custom placement sets each surface on its own, with the modes a single place can't express (Latin only,
+    // original only).
     if (Store.place == "custom") {
         item { Options("Lists", "display.list", "both", MODES) }
         item { Options("Player", "display.player", "both", MODES) }
-        item { Options("Lyrics", "lyrics.layout", "lines", listOf("lines" to "A line under the original", "ruby" to "Above each word, like furigana")) }
+        item {
+            val layouts = listOf(
+                "lines" to "A line under the original",
+                "ruby" to "Above each word, like furigana",
+            )
+            Options("Lyrics", "lyrics.layout", "lines", layouts)
+        }
     }
     item {
         val n = Store.romanizer.overrides.size
-        Row1("Corrections", if (n == 0) "None yet · import a file" else "$n · export, import or remove them") { Nav.open(Page("settings", "corrections")) }
+        val summary = if (n == 0) "None yet · import a file" else "$n · export, import or remove them"
+        Row1("Corrections", summary) { Nav.open(Page("settings", "corrections")) }
     }
     item { Header("Schemes") }
-    if (backend.romanizes) item { Text("Your server romanizes names and its lyrics; these apply to lyrics from elsewhere.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
+    if (backend.romanizes) {
+        item {
+            Text(
+                "Your server romanizes names and its lyrics; these apply to lyrics from elsewhere.",
+                Modifier.padding(horizontal = 16.dp),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
     item { Switch1("Japanese: long vowels with macrons (ō)", "rom.macrons", true) }
     item { Switch1("Chinese: pinyin with tone marks", "rom.tones", true) }
-    item { Options("Cyrillic (other languages use their national Latin form)", "rom.cyrillic", "english", listOf("english" to "Russian: English-style", "polish" to "Russian: Polish-style", "iso9" to "ISO 9, every language")) }
-    item { Options("Greek", "rom.greek", "classical", listOf("classical" to "Classical, no accents (β = b)", "elot" to "Modern, ELOT 743 (β = v)")) }
+    item {
+        val cyrillic = listOf(
+            "english" to "Russian: English-style",
+            "polish" to "Russian: Polish-style",
+            "iso9" to "ISO 9, every language",
+        )
+        Options("Cyrillic (other languages use their national Latin form)", "rom.cyrillic", "english", cyrillic)
+    }
+    item {
+        val greek = listOf(
+            "classical" to "Classical, no accents (β = b)",
+            "elot" to "Modern, ELOT 743 (β = v)",
+        )
+        Options("Greek", "rom.greek", "classical", greek)
+    }
     item { Options("Han text without kana is", "rom.han", "ja", listOf("ja" to "Japanese", "zh" to "Chinese")) }
     // Text only in scripts the user reads shows as written, in lists, the player, the notification and lyrics.
-    item { Text("Scripts you read (shown as written, not romanized)", Modifier.padding(start = 16.dp, top = 8.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.primary) }
+    item {
+        Text(
+            "Scripts you read (shown as written, not romanized)",
+            Modifier.padding(start = 16.dp, top = 8.dp),
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
     items(SCRIPTS) { (k, label) ->
         val read = Store.readScripts
-        Row(Modifier.fillMaxWidth().clickable { Store.setReads(k, k !in read) }.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        val rowModifier = Modifier
+            .fillMaxWidth()
+            .clickable { Store.setReads(k, k !in read) }
+            .padding(horizontal = 16.dp)
+        Row(rowModifier, verticalAlignment = Alignment.CenterVertically) {
             Checkbox(k in read, null, Modifier.padding(end = 8.dp))
             Text(label)
         }
     }
-    if (!backend.romanizes) item {
-        val dictionary = when {
-            Dictionary.installed -> "Installed"
-            Dictionary.status != null -> Dictionary.status!!
-            else -> "Not installed: kanji stay as written. Tap to install (${Dictionary.DOWNLOAD})"
+    if (!backend.romanizes) {
+        item {
+            val dictionary = when {
+                Dictionary.installed -> "Installed"
+                Dictionary.status != null -> Dictionary.status!!
+                else -> "Not installed: kanji stay as written. Tap to install (${Dictionary.DOWNLOAD})"
+            }
+            Row1("Japanese dictionary", dictionary, enabled = !Dictionary.installed) { Store.setReads("ja", false) }
         }
-        Row1("Japanese dictionary", dictionary, enabled = !Dictionary.installed) { Store.setReads("ja", false) }
     }
 }
 
@@ -1010,21 +1441,34 @@ private fun CorrectionSettings() {
     val export = rememberSaveFile("${BuildConfig.SLUG}-corrections.json") { Store.exportOverrides().toByteArray() }
     val import = rememberOpenFile { text ->
         runCatching { Store.setOverrides(Store.json.decodeFromString<List<Override>>(text)) }
-            .onFailure { toast("Not an overrides file: ${it.message}", long = true) }
+            .onFailure { error -> toast("Not an overrides file: ${error.message}", long = true) }
     }
     val corrections = Store.romanizer.overrides
     LazyColumn(Modifier.fillMaxSize()) {
         item { Header("Corrections") }
-        item { Row1("Export ${count(corrections.size, "correction") ?: "corrections"}", "To one file", enabled = corrections.isNotEmpty()) { export() } }
+        item {
+            val what = count(corrections.size, "correction") ?: "corrections"
+            Row1("Export $what", "To one file", enabled = corrections.isNotEmpty()) { export() }
+        }
         item { Row1("Import corrections", "Replaces the current ones") { import() } }
-        if (corrections.isEmpty()) item { Text("Long-press a title, artist or lyric word to correct its romanization.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
+        if (corrections.isEmpty()) {
+            item {
+                Text(
+                    "Long-press a title, artist or lyric word to correct its romanization.",
+                    Modifier.padding(horizontal = 16.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
         items(corrections) { o ->
             val scope = when (o.scope) {
-                "song" -> "This song"; "artist" -> "This artist"
+                "song" -> "This song"
+                "artist" -> "This artist"
                 "word" -> if (o.id == "") "Word, everywhere" else "Word, in one song"
                 else -> "Everywhere"
             }
-            Row1(if (o.latin == o.original) "${o.original}: not romanized" else "${o.original} → ${o.latin}", "$scope · Tap to remove") {
+            val title = if (o.latin == o.original) "${o.original}: not romanized" else "${o.original} → ${o.latin}"
+            Row1(title, "$scope · Tap to remove") {
                 Store.saveOverride(Override(o.scope, o.id, o.original, ""))
             }
         }
@@ -1034,23 +1478,41 @@ private fun CorrectionSettings() {
 @Composable
 private fun LyricsSettings() = LazyColumn(Modifier.fillMaxSize()) {
     item { Header("Lyrics") }
-    // At least one of the two stays on: with neither, the lyrics would be blank.
+    // At least one of the two stays on, because with neither the lyrics would be blank.
     val original = Store.bool("lyrics.layer.original", true)
     val latin = Store.bool("lyrics.layer.latin", true)
     item { Switch1("Show original", "lyrics.layer.original", true, enabled = latin || !original) }
     item { Switch1("Show romanization", "lyrics.layer.latin", true, enabled = original || !latin) }
     item {
         val place = PLACES.first { it.first == Store.place }.second.lowercase()
-        Row1("Romanization settings", "Placement: $place · schemes · corrections") { Nav.open(Page("settings", "romanization")) }
+        Row1("Romanization settings", "Placement: $place · schemes · corrections") {
+            Nav.open(Page("settings", "romanization"))
+        }
     }
-    // A global setting: never dimmed by the current song. A song whose translation isn't in the chosen language
+    // A global setting, so it is never dimmed for the current song. A song with no translation in the chosen language
     // just shows none.
     item { Switch1("Show translation", "lyrics.layer.translation", true) }
     item {
-        val device = java.util.Locale.getDefault().let { it.getDisplayLanguage(it) }
-        Options("Translation language", "lyrics.translationLang", "device", listOf("device" to "Device language ($device)" + if (java.util.Locale.getDefault().language == "en") "" else ", then English", "en" to "English", "ja" to "Japanese", "ko" to "Korean", "zh" to "Chinese", "ru" to "Russian"))
+        val locale = java.util.Locale.getDefault()
+        val device = locale.getDisplayLanguage(locale)
+        val thenEnglish = if (java.util.Locale.getDefault().language == "en") "" else ", then English"
+        val languages = listOf(
+            "device" to "Device language ($device)$thenEnglish",
+            "en" to "English",
+            "ja" to "Japanese",
+            "ko" to "Korean",
+            "zh" to "Chinese",
+            "ru" to "Russian",
+        )
+        Options("Translation language", "lyrics.translationLang", "device", languages)
     }
-    item { Text("Long-press a word in the lyrics to see its reading and correct it, for that song or everywhere.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
+    item {
+        Text(
+            "Long-press a word in the lyrics to see its reading and correct it, for that song or everywhere.",
+            Modifier.padding(horizontal = 16.dp),
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
     item { Header("Providers") }
     val order = Store.lyricsOrder()
     itemsIndexed(order) { i, p ->
@@ -1058,63 +1520,120 @@ private fun LyricsSettings() = LazyColumn(Modifier.fillMaxSize()) {
             Text("${i + 1}. ${p.name}", Modifier.weight(1f))
             IconButton(onClick = { move(order, i, -1) }, enabled = i > 0) { Icon(Icons.Default.KeyboardArrowUp, "Move up") }
             IconButton(onClick = { move(order, i, 1) }, enabled = i < order.size - 1) { Icon(Icons.Default.KeyboardArrowDown, "Move down") }
-            Switch(Store.lyricsEnabled(p), { Store.set("lyrics.on.${p.id}", it) }, Modifier.padding(end = 16.dp))
+            Switch(Store.lyricsEnabled(p), { on -> Store.set("lyrics.on.${p.id}", on) }, Modifier.padding(end = 16.dp))
         }
     }
     item { Text(backend.lyricsRule, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
     item {
-        Playback.tick // the song can start or end while this page is open
-        Row1("Search lyrics again for this song", "After changing the providers", enabled = Playback.current()?.song != null) { Playback.refetchLyrics() }
+        // Read because the song can start or end while this page is open.
+        Playback.tick
+        val playing = Playback.current()?.song != null
+        Row1("Search lyrics again for this song", "After changing the providers", enabled = playing) {
+            Playback.refetchLyrics()
+        }
     }
 }
 
 @Composable
 private fun PlaybackSettings() = LazyColumn(Modifier.fillMaxSize()) {
     item { Header("Queue and radio") }
-    item { Options("Radio may drift", "radio.leash", "free", listOf("close" to "Close: same and related artists", "medium" to "Medium: at most half other artists", "free" to backend.freeRadio)) }
-    if (backend.hasVideos) item { Switch1("Prefer audio tracks over music videos", "radio.preferAudio", true) }
+    item {
+        val leashes = listOf(
+            "close" to "Close: same and related artists",
+            "medium" to "Medium: at most half other artists",
+            "free" to backend.freeRadio,
+        )
+        Options("Radio may drift", "radio.leash", "free", leashes)
+    }
+    if (backend.hasVideos) {
+        item { Switch1("Prefer audio tracks over music videos", "radio.preferAudio", true) }
+    }
     item { Switch1("Hide live, sped up, nightcore, slowed", "radio.hideVersions", true) }
     item { Switch1("Skip banned songs and artists", "radio.skipBanned", true) }
     item { Switch1("Stop when the queue ends", "queue.stopAtEnd", false) }
     item { Header("Playback") }
-    if (backend.knowsLoudness) item { Switch1("Even out loudness", "play.normalize", true) }
-    item { Switch1("Download songs ahead", "play.ahead", false, subtitle = "This song and the next 3, so playback goes on without a network. About 4 MB per song you skip") }
-    item { Switch1("Resume when headphones reconnect", "play.resumeOnHeadphones", false, subtitle = "Within an hour of disconnecting") }
-    item { Switch1("Preload on mobile data", "prepare.always", false, subtitle = "And in Battery Saver: the first second of songs you'll likely tap, so they start at once. At most 3 MB an hour") }
+    if (backend.knowsLoudness) {
+        item { Switch1("Even out loudness", "play.normalize", true) }
+    }
+    item {
+        Switch1(
+            "Download songs ahead",
+            "play.ahead",
+            false,
+            subtitle = "This song and the next 3, so playback goes on without a network. About 4 MB per song you skip",
+        )
+    }
+    item {
+        Switch1("Resume when headphones reconnect", "play.resumeOnHeadphones", false, subtitle = "Within an hour of disconnecting")
+    }
+    item {
+        Switch1(
+            "Preload on mobile data",
+            "prepare.always",
+            false,
+            subtitle = "And in Battery Saver: the first second of songs you'll likely tap, so they start at once. At most 3 MB an hour",
+        )
+    }
 }
 
 @Composable
 private fun BannedSettings() = LazyColumn(Modifier.fillMaxSize()) {
     item { Header("Banned") }
     val banned = Store.banned
-    if (banned.isEmpty()) item { Text("Nothing banned. Ban a song or artist from a song's ⋯ menu.", Modifier.padding(horizontal = 16.dp)) }
-    items(banned) { b -> Row1("${if (b.kind == "artist") "Artist" else "Song"}: ${b.name}", "Tap to unban") { Store.unban(b.kind, b.id) } }
+    if (banned.isEmpty()) {
+        item { Text("Nothing banned. Ban a song or artist from a song's ⋯ menu.", Modifier.padding(horizontal = 16.dp)) }
+    }
+    items(banned) { b ->
+        val kind = if (b.kind == "artist") "Artist" else "Song"
+        Row1("$kind: ${b.name}", "Tap to unban") { Store.unban(b.kind, b.id) }
+    }
 }
 
 @Composable
 private fun LastFmSettings() {
-    var editing by remember { mutableStateOf<Pair<String, String>?>(null) } // key, title
+    // The setting's key and the dialog's title.
+    var editing by remember { mutableStateOf<Pair<String, String>?>(null) }
     LazyColumn(Modifier.fillMaxSize()) {
         item { Header("Last.fm") }
-        item { Row1("API key", Store.str("lastfm.key", "").ifBlank { "Not set" }) { editing = "lastfm.key" to "Last.fm API key" } }
+        item {
+            val apiKey = Store.str("lastfm.key", "").ifBlank { "Not set" }
+            Row1("API key", apiKey) { editing = "lastfm.key" to "Last.fm API key" }
+        }
         item {
             Row1("Create an API key", "Opens last.fm/api/account/create; it gives the key and the shared secret") {
                 openUrl("https://www.last.fm/api/account/create")
             }
         }
-        item { Row1("Shared secret", if (Store.str("lastfm.secret", "").isBlank()) "Not set" else "Set") { editing = "lastfm.secret" to "Last.fm shared secret" } }
+        item {
+            val secret = if (Store.str("lastfm.secret", "").isBlank()) "Not set" else "Set"
+            Row1("Shared secret", secret) { editing = "lastfm.secret" to "Last.fm shared secret" }
+        }
         item {
             val connected = Store.str("lastfm.session", "").isNotBlank()
-            // A file read: off the main thread, so a switch on this page doesn't wait for it.
-            val waiting by produceState(0, connected, Store.version) { value = withContext(Dispatchers.IO) { if (connected) Playback.scrobbleQueue.load().size else 0 } }
+            // Reading the queue is a file read, so it runs off the main thread and a switch on this page doesn't
+            // wait for it.
+            val waiting by produceState(0, connected, Store.version) {
+                value = withContext(Dispatchers.IO) {
+                    if (connected) Playback.scrobbleQueue.load().size else 0
+                }
+            }
             val ready = Store.str("lastfm.key", "").isNotBlank() && Store.str("lastfm.secret", "").isNotBlank()
-            Row1(if (connected) "Connected: scrobbling" else "Connect", if (connected) "Tap to disconnect · $waiting waiting" else "Opens the browser to allow access", ready || connected) {
-                if (connected) Store.set("lastfm.session", null)
-                else connectLastFm()
+            val title = if (connected) "Connected: scrobbling" else "Connect"
+            val subtitle = if (connected) "Tap to disconnect · $waiting waiting" else "Opens the browser to allow access"
+            Row1(title, subtitle, ready || connected) {
+                if (connected) {
+                    Store.set("lastfm.session", null)
+                } else {
+                    connectLastFm()
+                }
             }
         }
     }
-    editing?.let { (key, title) -> TextInputDialog(title, Store.str(key, ""), { editing = null }) { Store.set(key, it.trim()) } }
+    val edited = editing
+    if (edited != null) {
+        val (key, title) = edited
+        TextInputDialog(title, Store.str(key, ""), { editing = null }) { value -> Store.set(key, value.trim()) }
+    }
 }
 
 /** roma's question before the dictionary's download, when it is missing or out of date. */
@@ -1125,9 +1644,13 @@ fun DictionaryPrompt() {
         onDismissRequest = { Dictionary.answer(false) },
         title = { Text(if (offer == "update") "Update the Japanese dictionary?" else "Install the Japanese dictionary?") },
         text = {
+            val why = if (offer == "update") {
+                "This version of ${BuildConfig.APP_NAME} needs a newer Japanese dictionary. "
+            } else {
+                "${BuildConfig.APP_NAME} needs it to romanize kanji. "
+            }
             Text(
-                (if (offer == "update") "This version of ${BuildConfig.APP_NAME} needs a newer Japanese dictionary. " else "${BuildConfig.APP_NAME} needs it to romanize kanji. ") +
-                    Dictionary.HOW + "\n\n" +
+                why + Dictionary.HOW + "\n\n" +
                     "Until then, Japanese gets kana-only romanization and kanji stay as written. You can install it later in Settings."
             )
         },
@@ -1137,24 +1660,42 @@ fun DictionaryPrompt() {
 }
 
 /**
- * First start: which scripts to romanize. Japanese needs the dictionary, fetched once if picked, unless the
- * source romanizes ([Source.romanizes]); the others need nothing. Unpicked scripts go into "scripts you read" and show
- * as written. Shown until Continue.
+ * The first start asks which scripts to romanize. Japanese needs the dictionary, fetched once if picked, unless the
+ * source romanizes ([Source.romanizes]). The others need nothing. Unpicked scripts go into "scripts you read" and
+ * show as written. It is shown until Continue.
  */
 @Composable
 fun SetupScreen() {
     Store.version
-    if (!backend.setUp) return backend.Setup()
+    if (!backend.setUp) {
+        backend.Setup()
+        return
+    }
     val read = Store.readScripts
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
         Text("Which scripts should ${BuildConfig.APP_NAME} romanize?", style = MaterialTheme.typography.headlineSmall)
-        Text("The others show as written. You can change this in Settings.", Modifier.padding(top = 8.dp, bottom = 16.dp), style = MaterialTheme.typography.bodyMedium)
+        Text(
+            "The others show as written. You can change this in Settings.",
+            Modifier.padding(top = 8.dp, bottom = 16.dp),
+            style = MaterialTheme.typography.bodyMedium,
+        )
         SCRIPTS.forEach { (k, label) ->
-            Row(Modifier.fillMaxWidth().clickable { Store.set(Store.READ_KEY, (if (k in read) read - k else read + k).joinToString(",")) }, verticalAlignment = Alignment.CenterVertically) {
+            val rowModifier = Modifier.fillMaxWidth().clickable {
+                val updated = if (k in read) read - k else read + k
+                Store.set(Store.READ_KEY, updated.joinToString(","))
+            }
+            Row(rowModifier, verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(k !in read, null, Modifier.padding(end = 8.dp))
                 Column {
                     Text(label)
-                    if (k == "ja" && !backend.romanizes) Text(if (Dictionary.installed) "Dictionary installed" else "Needs the Japanese dictionary: ${Dictionary.DOWNLOAD}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (k == "ja" && !backend.romanizes) {
+                        val status = if (Dictionary.installed) {
+                            "Dictionary installed"
+                        } else {
+                            "Needs the Japanese dictionary: ${Dictionary.DOWNLOAD}"
+                        }
+                        Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }
@@ -1168,11 +1709,27 @@ fun SetupScreen() {
     }
 }
 
-private val SCRIPTS = listOf("ja" to "Japanese", "zh" to "Chinese", "ko" to "Korean", "cyrillic" to "Cyrillic", "greek" to "Greek", "other" to "Other scripts")
+private val SCRIPTS = listOf(
+    "ja" to "Japanese",
+    "zh" to "Chinese",
+    "ko" to "Korean",
+    "cyrillic" to "Cyrillic",
+    "greek" to "Greek",
+    "other" to "Other scripts",
+)
 
-private val PLACES = listOf("below" to "Under the original", "above" to "Above each word, like furigana", "custom" to "Differently in lists, the player and lyrics")
+private val PLACES = listOf(
+    "below" to "Under the original",
+    "above" to "Above each word, like furigana",
+    "custom" to "Differently in lists, the player and lyrics",
+)
 
-private val MODES = listOf("both" to "Latin, original underneath", "ruby" to "Reading above each word, like furigana", "romanized" to "Latin only", "original" to "Original only")
+private val MODES = listOf(
+    "both" to "Latin, original underneath",
+    "ruby" to "Reading above each word, like furigana",
+    "romanized" to "Latin only",
+    "original" to "Original only",
+)
 
 private fun move(order: List<roma.core.LyricsProvider>, i: Int, by: Int) {
     val list = order.toMutableList()
@@ -1183,7 +1740,12 @@ private fun move(order: List<roma.core.LyricsProvider>, i: Int, by: Int) {
 
 @Composable
 internal fun Row1(title: String, subtitle: String, enabled: Boolean = true, onClick: () -> Unit) {
-    Column(Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).dim(if (enabled) 1f else 0.4f).padding(horizontal = 16.dp, vertical = 10.dp)) {
+    val rowModifier = Modifier
+        .fillMaxWidth()
+        .clickable(enabled = enabled, onClick = onClick)
+        .dim(if (enabled) 1f else 0.4f)
+        .padding(horizontal = 16.dp, vertical = 10.dp)
+    Column(rowModifier) {
         Text(title)
         Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
@@ -1192,12 +1754,24 @@ internal fun Row1(title: String, subtitle: String, enabled: Boolean = true, onCl
 @Composable
 internal fun Switch1(title: String, key: String, def: Boolean, enabled: Boolean = true, subtitle: String? = null) {
     val on = Store.bool(key, def)
-    Row(Modifier.fillMaxWidth().clickable(enabled) { Store.set(key, !on) }.dim(if (enabled) 1f else 0.4f).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    val rowModifier = Modifier
+        .fillMaxWidth()
+        .clickable(enabled) { Store.set(key, !on) }
+        .dim(if (enabled) 1f else 0.4f)
+        .padding(horizontal = 16.dp, vertical = 8.dp)
+    Row(rowModifier, verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).padding(end = 16.dp)) {
             Text(title)
-            if (subtitle != null) Text(subtitle, Modifier.padding(top = 2.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    Modifier.padding(top = 2.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
-        Switch(on, { Store.set(key, it) }, enabled = enabled)
+        Switch(on, { checked -> Store.set(key, checked) }, enabled = enabled)
     }
 }
 
@@ -1210,14 +1784,19 @@ internal fun Options(title: String, key: String, def: String, options: List<Pair
     }
 }
 
-/** "1 song", "3 songs"; null for none. */
+/** "1 song" or "3 songs", or null for none. */
 private fun count(n: Int, what: String) = if (n == 0) null else "$n $what" + if (n == 1) "" else "s"
 
 /** A failure in plain words, with what to do about it. */
-fun plainError(t: Throwable): String = when (generateSequence(t) { it.cause }.firstOrNull { it is java.io.IOException } ?: t) {
-    is java.net.UnknownHostException, is java.net.ConnectException, is java.net.NoRouteToHostException -> "No connection. Check Wi-Fi or mobile data, then Retry."
-    is java.net.SocketTimeoutException -> "${backend.name} took too long to answer. Retry in a moment."
-    else -> t.message ?: t.toString()
+fun plainError(t: Throwable): String {
+    val ioCause = generateSequence(t) { e -> e.cause }.firstOrNull { e -> e is java.io.IOException }
+    return when (ioCause ?: t) {
+        is java.net.UnknownHostException,
+        is java.net.ConnectException,
+        is java.net.NoRouteToHostException -> "No connection. Check Wi-Fi or mobile data, then Retry."
+        is java.net.SocketTimeoutException -> "${backend.name} took too long to answer. Retry in a moment."
+        else -> t.message ?: t.toString()
+    }
 }
 
 /**
@@ -1233,7 +1812,12 @@ fun androidx.compose.foundation.layout.BoxScope.FastScroll(list: LazyListState) 
     var dragging by remember { mutableStateOf(false) }
     var shown by remember { mutableStateOf(false) }
     LaunchedEffect(list.isScrollInProgress, dragging) {
-        if (list.isScrollInProgress || dragging) shown = true else { kotlinx.coroutines.delay(1500); shown = false }
+        if (list.isScrollInProgress || dragging) {
+            shown = true
+        } else {
+            kotlinx.coroutines.delay(1500)
+            shown = false
+        }
     }
     val alpha by androidx.compose.animation.core.animateFloatAsState(if (shown) 1f else 0f, label = "fastScroll")
     if (alpha == 0f) return
@@ -1242,7 +1826,11 @@ fun androidx.compose.foundation.layout.BoxScope.FastScroll(list: LazyListState) 
     val thumb = with(LocalDensity.current) { 56.dp.toPx() }
     val fraction = list.firstVisibleItemIndex.toFloat() / (total - visible).coerceAtLeast(1)
     Box(
-        Modifier.align(Alignment.TopEnd).fillMaxHeight().width(32.dp).onSizeChanged { height = it.height }
+        Modifier
+            .align(Alignment.TopEnd)
+            .fillMaxHeight()
+            .width(32.dp)
+            .onSizeChanged { newSize -> height = newSize.height }
             .pointerInput(total) {
                 detectVerticalDragGestures(
                     onDragStart = { dragging = true },
@@ -1257,9 +1845,15 @@ fun androidx.compose.foundation.layout.BoxScope.FastScroll(list: LazyListState) 
             .dim(alpha),
     ) {
         Box(
-            Modifier.align(Alignment.TopEnd).padding(end = 4.dp)
-                .offset { androidx.compose.ui.unit.IntOffset(0, (fraction.coerceIn(0f, 1f) * (height - thumb)).toInt()) }
-                .size(width = 8.dp, height = 56.dp).clip(RoundedCornerShape(4.dp))
+            Modifier
+                .align(Alignment.TopEnd)
+                .padding(end = 4.dp)
+                .offset {
+                    val y = fraction.coerceIn(0f, 1f) * (height - thumb)
+                    androidx.compose.ui.unit.IntOffset(0, y.toInt())
+                }
+                .size(width = 8.dp, height = 56.dp)
+                .clip(RoundedCornerShape(4.dp))
                 .background(if (dragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant),
         )
     }

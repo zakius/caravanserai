@@ -1,11 +1,14 @@
 #!/bin/bash
-# The audio-only ffmpeg the desktop apps run for what they don't decode in Java (desktop/Media.kt): roma ytm's songs
-# YouTube has only in AAC (about 1 in 150; AacPcm, ADTS frames on stdin, 16-bit PCM on stdout), and caravan's files
-# from a Subsonic server (FilePcm: MP3, FLAC, Ogg Vorbis or Opus, WAV, ADTS AAC on stdin, a 16-bit WAV on stdout).
-# Nothing else: no network, no video. A static binary, LGPL (no GPL or non-free parts). Pinned sources, checked against their sha256.
-# Linux's links musl (musl-tools), not glibc: half the size, and static either way, so it runs on any distribution.
-# Usage: build-ffmpeg.sh linux|windows <out dir>; writes <out dir>/roma-aac (roma-aac.exe for Windows).
-# Windows is cross-built with llvm-mingw, so Linux and CI build both the same way.
+# Builds roma-aac, the audio-only ffmpeg the desktop apps run for what they don't decode in Java (desktop/Media.kt):
+# - roma ytm's songs that YouTube has only in AAC, about 1 in 150 (AacPcm: ADTS frames on stdin, 16-bit PCM on stdout);
+# - caravan's files from a Subsonic server (FilePcm: MP3, FLAC, Ogg Vorbis or Opus, WAV or ADTS AAC on stdin, a 16-bit
+#   WAV on stdout).
+# It has nothing else: no network and no video. It is a static binary under the LGPL, with no GPL or non-free parts.
+# The sources are pinned and checked against their sha256.
+# The Linux binary links musl (musl-tools) rather than glibc. It is half the size, and static either way, so it runs on
+# any distribution.
+# The Windows binary is cross-built with llvm-mingw, so a Linux machine and CI build both the same way.
+# Usage: build-ffmpeg.sh linux|windows <out dir>. Writes <out dir>/roma-aac, or roma-aac.exe for Windows.
 set -euo pipefail
 target=$1
 out=$(realpath -m "$2")
@@ -18,7 +21,8 @@ mkdir -p "$cache" "$out"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-fetch() { # url, file, sha256
+# Downloads a url to a file unless the file is already there with the right sha256. Arguments: url, file, sha256.
+fetch() {
   [ -f "$2" ] && echo "$3  $2" | sha256sum -c --quiet 2>/dev/null && return
   curl -fsSL "$1" -o "$2.tmp" && echo "$3  $2.tmp" | sha256sum -c --quiet && mv "$2.tmp" "$2"
 }

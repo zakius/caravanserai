@@ -16,7 +16,12 @@ java {
     sourceCompatibility = JavaVersion.VERSION_21
     targetCompatibility = JavaVersion.VERSION_21
 }
-kotlin { compilerOptions { jvmTarget = JvmTarget.JVM_21; optIn.add("kotlin.ExperimentalStdlibApi") } }
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_21
+        optIn.add("kotlin.ExperimentalStdlibApi")
+    }
+}
 
 dependencies {
     api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
@@ -52,12 +57,17 @@ tasks.register("sudachiDict") {
         if (File(assets, "system_core.dic").exists()) return@doLast
         val zip = File(sudachiDir, "core.zip")
         sudachiDir.mkdirs()
-        URI("https://github.com/WorksApplications/SudachiDict/releases/download/v$sudachiVersion/sudachi-dictionary-$sudachiVersion-core.zip")
-            .toURL().openStream().use { input -> zip.outputStream().use { input.copyTo(it) } }
+        val url = URI("https://github.com/WorksApplications/SudachiDict/releases/download/v$sudachiVersion/sudachi-dictionary-$sudachiVersion-core.zip")
+        url.toURL().openStream().use { input ->
+            zip.outputStream().use { output -> input.copyTo(output) }
+        }
         val digest = MessageDigest.getInstance("SHA-256").digest(zip.readBytes()).joinToString("") { "%02x".format(it) }
         check(digest == sudachiSha256) { "SudachiDict zip: sha256 $digest, expected $sudachiSha256" }
         project.copy {
-            from(zipTree(zip)) { include("*/system_core.dic", "*/LEGAL"); eachFile { path = if (name == "LEGAL") "sudachi-LEGAL.txt" else name } }
+            from(zipTree(zip)) {
+                include("*/system_core.dic", "*/LEGAL")
+                eachFile { path = if (name == "LEGAL") "sudachi-LEGAL.txt" else name }
+            }
             into(assets)
             includeEmptyDirs = false
         }
@@ -81,7 +91,8 @@ val sudachiSlim = tasks.register<JavaExec>("sudachiSlim") {
     onlyIf { !File(slimDict, "system_core.dic").exists() }
     doLast {
         val built = File(slimDir, "build")
-        slimDict.mkdirs(); slimConfig.mkdirs()
+        slimDict.mkdirs()
+        slimConfig.mkdirs()
         File(built, "roma-sudachi.json").renameTo(File(slimConfig, "roma-sudachi.json"))
         File(built, "roma-unk.def").renameTo(File(slimConfig, "roma-unk.def"))
         File(sudachiDir, "assets/sudachi-LEGAL.txt").copyTo(File(slimDict, "sudachi-LEGAL.txt"), true)
@@ -108,7 +119,10 @@ tasks.register("dictZip") {
         check(digest == dictSha256) { "system_core.dic: sha256 $digest, expected dictSha256 $dictSha256" }
         ZipOutputStream(out.get().asFile.outputStream()).use { zip ->
             zip.setLevel(9)
-            for (f in files) { zip.putNextEntry(ZipEntry(f.name)); f.inputStream().use { it.copyTo(zip) } }
+            for (f in files) {
+                zip.putNextEntry(ZipEntry(f.name))
+                f.inputStream().use { input -> input.copyTo(zip) }
+            }
         }
     }
 }

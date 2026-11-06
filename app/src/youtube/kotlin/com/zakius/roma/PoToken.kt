@@ -35,7 +35,10 @@ import kotlin.coroutines.resumeWithException
 import roma.core.PoTokenResult
 import roma.core.TokenProvider
 
-/** Android's PoTokens: BotGuard in the system WebView (10 s for a cold start: WebView, BotGuard, first token). */
+/**
+ * Android's PoTokens come from BotGuard running in the system WebView. A cold start (WebView, BotGuard and the first
+ * token) gets 10 s.
+ */
 fun platformPoTokens() = PoTokens(10_000L) { PoTokenView.create(appContext) }
 
 private class PoTokenException(message: String) : Exception(message)
@@ -44,7 +47,8 @@ private class PoTokenException(message: String) : Exception(message)
 private class PoTokenView private constructor(context: Context, private val ready: Continuation<PoTokenView>) : BotGuardSession {
     private val webView = WebView(context)
     private val main = Handler(Looper.getMainLooper())
-    private val started = AtomicBoolean(false) // [ready] resumed
+    // Set once [ready] has been resumed, so it is resumed at most once.
+    private val started = AtomicBoolean(false)
     private val pending = ConcurrentHashMap<String, Continuation<String>>()
     private val counter = AtomicLong()
     private var expiresAt = Long.MAX_VALUE
@@ -57,13 +61,16 @@ private class PoTokenView private constructor(context: Context, private val read
         @Suppress("SetJavaScriptEnabled")
         webView.settings.javaScriptEnabled = true
         webView.settings.userAgentString = BotGuard.USER_AGENT
-        webView.settings.blockNetworkLoads = true // BotGuard's requests go through OkHttp below
+        // The page makes no requests of its own: botguard() sends BotGuard's requests from Kotlin.
+        webView.settings.blockNetworkLoads = true
         webView.addJavascriptInterface(this, JS)
         webView.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(m: ConsoleMessage): Boolean {
                 if ("Uncaught" in m.message()) {
-                    // Before the page is up, a broken WebView; after, a transient error in Google's own script.
-                    fail(if (started.get()) PoTokenException(m.message()) else BotGuardBroken(m.message()))
+                    // An error before the minter is ready means this WebView can't run BotGuard. After that, it is a
+                    // transient error in Google's own script.
+                    val error = if (started.get()) PoTokenException(m.message()) else BotGuardBroken(m.message())
+                    fail(error)
                 }
                 return true
             }
@@ -71,42 +78,53 @@ private class PoTokenView private constructor(context: Context, private val read
         webView.webViewClient = object : WebViewClient() {
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
                 fail(PoTokenException("WebView render process gone"))
-                return true // keep the app alive
+                return true // Returning true keeps the app alive.
             }
         }
     }
 
     private fun load() {
-        val html = webView.context.assets.open("po_token.html").bufferedReader().use { it.readText() }
+        val html = webView.context.assets.open("po_token.html").bufferedReader().use { reader -> reader.readText() }
         val page = html.replaceFirst("</script>", "\n$JS.downloadAndRunBotguard()</script>")
         webView.loadDataWithBaseURL("https://www.youtube.com", page, "text/html", "utf-8", null)
     }
 
     @JavascriptInterface
-    fun downloadAndRunBotguard() = botguard("https://www.youtube.com/api/jnn/v1/Create", "[ \"${BotGuard.REQUEST_KEY}\" ]") { body ->
-        val challenge = BotGuard.parseChallenge(body)
-        js("""try {
-            data = $challenge
-            runBotGuard(data).then(function (result) {
-                this.webPoSignalOutput = result.webPoSignalOutput
-                $JS.onRunBotguardResult(result.botguardResponse)
-            }, function (error) { $JS.onJsInitializationError(error + "\n" + error.stack) })
-        } catch (error) { $JS.onJsInitializationError(error + "\n" + error.stack) }""")
+    fun downloadAndRunBotguard() {
+        val url = "https://www.youtube.com/api/jnn/v1/Create"
+        val requestBody = "[ \"${BotGuard.REQUEST_KEY}\" ]"
+        botguard(url, requestBody) { body ->
+            val challenge = BotGuard.parseChallenge(body)
+            js("""try {
+                data = $challenge
+                runBotGuard(data).then(function (result) {
+                    this.webPoSignalOutput = result.webPoSignalOutput
+                    $JS.onRunBotguardResult(result.botguardResponse)
+                }, function (error) { $JS.onJsInitializationError(error + "\n" + error.stack) })
+            } catch (error) { $JS.onJsInitializationError(error + "\n" + error.stack) }""")
+        }
     }
 
     @JavascriptInterface
-    fun onRunBotguardResult(response: String) = botguard("https://www.youtube.com/api/jnn/v1/GenerateIT", "[ \"${BotGuard.REQUEST_KEY}\", \"$response\" ]") { body ->
-        val (integrity, expires) = BotGuard.integrity(body)
-        expiresAt = expires
-        js("""try {
-            this.integrityToken = $integrity
-            createPoTokenMinter(webPoSignalOutput, integrityToken).then(function() { $JS.onMinterCreated() })
-                .catch(function(error) { $JS.onJsInitializationError(error + "\n" + (error.stack || '')) })
-        } catch (error) { $JS.onJsInitializationError(error + "\n" + error.stack) }""")
+    fun onRunBotguardResult(response: String) {
+        val url = "https://www.youtube.com/api/jnn/v1/GenerateIT"
+        val requestBody = "[ \"${BotGuard.REQUEST_KEY}\", \"$response\" ]"
+        botguard(url, requestBody) { body ->
+            val (integrity, expires) = BotGuard.integrity(body)
+            expiresAt = expires
+            js("""try {
+                this.integrityToken = $integrity
+                createPoTokenMinter(webPoSignalOutput, integrityToken).then(function() { $JS.onMinterCreated() })
+                    .catch(function(error) { $JS.onJsInitializationError(error + "\n" + (error.stack || '')) })
+            } catch (error) { $JS.onJsInitializationError(error + "\n" + error.stack) }""")
+        }
     }
 
     @JavascriptInterface
-    fun onJsInitializationError(error: String) = fail(if ("SyntaxError" in error) BotGuardBroken(error) else PoTokenException(error))
+    fun onJsInitializationError(error: String) {
+        val exception = if ("SyntaxError" in error) BotGuardBroken(error) else PoTokenException(error)
+        fail(exception)
+    }
 
     @JavascriptInterface
     fun onMinterCreated() {
@@ -115,7 +133,8 @@ private class PoTokenView private constructor(context: Context, private val read
 
     override suspend fun mint(identifier: String): String {
         if (dead || closed) throw PoTokenException("PoToken WebView is gone")
-        val key = "$identifier#${counter.incrementAndGet()}" // concurrent calls for one video keep their own answer
+        // A counter in the key keeps concurrent calls for one video from taking each other's answer.
+        val key = "$identifier#${counter.incrementAndGet()}"
         return try {
             withTimeout(MINT_TIMEOUT_MS) {
                 withContext(Dispatchers.Main) {
@@ -141,7 +160,10 @@ private class PoTokenView private constructor(context: Context, private val read
     @JavascriptInterface
     fun onToken(key: String, u8: String) {
         val cont = pending.remove(key) ?: return
-        runCatching { BotGuard.token(u8) }.fold({ cont.resume(it) }, { cont.resumeWithException(it) })
+        runCatching { BotGuard.token(u8) }.fold(
+            onSuccess = { token -> cont.resume(token) },
+            onFailure = { error -> cont.resumeWithException(error) },
+        )
     }
 
     @JavascriptInterface
@@ -165,13 +187,21 @@ private class PoTokenView private constructor(context: Context, private val read
         dead = true
         close()
         if (started.compareAndSet(false, true)) runCatching { ready.resumeWithException(e) }
-        pending.keys.toList().forEach { k -> pending.remove(k)?.let { runCatching { it.resumeWithException(e) } } }
+        for (k in pending.keys.toList()) {
+            val cont = pending.remove(k)
+            if (cont != null) runCatching { cont.resumeWithException(e) }
+        }
     }
 
     override fun close() {
         if (closed) return
         closed = true
-        main.post { runCatching { webView.loadUrl("about:blank"); webView.destroy() } }
+        main.post {
+            runCatching {
+                webView.loadUrl("about:blank")
+                webView.destroy()
+            }
+        }
     }
 
     companion object {
@@ -184,12 +214,21 @@ private class PoTokenView private constructor(context: Context, private val read
             try {
                 return withTimeout(INIT_TIMEOUT_MS) {
                     withContext(Dispatchers.Main) {
-                        suspendCancellableCoroutine { cont -> created = PoTokenView(context, cont).also { it.load() } }
+                        suspendCancellableCoroutine { cont ->
+                            val view = PoTokenView(context, cont)
+                            view.load()
+                            created = view
+                        }
                     }
                 }
             } catch (e: Exception) {
-                // Not withContext: when an outer timeout cancelled us it would throw at once and leak the WebView.
-                created?.let { it.started.set(true); it.close() }
+                // Cleaned up here rather than in withContext(Dispatchers.Main): when an outer timeout has cancelled this
+                // coroutine, withContext would throw at once and leak the WebView.
+                val view = created
+                if (view != null) {
+                    view.started.set(true)
+                    view.close()
+                }
                 throw if (e is TimeoutCancellationException) PoTokenException("PoToken WebView didn't start") else e
             }
         }

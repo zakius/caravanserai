@@ -34,7 +34,7 @@ import kotlin.concurrent.thread
 fun main(args: Array<String>) {
     if (flavorMain(args)) return
     if (args.firstOrNull() == "--check") return check()
-    // Everything roma does at start, on the UI thread as on Android, in App.onCreate's order.
+    // Everything roma does at start runs on the UI thread as on Android, in App.onCreate's order.
     javax.swing.SwingUtilities.invokeAndWait {
         Store.init(Prefs(File(Dirs.files, "prefs.properties")), Dirs.files, Dirs.cache)
         Images.init(Dirs.cache, picMemory())
@@ -42,12 +42,18 @@ fun main(args: Array<String>) {
         if (BuildConfig.UPDATES) Update.init()
         Playback.init(DesktopAudio())
         Startup.later {
-            // After an update, the lyrics an older version romanized go: Playback.romanizedFile no longer reads them.
+            // After an update, lyrics romanized by an older version are deleted, because Playback.romanizedFile reads
+            // only the files tagged with the current version code.
             if (Store.prefs.getInt("lyrics.romanizedBy", 0) != BuildConfig.VERSION_CODE) thread(name = "old lyrics", isDaemon = true) {
-                File(Dirs.cache, "lyrics").listFiles { f -> f.name.contains(".r") && !f.name.endsWith(".${BuildConfig.VERSION_CODE}.json") }?.forEach { it.delete() }
+                val current = ".${BuildConfig.VERSION_CODE}.json"
+                val old = File(Dirs.cache, "lyrics").listFiles { f -> f.name.contains(".r") && !f.name.endsWith(current) }
+                old?.forEach { it.delete() }
                 Store.prefs.edit().putInt("lyrics.romanizedBy", BuildConfig.VERSION_CODE).apply()
             }
-            thread(name = "sudachi", isDaemon = true) { Thread.currentThread().priority = Thread.MIN_PRIORITY; Store.romanizer.warmUp() }
+            thread(name = "sudachi", isDaemon = true) {
+                Thread.currentThread().priority = Thread.MIN_PRIORITY
+                Store.romanizer.warmUp()
+            }
         }
         Home.start()
     }
@@ -56,8 +62,8 @@ fun main(args: Array<String>) {
             onCloseRequest = ::exitApplication,
             title = BuildConfig.APP_NAME,
             icon = androidx.compose.ui.res.painterResource("icon.png"),
-            // A phone's shape, but never past the screen's free area: the bottom bar is the only navigation, and a 768 px
-            // screen, or 1080 p at 150 %, has less than 900 dp.
+            // A phone's shape, but never taller than the screen's free area, because the bottom bar is the only
+            // navigation. A 768 px screen, or 1080p at 150 %, has less than 900 dp.
             state = rememberWindowState(
                 position = WindowPosition(Alignment.Center),
                 width = 440.dp,
@@ -68,7 +74,8 @@ fun main(args: Array<String>) {
             density = LocalDensity.current.density
             windowWidthDp = (LocalWindowInfo.current.containerSize.width / density).toInt()
             LaunchedEffect(Unit) {
-                withFrameNanos {} // the first frame is drawn: the start-up work that waited for it runs
+                // Start-up work that waits for the first frame runs once it is drawn.
+                withFrameNanos {}
                 Startup.go()
                 Dictionary.ensure()
             }
@@ -82,7 +89,7 @@ fun main(args: Array<String>) {
     }
 }
 
-// Touch (Home changes no tile under the pointer) and the mouse's back button.
+// Records whether the pointer is down, so Home changes no tile under it, and turns the mouse's back button into Back.
 @OptIn(ExperimentalComposeUiApi::class)
 private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.trackPointer() = awaitPointerEventScope {
     while (true) {
@@ -96,16 +103,26 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.trackPoi
 @androidx.compose.runtime.Composable
 private fun Toast(modifier: Modifier) {
     val (text, until) = toastText ?: return
-    LaunchedEffect(text, until) { delay(until - elapsedRealtime()); if (toastText?.second == until) toastText = null }
+    LaunchedEffect(text, until) {
+        delay(until - elapsedRealtime())
+        if (toastText?.second == until) toastText = null
+    }
     Text(
-        text, modifier.background(Color(0xE0303030), RoundedCornerShape(16.dp)).padding(horizontal = 16.dp, vertical = 10.dp),
-        color = Color.White, style = MaterialTheme.typography.bodyMedium,
+        text,
+        modifier
+            .background(TOAST_BACKGROUND, RoundedCornerShape(16.dp))
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        color = Color.White,
+        style = MaterialTheme.typography.bodyMedium,
     )
 }
 
+/** Dark grey at 88 % opacity. */
+private val TOAST_BACKGROUND = Color(0xE0303030)
+
 /**
- * roma --check: the package's parts start, without a window (CI runs it on each Windows build): Java, ICU's
- * transliteration and roma-aac. Exits 1 with the reason when one doesn't.
+ * Runs `roma --check`, which starts the package's parts without a window: Java, ICU's transliteration and roma-aac. CI
+ * runs it on each Windows build. Exits with 1 and prints the reason when a part fails.
  */
 private fun check() {
     val result = runCatching {
@@ -117,6 +134,7 @@ private fun check() {
         check(p.waitFor() == 0 && version?.startsWith("ffmpeg version") == true) { "roma-aac said $version" }
         println("ICU: $pinyin; roma-aac: $version")
     }
-    result.exceptionOrNull()?.let { System.err.println("${BuildConfig.APP_NAME} --check failed: $it") }
+    val failure = result.exceptionOrNull()
+    if (failure != null) System.err.println("${BuildConfig.APP_NAME} --check failed: $failure")
     kotlin.system.exitProcess(if (result.isSuccess) 0 else 1)
 }

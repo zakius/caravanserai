@@ -1,15 +1,16 @@
 #!/bin/bash
-# Release APKs, signed with the key named in keystore.properties (outside git):
-#   dist/roma-ytm-<version>.apk: roma ytm (the youtube flavor), R8-shrunk, Zopfli-recompressed (tools/repack_apk.py),
-#     zipaligned (arm64 and x86_64 in one).
-#   dist/caravan-<version>.apk: caravan (the subsonic flavor), made the same way. tools/residue_check.py checks neither
-#     carries the other's code, and fails the run when one does.
-#   dist/roma-dict-<dictionary version>.zip: the Japanese dictionary with its notices (:core:dictZip), only when that
-#     file is missing. Data, not an app: nothing to sign.
+# Builds the release files. APKs are signed with the key named in keystore.properties, which is kept outside git.
+#   dist/roma-ytm-<version>.apk: roma ytm (the youtube flavor), shrunk by R8, recompressed with Zopfli
+#     (tools/repack_apk.py) and zipaligned. One APK covers arm64 and x86_64.
+#   dist/caravan-<version>.apk: caravan (the subsonic flavor), made the same way. tools/residue_check.py checks that
+#     neither carries the other's code, and fails the run if one does.
+#   dist/roma-dict-<dictionary version>.zip: the Japanese dictionary with its notices (:core:dictZip), built only when
+#     that file is missing. It is data, not an app, so there is nothing to sign.
 # roma fetches the dictionary from its GitHub release (dict-<version>), or from ROMA_DICT_BASE if set.
-# Usage: release.sh [app] [dict] [test]; all three by default (test: the JVM modules' tests, which need the slim dictionary).
-# The GitHub workflow (.github/workflows/release.yml) runs them in separate jobs for each push to master, signed (with
-# RELEASE set) when the version is new.
+# Usage: release.sh [app] [dict] [test]. All three run by default. "test" runs the JVM modules' tests, which need the
+# slim dictionary.
+# The GitHub workflow (.github/workflows/release.yml) runs the parts in separate jobs for each push to master, and signs
+# (with RELEASE set) when the version is new.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export JAVA_HOME=${JAVA_HOME:-$HOME/.local/share/JetBrains/Toolbox/apps/air/jbr}
@@ -35,14 +36,15 @@ if [ -n "$app" ]; then
   python3 tools/residue_check.py subsonic $apks/subsonic/release/app-subsonic-release-unsigned.apk
 fi
 if [ -n "$buildDict" ]; then mkdir -p dist; cp "core/build/dict/${dict#dist/}" "$dict"; ls -l "$dict"; fi
-[ -n "$app" ] || exit 0 # tests or the dictionary only: nothing to sign
-# No key (CI on a merge that isn't a release, or a checkout without one): built, not signed. A release must be signed.
+[ -n "$app" ] || exit 0 # only tests or the dictionary, so nothing to sign
+# Without a key (CI on a merge that isn't a release, or a checkout without one) the APKs are built but not signed. A
+# release must be signed.
 if [ ! -f keystore.properties ]; then
   [ -z "${RELEASE:-}" ] || { echo "keystore.properties missing for a release" >&2; exit 1; }
   echo "No keystore.properties: built, not signed"; exit 0
 fi
 source <(sed 's/^\([a-zA-Z]*\)=\(.*\)$/\1="\2"/' keystore.properties)
-# Android 7+ checks only the v2/v3 signatures; the JAR (v1) signature files would add about 6 KB.
+# Android 7 and later check only the v2/v3 signatures, and the JAR (v1) signature files would add about 6 KB.
 sign() { "$tools/apksigner" sign --v1-signing-enabled false --ks "$storeFile" --ks-pass "pass:$storePassword" --ks-key-alias "$keyAlias" --key-pass "pass:$keyPassword" --out "$2" "$1"; rm -f "$2.idsig"; }
 mkdir -p dist
 tmp=$(mktemp -d)

@@ -118,8 +118,10 @@ class LyricsChoiceTest {
     }
 
     @Test fun rule5UserOrderWithoutYtm() {
-        assertEquals("B" to 5, chooseLyrics(null, listOf(plain("A", JA), synced("B", JA), synced("C", JA)))!!.let { it.first.source to it.second })
-        assertEquals("A" to 5, chooseLyrics(null, listOf(plain("A", JA), plain("B", JA)))!!.let { it.first.source to it.second })
+        val (syncedPick, syncedRule) = chooseLyrics(null, listOf(plain("A", JA), synced("B", JA), synced("C", JA)))!!
+        assertEquals("B" to 5, syncedPick.source to syncedRule)
+        val (firstPick, firstRule) = chooseLyrics(null, listOf(plain("A", JA), plain("B", JA)))!!
+        assertEquals("A" to 5, firstPick.source to firstRule)
         assertEquals(null, chooseLyrics(null, emptyList()))
     }
 
@@ -159,9 +161,14 @@ class LyricsChoiceTest {
         val q = LyricsQuery("v", "t", "a", null, 0)
         val none = P("none") { null }
         val broken = P("broken") { throw java.io.IOException("down") }
-        val slow = P("slow") { Thread.sleep(3000); synced("slow", JA) }
-        assertTrue(LyricsProviders.find(q, listOf(none)).let { it.result == null && it.complete })
-        assertTrue(LyricsProviders.find(q, listOf(none, broken)).let { it.result == null && !it.complete })
+        val slow = P("slow") {
+            Thread.sleep(3000)
+            synced("slow", JA)
+        }
+        val nothing = LyricsProviders.find(q, listOf(none))
+        assertTrue(nothing.result == null && nothing.complete)
+        val failed = LyricsProviders.find(q, listOf(none, broken))
+        assertTrue(failed.result == null && !failed.complete)
         val t0 = System.currentTimeMillis()
         val r = LyricsProviders.find(q, listOf(slow, P("fast") { synced("fast", OTHER) }), timeoutMs = 300)
         assertTrue(System.currentTimeMillis() - t0 < 2000)
@@ -190,12 +197,27 @@ class LyricsChoiceTest {
 
     @Test fun referenceLatinFollowsTheChosenLyrics() {
         // The server's plain lyrics with its romanization; a third party's synced copy of the same text wins (rule 3) and takes the Latin lines.
-        fun provider(id: String, l: Lyrics) = object : LyricsProvider { override val id = id; override val name = id; override fun fetch(q: LyricsQuery) = l }
+        fun provider(id: String, l: Lyrics) = object : LyricsProvider {
+            override val id = id
+            override val name = id
+            override fun fetch(q: LyricsQuery) = l
+        }
         val server = provider("server", Lyrics("server", listOf(Line(0, "君の声", latin = "kimi no koe"), Line(0, "花火", latin = "hanabi")), false))
         val lrc = provider("lrc", Lyrics("lrc", parseLrc("[00:01.00]君の声\n[00:04.00]花火"), true))
         val found = LyricsProviders.find(LyricsQuery("x", "t", "a", null, 0), listOf(lrc, server), reference = server).result!!.lyrics
         assertEquals("lrc", found.source)
         assertEquals(listOf("kimi no koe", "hanabi"), found.lines.map { it.latin })
+    }
+
+    @Test fun providerLanguageSurvivesTheSearch() {
+        // A Subsonic server tags its lyrics "zh", which makes Han lines romanize as Chinese.
+        val server = object : LyricsProvider {
+            override val id = "server"
+            override val name = "server"
+            override fun fetch(q: LyricsQuery) = Lyrics("server", listOf(Line(0, "声音")), false, lang = "zh")
+        }
+        val found = LyricsProviders.find(LyricsQuery("x", "t", "a", null, 0), listOf(server)).result!!.lyrics
+        assertEquals("zh", found.lang)
     }
 }
 

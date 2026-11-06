@@ -13,19 +13,20 @@ import os
 import sys
 import zipfile
 
-# Library strings that hold a pattern without being the other app's: Android's and Compose's web-address pattern lists
-# every top-level domain, YouTube's (.youtube) among them. Removed before searching.
+# Library strings that contain a pattern without being the other app's code. They are removed before searching.
+# Android's and Compose's web-address pattern lists every top-level domain, including YouTube's (.youtube).
 ALLOWED = [b"|you|youtube|yun|"]
 
 PATTERNS = {
-    # Google Play: no YouTube code, and no installing apps (the Japanese dictionary is downloaded as data).
+    # caravan is on Google Play, so it must carry no YouTube code and must not install apps (the Japanese dictionary
+    # is downloaded as data).
     "subsonic": ["innertube", "metrolist", "botguard", "youtube", "googlevideo", "visionos", "packageinstaller", "request_install_packages"],
     "youtube": ["subsonic"],
 }
 
 
 def entries(path):
-    """(name, bytes) of every file in the artifact, nested archives opened."""
+    """Yields (name, bytes) for every file in the artifact, opening nested archives."""
     if os.path.isdir(path):
         for root, dirs, files in os.walk(path):
             dirs[:] = [d for d in dirs if d != "runtime"]

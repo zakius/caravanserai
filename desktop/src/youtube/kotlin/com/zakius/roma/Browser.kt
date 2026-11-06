@@ -26,11 +26,11 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * A Chromium for what needs a real browser on the desktop: BotGuard's PoTokens and the YouTube sign-in, the jobs
- * Android's WebView does. It is the system's Chromium-family browser, started with roma's own profile (never the
- * user's) and driven over the DevTools protocol: the one that worked last time first, else every known browser in
- * [order] (oganesson first), else CEF, downloaded once on first need (jcefmaven, about 150 MB). Other engines can't
- * be used: BotGuard's tokens from JavaFX's WebKit are refused.
+ * A Chromium for the desktop jobs that need a real browser, which Android's WebView does on Android: BotGuard's
+ * PoTokens and the YouTube sign-in. It is the system's Chromium-family browser, started with roma's own profile (never
+ * the user's) and driven over the DevTools protocol. roma tries the browser that worked last time first, then every
+ * known browser in [order] (oganesson first), then CEF, which is downloaded once when first needed (jcefmaven, about
+ * 150 MB). Other engines can't be used, because BotGuard's tokens from JavaFX's WebKit are refused.
  */
 object Browser {
     private val windows = System.getProperty("os.name").startsWith("Windows")
@@ -45,31 +45,38 @@ object Browser {
             "$local\\oganesson\\Application\\chrome.exe", "$pf\\oganesson\\Application\\chrome.exe",
             "$local\\imput\\Helium\\Application\\chrome.exe",
             "$local\\Chromium\\Application\\chrome.exe",
-            "$pf\\Google\\Chrome\\Application\\chrome.exe", "$pf86\\Google\\Chrome\\Application\\chrome.exe", "$local\\Google\\Chrome\\Application\\chrome.exe",
-            "$pf\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", "$local\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+            "$pf\\Google\\Chrome\\Application\\chrome.exe",
+            "$pf86\\Google\\Chrome\\Application\\chrome.exe",
+            "$local\\Google\\Chrome\\Application\\chrome.exe",
+            "$pf\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+            "$local\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
             "$local\\Vivaldi\\Application\\vivaldi.exe", "$pf\\Vivaldi\\Application\\vivaldi.exe",
             "$local\\Programs\\Opera\\opera.exe", "$local\\Programs\\Opera GX\\opera.exe",
             "$pf86\\Microsoft\\Edge\\Application\\msedge.exe", "$pf\\Microsoft\\Edge\\Application\\msedge.exe",
         )
     } else {
         val path = (System.getenv("PATH") ?: "").split(':') + listOf("/usr/bin", "/usr/local/bin", "/opt/google/chrome")
-        listOf(
+        val names = listOf(
             "oganesson", "helium", "chromium", "chromium-browser", "google-chrome-stable", "google-chrome", "chrome",
             "brave-browser", "brave", "vivaldi-stable", "vivaldi", "opera", "microsoft-edge-stable", "microsoft-edge",
-        ).flatMap { name -> path.map { "$it/$name" } }.filter { File(it).canExecute() }.distinctBy { File(it).canonicalPath }
+        )
+        val candidates = names.flatMap { name -> path.map { dir -> "$dir/$name" } }
+        candidates.filter { File(it).canExecute() }.distinctBy { File(it).canonicalPath }
     }
 
     /**
-     * A browser for [profile], [headless] or in a window: the one that worked last time, else the first in [order]
-     * that starts and passes [test] (BotGuard's first token), else CEF, only when no system browser starts at all.
-     * The one that worked is remembered. A failing browser is closed and the next one tried. When all fail (often the
-     * network, not the browsers), the next minute's calls fail at once instead of starting every browser again.
+     * Starts a browser for [profile], [headless] or in a window. It tries the one that worked last time, then each one
+     * in [order], and keeps the first that starts and passes [test] (BotGuard's first token). CEF is tried only when no
+     * system browser starts at all. The one that worked is remembered. A failing browser is closed and the next one
+     * tried. When all fail, which is often the network rather than the browsers, calls in the next minute fail at once
+     * instead of starting every browser again.
      */
     suspend fun <T> start(profile: String, headless: Boolean, test: suspend (Chrome) -> T): Pair<Chrome, T> {
         if (System.currentTimeMillis() - failedAt < 60_000) error("No browser worked a moment ago")
         val last = Store.str(WORKED, "")
         val found = order().filter { File(it).canExecute() }
-        val tries = (listOf(last).filter { it in found } + found.filter { it != last }).distinct()
+        val lastFirst = if (last in found) listOf(last) else emptyList()
+        val tries = (lastFirst + found.filter { it != last }).distinct()
         var started = false
         for (exe in tries + "cef") {
             if (exe == "cef" && started) break
@@ -90,12 +97,14 @@ object Browser {
                 chrome.close()
                 throw e
             } catch (e: Exception) {
-                println("roma browser: $exe failed: $e") // which browser, for the log; no tokens
+                // Names the browser for the log. Nothing here logs a token.
+                println("roma browser: $exe failed: $e")
                 chrome.close()
             }
         }
         failedAt = System.currentTimeMillis()
-        error(if (started) "BotGuard failed in every browser" else "No Chromium-family browser started, and CEF isn't ready")
+        val reason = if (started) "BotGuard failed in every browser" else "No Chromium-family browser started, and CEF isn't ready"
+        error(reason)
     }
 
     @Volatile private var failedAt = 0L
@@ -108,38 +117,57 @@ object Browser {
  * first tab.
  */
 class Chrome(private val process: Process?, private val cdp: Cdp, private val onClose: () -> Unit = {}) : AutoCloseable {
-    /** The first page target, attached; for CEF the browser it created, for a launched browser its first tab. */
+    /** Attaches to the first page target: for CEF the browser it created, for a launched browser its first tab. */
     suspend fun page(urlPrefix: String = ""): Tab {
-        // A browser just started (CEF's window) may not have its page yet.
+        // A browser that has just started (CEF's window) may not have its page yet, so this asks for 10 s.
         var t: JsonObject? = null
         for (i in 0 until 100) {
             val targets = cdp.call("Target.getTargets")["targetInfos"]!!.jsonArray.map { it.jsonObject }
-            t = targets.firstOrNull { it.str("type") == "page" && it.str("url").startsWith(urlPrefix) } ?: run { delay(100); null } ?: continue
-            break
+            t = targets.firstOrNull { it.str("type") == "page" && it.str("url").startsWith(urlPrefix) }
+            if (t != null) break
+            delay(100)
         }
         t ?: error("No page")
-        val session = cdp.call("Target.attachToTarget", buildJsonObject { put("targetId", t.str("targetId")); put("flatten", true) }).str("sessionId")
+        val params = buildJsonObject {
+            put("targetId", t.str("targetId"))
+            put("flatten", true)
+        }
+        val session = cdp.call("Target.attachToTarget", params).str("sessionId")
         return Tab(cdp, session, t.str("url"))
     }
 
     /** The URLs of the open pages. */
-    suspend fun urls(): List<String> =
-        cdp.call("Target.getTargets")["targetInfos"]!!.jsonArray.map { it.jsonObject }.filter { it.str("type") == "page" }.map { it.str("url") }
+    suspend fun urls(): List<String> {
+        val targets = cdp.call("Target.getTargets")["targetInfos"]!!.jsonArray.map { it.jsonObject }
+        return targets.filter { it.str("type") == "page" }.map { it.str("url") }
+    }
 
     val alive get() = cdp.open && (process?.isAlive ?: true)
 
     override fun close() {
         runCatching { cdp.close() }
-        process?.let { p -> running -= p; p.descendants().forEach { it.destroy() }; p.destroy() }
+        val p = process
+        if (p != null) {
+            running -= p
+            p.descendants().forEach { it.destroy() }
+            p.destroy()
+        }
         onClose()
     }
 
     companion object {
-        /** Starts [exe] with [profile] as its user data and connects; the port is read from DevToolsActivePort. */
+        /** Starts [exe] with [profile] as its user data and connects to it, on the port it writes to DevToolsActivePort. */
         suspend fun launch(exe: String, profile: File, headless: Boolean): Chrome = withContext(Dispatchers.IO) {
             profile.mkdirs()
-            val portFile = File(profile, "DevToolsActivePort").also { it.delete() }
-            val args = mutableListOf(exe, "--remote-debugging-port=0", "--user-data-dir=${profile.path}", "--no-first-run", "--no-default-browser-check")
+            val portFile = File(profile, "DevToolsActivePort")
+            portFile.delete()
+            val args = mutableListOf(
+                exe,
+                "--remote-debugging-port=0",
+                "--user-data-dir=${profile.path}",
+                "--no-first-run",
+                "--no-default-browser-check",
+            )
             if (headless) args += "--headless=new"
             args += "about:blank"
             val p = ProcessBuilder(args).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
@@ -148,7 +176,8 @@ class Chrome(private val process: Process?, private val cdp: Cdp, private val on
                 var waited = 0
                 while (!portFile.exists() || portFile.readLines().size < 2) {
                     if (!p.isAlive || waited > 10_000) error("$exe didn't open its DevTools port")
-                    delay(100); waited += 100
+                    delay(100)
+                    waited += 100
                 }
                 val (port, path) = portFile.readLines()
                 Chrome(p, Cdp.connect("ws://127.0.0.1:$port$path"))
@@ -160,9 +189,17 @@ class Chrome(private val process: Process?, private val cdp: Cdp, private val on
 
         fun JsonObject.str(key: String) = (this[key] as? JsonPrimitive)?.contentOrNull ?: ""
 
-        // The browsers roma started go when roma does.
+        // The browsers roma started are ended when roma ends.
         private val running = java.util.Collections.newSetFromMap(ConcurrentHashMap<Process, Boolean>())
-            .also { set -> Runtime.getRuntime().addShutdownHook(Thread { set.forEach { p -> p.descendants().forEach { it.destroy() }; p.destroy() } }) }
+
+        init {
+            Runtime.getRuntime().addShutdownHook(Thread {
+                for (p in running) {
+                    p.descendants().forEach { it.destroy() }
+                    p.destroy()
+                }
+            })
+        }
     }
 }
 
@@ -172,24 +209,41 @@ class Tab(private val cdp: Cdp, private val session: String, val url: String) {
 
     /** Evaluates [expression] (a promise is awaited) and returns its value, as JSON. Throws on a JavaScript error. */
     suspend fun eval(expression: String): JsonElement? {
-        val r = call("Runtime.evaluate", buildJsonObject { put("expression", expression); put("awaitPromise", true); put("returnByValue", true) })
-        r["exceptionDetails"]?.let { throw IllegalStateException("JavaScript: " + (it.jsonObject["exception"]?.jsonObject?.get("description") ?: it)) }
+        val params = buildJsonObject {
+            put("expression", expression)
+            put("awaitPromise", true)
+            put("returnByValue", true)
+        }
+        val r = call("Runtime.evaluate", params)
+        val error = r["exceptionDetails"]
+        if (error != null) {
+            val description = error.jsonObject["exception"]?.jsonObject?.get("description") ?: error
+            throw IllegalStateException("JavaScript: $description")
+        }
         return r["result"]?.jsonObject?.get("value")
     }
 
     /**
-     * Opens [url] with [html] as its page, served by roma, not fetched: the page gets [url]'s origin (BotGuard wants
-     * youtube.com's) without a request leaving the machine.
+     * Opens [url] with [html] as its page, served by roma instead of fetched. The page gets [url]'s origin (BotGuard
+     * wants youtube.com's) without a request leaving the machine.
      */
     suspend fun serve(url: String, html: String) {
-        call("Fetch.enable", buildJsonObject { put("patterns", buildJsonArray { add(buildJsonObject { put("urlPattern", url) }) }) })
+        val pattern = buildJsonObject { put("urlPattern", url) }
+        call("Fetch.enable", buildJsonObject { put("patterns", buildJsonArray { add(pattern) }) })
         val served = CompletableFuture<Unit>()
         cdp.on("Fetch.requestPaused", session) { e ->
             val body = java.util.Base64.getEncoder().encodeToString(html.toByteArray())
-            cdp.send("Fetch.fulfillRequest", buildJsonObject {
-                put("requestId", e.str("requestId")); put("responseCode", 200); put("body", body)
-                put("responseHeaders", buildJsonArray { add(buildJsonObject { put("name", "Content-Type"); put("value", "text/html; charset=utf-8") }) })
-            }, session)
+            val contentType = buildJsonObject {
+                put("name", "Content-Type")
+                put("value", "text/html; charset=utf-8")
+            }
+            val params = buildJsonObject {
+                put("requestId", e.str("requestId"))
+                put("responseCode", 200)
+                put("body", body)
+                put("responseHeaders", buildJsonArray { add(contentType) })
+            }
+            cdp.send("Fetch.fulfillRequest", params, session)
             served.complete(Unit)
         }
         call("Page.navigate", buildJsonObject { put("url", url) })
@@ -198,14 +252,22 @@ class Tab(private val cdp: Cdp, private val session: String, val url: String) {
     }
 
     /** The cookies the browser would send to [url], as a Cookie header. */
-    suspend fun cookies(url: String): String =
-        call("Network.getCookies", buildJsonObject { put("urls", buildJsonArray { add(JsonPrimitive(url)) }) })["cookies"]!!.jsonArray
-            .joinToString("; ") { c -> c.jsonObject.let { "${it.str("name")}=${it.str("value")}" } }
+    suspend fun cookies(url: String): String {
+        val params = buildJsonObject { put("urls", buildJsonArray { add(JsonPrimitive(url)) }) }
+        val cookies = call("Network.getCookies", params)["cookies"]!!.jsonArray
+        return cookies.joinToString("; ") { c ->
+            val cookie = c.jsonObject
+            "${cookie.str("name")}=${cookie.str("value")}"
+        }
+    }
 
     private fun JsonObject.str(key: String) = (this[key] as? JsonPrimitive)?.contentOrNull ?: ""
 }
 
-/** The DevTools protocol over the JDK's WebSocket: calls by id, events by method (and session). */
+/**
+ * The DevTools protocol over the JDK's WebSocket. Answers are matched to calls by id, and events to handlers by method
+ * and session.
+ */
 class Cdp private constructor(private val ws: WebSocket, private val listener: Listener) : AutoCloseable {
     private val ids = AtomicInteger()
     val open get() = !listener.closed
@@ -217,15 +279,24 @@ class Cdp private constructor(private val ws: WebSocket, private val listener: L
         val id = ids.incrementAndGet()
         val f = CompletableFuture<JsonObject>()
         listener.pending[id] = f
-        val msg = buildJsonObject { put("id", id); put("method", method); put("params", params); session?.let { put("sessionId", it) } }
+        val msg = buildJsonObject {
+            put("id", id)
+            put("method", method)
+            put("params", params)
+            if (session != null) put("sessionId", session)
+        }
         synchronized(ws) { ws.sendText(msg.toString(), true).join() }
         if (listener.closed) f.completeExceptionally(IllegalStateException("DevTools connection closed"))
         return f
     }
 
-    fun on(method: String, session: String?, handler: (JsonObject) -> Unit) { listener.events["$method $session"] = handler }
+    fun on(method: String, session: String?, handler: (JsonObject) -> Unit) {
+        listener.events["$method $session"] = handler
+    }
 
-    override fun close() { runCatching { ws.sendClose(WebSocket.NORMAL_CLOSURE, "").join() } }
+    override fun close() {
+        runCatching { ws.sendClose(WebSocket.NORMAL_CLOSURE, "").join() }
+    }
 
     private class Listener : WebSocket.Listener {
         val pending = ConcurrentHashMap<Int, CompletableFuture<JsonObject>>()
@@ -241,18 +312,27 @@ class Cdp private constructor(private val ws: WebSocket, private val listener: L
                 val id = (msg["id"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
                 if (id != null) {
                     val f = pending.remove(id)
-                    msg["error"]?.let { f?.completeExceptionally(IllegalStateException("DevTools: $it")) } ?: f?.complete(msg["result"]?.jsonObject ?: JsonObject(emptyMap()))
+                    val error = msg["error"]
+                    if (error != null) {
+                        f?.completeExceptionally(IllegalStateException("DevTools: $error"))
+                    } else {
+                        f?.complete(msg["result"]?.jsonObject ?: JsonObject(emptyMap()))
+                    }
                 } else {
                     val method = (msg["method"] as? JsonPrimitive)?.contentOrNull
                     val session = (msg["sessionId"] as? JsonPrimitive)?.contentOrNull
-                    events["$method $session"]?.let { h -> Thread { h(msg["params"]!!.jsonObject) }.start() }
+                    val handler = events["$method $session"]
+                    if (handler != null) Thread { handler(msg["params"]!!.jsonObject) }.start()
                 }
             }
             ws.request(1)
             return null
         }
 
-        override fun onClose(ws: WebSocket, status: Int, reason: String?): CompletionStage<*>? { gone(); return null }
+        override fun onClose(ws: WebSocket, status: Int, reason: String?): CompletionStage<*>? {
+            gone()
+            return null
+        }
         override fun onError(ws: WebSocket, error: Throwable) = gone()
 
         private fun gone() {
@@ -272,68 +352,90 @@ class Cdp private constructor(private val ws: WebSocket, private val listener: L
 }
 
 /**
- * CEF, the last resort, all of it downloaded on first need, none of it in the package: its Java side (jcefmaven and
- * what it uses, about 3 MB of jars from Maven Central, each checked against the SHA-256 pinned at build time,
- * BuildConfig.CEF_JARS) and CEF itself (about 150 MB, which jcefmaven fetches). It runs in a process of its own,
- * [CefHost] on roma's Java with those jars: CEF must start before anything in the process opens an AWT or X11
- * window. roma drives it over DevTools like any other browser.
+ * CEF, the last resort. All of it is downloaded when first needed, and none of it is in the package: its Java side
+ * (jcefmaven and its dependencies, about 3 MB of jars from Maven Central, each checked against the SHA-256 pinned at
+ * build time in BuildConfig.CEF_JARS) and CEF itself (about 150 MB, which jcefmaven fetches). It runs in a process of
+ * its own (CefHost.kt) on roma's Java with those jars, because CEF must start before anything in the process opens an
+ * AWT or X11 window. roma drives it over DevTools like any other browser.
  */
 object Cef {
     val installDir get() = File(Dirs.files, "cef")
     private val installed get() = File(installDir, "install.lock").exists()
-    /** What the download is doing, for the sign-in page; null when nothing happens. */
+    /** The download's progress for the sign-in page, or null when nothing is downloading. */
     @Volatile var status: String? = null
         private set
     @Volatile private var installing = false
 
-    /** Blocking: CEF's jars, downloaded unless they are there. */
+    /** Blocking. Returns CEF's jars, downloading any that are missing. */
     private fun jars(): List<File> {
-        val dir = File(Dirs.files, "cef-java").also { it.mkdirs() } // not in installDir, which jcefmaven empties
+        // Not in installDir, because jcefmaven empties it.
+        val dir = File(Dirs.files, "cef-java")
+        dir.mkdirs()
         return BuildConfig.CEF_JARS.split(';').map { entry ->
             val (path, sha256) = entry.split(' ')
             val jar = File(dir, path.substringAfterLast('/'))
             if (!jar.exists()) {
                 status = "Downloading Chromium (CEF)…"
-                val bytes = URI("https://repo1.maven.org/maven2/" + path.replace("+", "%2B")).toURL().readBytes()
+                val url = "https://repo1.maven.org/maven2/" + path.replace("+", "%2B")
+                val bytes = URI(url).toURL().readBytes()
                 val got = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).toHexString()
                 check(got == sha256) { "${jar.name} doesn't match its checksum" }
-                File(dir, jar.name + ".tmp").also { it.writeBytes(bytes) }.renameTo(jar)
+                // Written beside the jar and renamed, so an interrupted write never leaves a partial jar.
+                val tmp = File(dir, jar.name + ".tmp")
+                tmp.writeBytes(bytes)
+                tmp.renameTo(jar)
             }
             jar
         }
     }
 
     /**
-     * roma again with --cef-host (Main.kt), which runs [CefHost] with CEF's jars: through the packaged launcher (its
-     * Java has no `java` command), or through `java` and the class path (a run from Gradle).
+     * Starts roma again with --cef-host (Flavor.kt), which runs CefHost.kt with CEF's jars. A packaged roma goes
+     * through its launcher, because its Java has no `java` command. A run from Gradle goes through `java` and the
+     * class path.
      */
     private fun host(vararg args: String): Process {
         val jars = jars().joinToString(File.pathSeparator) { it.path }
-        val java = File(System.getProperty("java.home"), "bin/" + if (System.getProperty("os.name").startsWith("Windows")) "java.exe" else "java")
-        val self = if (java.canExecute()) listOf(java.path, "-cp", System.getProperty("java.class.path"), "com.zakius.roma.MainKt")
-            else listOf(ProcessHandle.current().info().command().get())
-        return ProcessBuilder(self + listOf("--cef-host", jars) + args).redirectError(ProcessBuilder.Redirect.DISCARD).start()
+        val javaName = if (System.getProperty("os.name").startsWith("Windows")) "java.exe" else "java"
+        val java = File(System.getProperty("java.home"), "bin/$javaName")
+        val self = if (java.canExecute()) {
+            listOf(java.path, "-cp", System.getProperty("java.class.path"), "com.zakius.roma.MainKt")
+        } else {
+            listOf(ProcessHandle.current().info().command().get())
+        }
+        val command = self + listOf("--cef-host", jars) + args
+        return ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.DISCARD).start()
     }
 
-    /** Blocking: jars and CEF, unless they are there; the host reports its download as it goes. */
+    /** Blocking. Downloads the jars and CEF unless they are there. The host reports the download's progress. */
     fun install() {
         jars()
         if (installed) return
         val p = host("--install")
-        p.inputStream.bufferedReader().forEachLine { if (it.startsWith("status ")) status = it.removePrefix("status ").ifEmpty { null } }
+        p.inputStream.bufferedReader().forEachLine { line ->
+            if (line.startsWith("status ")) status = line.removePrefix("status ").ifEmpty { null }
+        }
         status = null
         check(p.waitFor() == 0 && installed) { "CEF didn't install" }
     }
 
     /**
-     * CEF in its own process: a hidden page, or a window showing [url]. Before CEF is there, a hidden page fails at
-     * once and the download starts in the background: a stream lookup can't wait for 150 MB, so that song goes
-     * without a token. A window (sign-in) waits for the download.
+     * Starts CEF in its own process, with a hidden page or a window showing [url]. Before CEF is installed, a hidden
+     * page fails at once and the download starts in the background, because a stream lookup can't wait for 150 MB. That
+     * song goes without a token. A window (the sign-in) waits for the download.
      */
     suspend fun start(url: String? = null): Chrome = withContext(Dispatchers.IO) {
         if (!installed) {
             if (url == null) {
-                if (!installing) { installing = true; Thread({ runCatching { install() }; installing = false }, "cef install").apply { isDaemon = true }.start() }
+                if (!installing) {
+                    installing = true
+                    val installer = Thread({
+                        runCatching { install() }
+                        installing = false
+                    }, "cef install")
+                    installer.isDaemon = true
+                    installer.start()
+                }
                 error("CEF is downloading")
             }
             install()
@@ -342,12 +444,21 @@ object Cef {
         try {
             val out = p.inputStream.bufferedReader()
             // A host that says nothing for 20 s is ended, which ends the read.
-            val watchdog = Thread { runCatching { Thread.sleep(20_000); p.destroy() } }.apply { isDaemon = true; start() }
-            val line = generateSequence { out.readLine() }.firstOrNull { it.startsWith("DevTools port ") } ?: error("CEF didn't start")
+            val watchdog = Thread {
+                runCatching {
+                    Thread.sleep(20_000)
+                    p.destroy()
+                }
+            }
+            watchdog.isDaemon = true
+            watchdog.start()
+            val lines = generateSequence { out.readLine() }
+            val line = lines.firstOrNull { it.startsWith("DevTools port ") } ?: error("CEF didn't start")
             watchdog.interrupt()
             val port = line.removePrefix("DevTools port ").toInt()
             val json = URI("http://127.0.0.1:$port/json/version").toURL().readText()
-            Chrome(p, Cdp.connect(Json.parseToJsonElement(json).jsonObject["webSocketDebuggerUrl"]!!.jsonPrimitive.content))
+            val webSocketUrl = Json.parseToJsonElement(json).jsonObject["webSocketDebuggerUrl"]!!.jsonPrimitive.content
+            Chrome(p, Cdp.connect(webSocketUrl))
         } catch (t: Throwable) {
             p.destroy()
             throw t
@@ -356,28 +467,35 @@ object Cef {
 }
 
 /**
- * BotGuard in a hidden Chromium page: po_token.html served at youtube.com's origin, then the same steps as Android's
- * WebView (PoToken.kt), the page's functions called through [Tab.eval]. Closed after 5 idle minutes, so the
- * browser doesn't stay in memory; the next song needing a token starts it again (about 2 s).
+ * BotGuard in a hidden Chromium page. po_token.html is served at youtube.com's origin, then the page's functions are
+ * called through [Tab.eval] in the same steps as Android's WebView (PoToken.kt). The browser is closed after 5 idle
+ * minutes so it doesn't stay in memory, and the next song that needs a token starts it again, in about 2 s.
  */
-class ChromeBotGuard private constructor(private val chrome: Chrome, private val page: Tab, private val expiresAt: Long) : BotGuardSession {
+class ChromeBotGuard private constructor(
+    private val chrome: Chrome,
+    private val page: Tab,
+    private val expiresAt: Long,
+) : BotGuardSession {
     @Volatile private var closed = false
     @Volatile private var used = System.currentTimeMillis()
     override val expired get() = System.currentTimeMillis() > expiresAt
     override val dead get() = closed || !chrome.alive
 
     init {
-        Thread({
+        val idle = Thread({
             while (!closed) {
                 Thread.sleep(30_000)
                 if (System.currentTimeMillis() - used > 5 * 60_000) close()
             }
-        }, "botguard idle").apply { isDaemon = true }.start()
+        }, "botguard idle")
+        idle.isDaemon = true
+        idle.start()
     }
 
     override suspend fun mint(identifier: String): String {
         used = System.currentTimeMillis()
-        val u8 = page.eval("obtainPoToken(${BotGuard.u8Array(identifier.toByteArray())}).then(u => Array.from(u).join(','))")
+        val identifierBytes = BotGuard.u8Array(identifier.toByteArray())
+        val u8 = page.eval("obtainPoToken($identifierBytes).then(u => Array.from(u).join(','))")
         return BotGuard.token(u8!!.jsonPrimitive.content)
     }
 
@@ -390,7 +508,7 @@ class ChromeBotGuard private constructor(private val chrome: Chrome, private val
     companion object {
         private val html by lazy { ChromeBotGuard::class.java.getResource("/po_token.html")!!.readText() }
 
-        /** A session in the first browser that can run BotGuard (Browser.start); its first step is the test. */
+        /** Opens a session in the first browser that can run BotGuard (Browser.start). Opening it is the browser's test. */
         suspend fun start(): BotGuardSession {
             return Browser.start("botguard", headless = true) { chrome -> open(chrome) }.second
         }
@@ -399,11 +517,14 @@ class ChromeBotGuard private constructor(private val chrome: Chrome, private val
             val page = chrome.page()
             page.serve("https://www.youtube.com/roma-botguard", html)
             val challenge = withContext(Dispatchers.IO) {
-                BotGuard.parseChallenge(BotGuard.request("https://www.youtube.com/api/jnn/v1/Create", "[ \"${BotGuard.REQUEST_KEY}\" ]"))
+                val body = "[ \"${BotGuard.REQUEST_KEY}\" ]"
+                BotGuard.parseChallenge(BotGuard.request("https://www.youtube.com/api/jnn/v1/Create", body))
             }
-            val response = page.eval("runBotGuard($challenge).then(r => { window.webPoSignalOutput = r.webPoSignalOutput; return r.botguardResponse })")!!.jsonPrimitive.content
+            val script = "runBotGuard($challenge).then(r => { window.webPoSignalOutput = r.webPoSignalOutput; return r.botguardResponse })"
+            val response = page.eval(script)!!.jsonPrimitive.content
             val (integrity, expires) = withContext(Dispatchers.IO) {
-                BotGuard.integrity(BotGuard.request("https://www.youtube.com/api/jnn/v1/GenerateIT", "[ \"${BotGuard.REQUEST_KEY}\", \"$response\" ]"))
+                val body = "[ \"${BotGuard.REQUEST_KEY}\", \"$response\" ]"
+                BotGuard.integrity(BotGuard.request("https://www.youtube.com/api/jnn/v1/GenerateIT", body))
             }
             page.eval("createPoTokenMinter(window.webPoSignalOutput, $integrity).then(() => '')")
             return ChromeBotGuard(chrome, page, expires)
@@ -413,10 +534,10 @@ class ChromeBotGuard private constructor(private val chrome: Chrome, private val
 
 /**
  * The YouTube Music sign-in, in a browser window with roma's own sign-in profile. Google refuses to sign in a browser
- * whose DevTools port is open ("This browser or app may not be secure"), so a system browser's window has none: once
- * it closes, a hidden browser on the same profile reads the account's cookies (as Android's WebView sign-in does).
- * Without a system browser, CEF's window, watched until it reaches music.youtube.com. Returns false when the window
- * closed without a sign-in.
+ * whose DevTools port is open ("This browser or app may not be secure"), so a system browser's window is started
+ * without one. Once it closes, a hidden browser on the same profile reads the account's cookies, as Android's WebView
+ * sign-in does. Without a system browser, CEF's window is used and watched until it reaches music.youtube.com.
+ * Returns false when the window closed without a sign-in.
  */
 suspend fun browserSignIn(): Boolean {
     val url = "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fmusic.youtube.com"
@@ -425,35 +546,44 @@ suspend fun browserSignIn(): Boolean {
     var window: Process? = null
     try {
         val found = Browser.order().filter { File(it).canExecute() }
-        val exe = (listOf(Store.str("browser.worked", "")).filter { it in found } + found).firstOrNull()
+        val last = Store.str("browser.worked", "")
+        val exe = if (last in found) last else found.firstOrNull()
         if (exe != null) {
             profile.mkdirs()
             window = withContext(Dispatchers.IO) {
                 ProcessBuilder(exe, "--user-data-dir=${profile.path}", "--no-first-run", "--no-default-browser-check", url)
                     .redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
             }
-            // A wrapper script may hand over to the browser and end: the profile's lock (Linux, "<host>-<pid>") names
-            // the browser. A browser that was killed leaves its lock behind, so the process is what counts.
+            // A wrapper script may hand over to the browser and exit, so the browser is found through the profile's
+            // lock, which on Linux links to "<host>-<pid>". A killed browser leaves its lock behind, so what counts is
+            // whether that process still runs.
             val lock = File(profile, "SingletonLock").toPath()
-            fun browser() = runCatching { java.nio.file.Files.readSymbolicLink(lock).toString().substringAfterLast('-').toLong() }
-                .getOrNull()?.let { ProcessHandle.of(it).isPresent } == true
-            while (window.isAlive || browser()) delay(500)
+            fun browserRunning(): Boolean {
+                val pid = runCatching {
+                    java.nio.file.Files.readSymbolicLink(lock).toString().substringAfterLast('-').toLong()
+                }.getOrNull()
+                return pid != null && ProcessHandle.of(pid).isPresent
+            }
+            while (window.isAlive || browserRunning()) delay(500)
             chrome = Chrome.launch(exe, profile, headless = true)
             return take(chrome.page())
         }
-        val c = Cef.start(url).also { chrome = it }
+        val c = Cef.start(url)
+        chrome = c
         var music: Tab? = null
         while (c.alive) {
             delay(1_000)
             if (c.urls().none { it.startsWith("https://music.youtube.com") }) continue
-            if (take(music ?: c.page("https://music.youtube.com").also { music = it })) return true
+            if (music == null) music = c.page("https://music.youtube.com")
+            if (take(music)) return true
         }
         return false // the window was closed
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
-        // No browser started, CEF couldn't, or the window went mid-call.
-        toast((if (chrome == null && window == null) "Couldn't open a browser to sign in: " else "Couldn't sign in: ") + e.message, long = true)
+        // No browser started, CEF couldn't start, or the window closed in the middle of a call.
+        val prefix = if (chrome == null && window == null) "Couldn't open a browser to sign in: " else "Couldn't sign in: "
+        toast(prefix + e.message, long = true)
         return false
     } finally {
         window?.destroy()
@@ -462,19 +592,20 @@ suspend fun browserSignIn(): Boolean {
 }
 
 /**
- * Signs in with [page]'s browser's YouTube Music cookies, when they hold an account's. The visitor and account ids come
- * from music.youtube.com's page fetched with them: a headless browser's copy of the page never sets them.
+ * Signs in with the YouTube Music cookies of [page]'s browser, when they hold an account's. The visitor and account ids
+ * come from music.youtube.com's page fetched with those cookies, because a headless browser's copy of the page never
+ * sets them.
  */
 private suspend fun take(page: Tab): Boolean {
     val cookie = page.cookies("https://music.youtube.com")
     if ("SAPISID" !in cookie) return false
     val html = withContext(Dispatchers.IO) {
         runCatching {
-            java.net.http.HttpClient.newHttpClient().send(
-                java.net.http.HttpRequest.newBuilder(java.net.URI("https://music.youtube.com/")).header("Cookie", cookie)
-                    .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36").build(),
-                java.net.http.HttpResponse.BodyHandlers.ofString(),
-            ).body()
+            val request = java.net.http.HttpRequest.newBuilder(java.net.URI("https://music.youtube.com/"))
+                .header("Cookie", cookie)
+                .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36")
+                .build()
+            java.net.http.HttpClient.newHttpClient().send(request, java.net.http.HttpResponse.BodyHandlers.ofString()).body()
         }.getOrDefault("")
     }
     fun id(key: String) = Regex("\"$key\":\"([^\"]+)\"").find(html)?.groupValues?.get(1)
