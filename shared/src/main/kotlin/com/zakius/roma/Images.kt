@@ -1,5 +1,6 @@
 package com.zakius.roma
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
@@ -162,19 +163,22 @@ object Images {
     }
 }
 
-/** A cover at [size]. Until it's loaded it shows [placeholder], or nothing. */
+/**
+ * A cover at [size], filling its box: a video's 16:9 frame is cropped to the square, not letterboxed. Until it's
+ * loaded it shows [placeholder], or the box in a neutral tone, so a list never has holes where covers go.
+ */
 @Composable
 fun Thumb(
     url: String?,
     size: Dp,
     modifier: Modifier,
-    contentScale: ContentScale = ContentScale.Fit,
+    contentScale: ContentScale = ContentScale.Crop,
     alpha: Float = 1f,
     exact: Boolean = false,
     placeholder: Pic? = null,
 ) {
     val px = with(LocalDensity.current) { size.roundToPx() }
-    ThumbPx(url, px, modifier, contentScale, alpha, exact, placeholder)
+    ThumbPx(url, px, modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh), contentScale, alpha, exact, placeholder)
 }
 
 @Composable
@@ -182,7 +186,7 @@ fun ThumbPx(
     url: String?,
     px: Int,
     modifier: Modifier,
-    contentScale: ContentScale = ContentScale.Fit,
+    contentScale: ContentScale = ContentScale.Crop,
     alpha: Float = 1f,
     exact: Boolean = false,
     placeholder: Pic? = null,

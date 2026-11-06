@@ -27,12 +27,12 @@ The music stack:
 |---|---|---|
 | Home | `YouTube.home` pages; the personal mixes row; Liked music | Shelves from `getAlbumList2` (recently added, recently played, most played, random), one page. Pinned tiles: the server's mixes (playlists marked `oasisMix` by a server listing the extension `oasis`, which oasis publishes from YouTube Music's personal mixes; other servers have none), then Starred and Shuffle all. |
 | Search | `YouTube.search` with filters, spelling correction, suggestions; "Seen before" from the local index | The synced index first, at once, romanized forms included (`matchDistance`); then the server's own `search3` results not already listed (on oasis, YouTube Music's). Same filters; Playlists from the playlist list. No suggestions, no correction line, no "Seen before" section. |
-| Library tabs | Playlists, Albums, Artists from the account | Playlists (`getPlaylists`), Albums and Artists from the index. |
+| Library tabs | Playlists, Albums, Artists from the account | Albums and Artists from the index, Playlists (`getPlaylists`), Starred (`getStarred2`: artists, albums, songs). Albums first: a server's library is its albums. |
 | Album, artist, playlist pages | `YouTube.album/artist/playlist` | Album and artist from the index (instant, offline), else `getAlbum`/`getArtist` (oasis: a YouTube Music album seen in search or radio, which it keeps out of the library lists); playlist from `getPlaylist`. An artist page lists the artist's albums and plays all their songs. |
 | Stream | `Streams.audio` (VISIONOS, then InnerTubeX), loudness | `stream?id=…`, no transcoding asked; loudness from OpenSubsonic `replayGain` (the track's gain, else the album's), as dB above −14 LUFS like YouTube's. |
 | Radio and queue | YouTube's autoplay (`next`), related artists for the leash | `getSimilarSongs` on the seed song, each next page on the last song of the one before (oasis answers with YouTube Music's radio); when the server has none, random songs from the index. The same filters and leash (`filterRadio`). |
 | Mixes, Liked music | Personal mixes, `LM` | Starred songs (`getStarred2`) for the Liked tile; Shuffle all plays the index at random. |
-| Like | `likeVideo`, `likeStatus` | `star`/`unstar`; the status from the song's `starred`, kept from the sync and from `getSong`. |
+| Like | `likeVideo`, `likeStatus` | `star`/`unstar`; the status from the song's `starred`, kept from the sync and from `getSong`. caravan calls it Star (`Source.stars`): the player's button, the song menu, the notification, and Star / Unstar on album and artist pages, with a star icon. |
 | Lyrics: the reference provider | `YouTubeLyrics` (ANDROID_MUSIC browse) | OpenSubsonic `getLyricsBySongId`, only when the server lists the `songLyrics` extension; with `romanization`, its pronunciation layer too (Server romanization below). The third-party providers run as before. |
 | Comments, Share | YouTube comments; a YouTube link | No Comments: the slot stays empty. Share with the extension `shareUrl`: the song's `shareUrl`. |
 | Scrobbling | Last.fm from the app | Subsonic `scrobble`; Last.fm from the app only where the rule below says so. |
@@ -45,7 +45,7 @@ What Subsonic can't provide, and what the UI does:
 - No home feed and no personal mixes: Home shows the server's album lists and two fixed tiles. "Your mixes" becomes "Your library" on Subsonic.
 - Similar songs only through `getSimilarSongs`. A server without them gets radio from the index at random, leash applied, so "close" still keeps the seed's artist.
 - Lyrics from the server only with OpenSubsonic `getLyricsBySongId`; otherwise the third-party providers alone, under rule 5 (no reference text).
-- No comments: the button is left out, its slot kept empty (a control never moves). Share only with the extension `shareUrl`.
+- No comments: the button is left out, its slot kept empty (a control never moves), so every control sits where it does in roma ytm. The gap of two slots between More and Lyrics is deliberate (2026-11-06). Share only with the extension `shareUrl`.
 - No spelling correction or suggestions in Search; the local search tolerates typos already.
 
 ## Ids

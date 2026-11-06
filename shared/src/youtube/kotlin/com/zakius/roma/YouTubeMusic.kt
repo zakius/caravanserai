@@ -128,6 +128,7 @@ object YouTubeMusic : Source {
     override val libraryHintPage = SIGN_IN
     private val LIBRARY = listOf("FEmusic_liked_playlists", "FEmusic_liked_albums", "FEmusic_library_corpus_track_artists")
     override fun libraryKey(tab: Int) = LIBRARY[tab]
+    override fun libraryEmpty(tab: Int) = "Nothing here yet. ${libraryTabs[tab]} you save in YouTube Music show here."
 
     /** Loads every page of a library tab, because the first page holds only about 25 items. Each page shows as it arrives. */
     override suspend fun library(tab: Int, partial: suspend (List<Item>) -> Unit): List<Item> {

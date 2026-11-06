@@ -5,10 +5,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
@@ -37,8 +42,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
-/** A page opened from a list: an album, playlist or artist, or the sign-in page. With [fromPlayer], Back returns to the player. */
-class Page(val kind: String, val id: String, val fromPlayer: Boolean = false)
+/** A page opened from a list: an album, playlist or artist, a settings category, or the sign-in page. */
+class Page(val kind: String, val id: String)
 
 const val TAB_HOME = 0
 const val TAB_SEARCH = 1
@@ -53,6 +58,8 @@ object Nav {
     var tab: Int
         get() = shownTab
         set(v) {
+            // Showing the player shows the player itself, not a page opened from it.
+            if (v == TAB_PLAYER) stacks[TAB_PLAYER].clear()
             if (v != shownTab) {
                 before = shownTab
                 shownTab = v
@@ -64,10 +71,19 @@ object Nav {
     var playerView by mutableStateOf(Store.prefs.getString("ui.playerView", null) ?: "song")
     val stacks = List(5) { mutableStateListOf<Page>() }
 
+    /** Opens [p] on the shown tab's stack. A page opened from the player stays on the Player tab, so Back returns there. */
     fun open(p: Page) {
-        val fromPlayer = tab == TAB_PLAYER
-        if (fromPlayer) tab = TAB_HOME
-        stacks[tab].add(Page(p.kind, p.id, fromPlayer))
+        stacks[tab].add(p)
+    }
+
+    /** Back: closes the top page, else leaves the player for the tab before it, else goes Home. */
+    fun back() {
+        val stack = stacks[tab]
+        when {
+            stack.isNotEmpty() -> stack.removeAt(stack.size - 1)
+            tab == TAB_PLAYER -> leavePlayer()
+            else -> tab = TAB_HOME
+        }
     }
 
     fun leavePlayer() {
@@ -263,17 +279,8 @@ suspend fun <T> buildAhead(visited: MutableList<T>, ahead: List<T>) {
 fun Root() {
     val tab = Nav.tab
     val stack = Nav.stacks[tab]
-    BackHandler(enabled = stack.isNotEmpty() || tab != TAB_HOME) {
-        // Picking a song jumps to the player, so leaving it returns to the list it was picked from.
-        if (stack.isNotEmpty()) {
-            val closed = stack.removeAt(stack.size - 1)
-            if (closed.fromPlayer) Nav.tab = TAB_PLAYER
-        } else if (tab == TAB_PLAYER) {
-            Nav.leavePlayer()
-        } else {
-            Nav.tab = TAB_HOME
-        }
-    }
+    // Picking a song jumps to the player, so leaving it returns to the list it was picked from.
+    BackHandler(enabled = stack.isNotEmpty() || tab != TAB_HOME) { Nav.back() }
     if (!Store.bool("setup.done", false)) {
         Box(Modifier.fillMaxSize().safeDrawingPadding()) { SetupScreen() }
         return
@@ -296,7 +303,10 @@ fun Root() {
     androidx.compose.runtime.LaunchedEffect(Unit) {
         buildAhead(visited, listOf(TAB_PLAYER, TAB_HOME, TAB_SEARCH, TAB_SETTINGS))
     }
-    Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    // The nav bar's background runs under the system's gesture strip; its items stay above it. The keyboard, when up,
+    // covers the nav bar, and the screen above ends at the keyboard.
+    val sides = WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
+    Column(Modifier.fillMaxSize().windowInsetsPadding(sides).imePadding()) {
         Box(Modifier.weight(1f)) {
             for (t in visited) androidx.compose.runtime.key(t) {
                 Box(if (t == tab) Modifier.fillMaxSize() else Modifier.hidden()) {
@@ -313,7 +323,10 @@ fun Root() {
                                     val stateKey = if (page != null) "$t/$level/${page.kind}/${page.id}" else "$t"
                                     saved.SaveableStateProvider(stateKey) {
                                         when {
-                                            page != null -> PageScreen(page)
+                                            page != null -> Column(Modifier.fillMaxSize()) {
+                                                PageBar(pageTitle(page))
+                                                Box(Modifier.weight(1f)) { PageScreen(page) }
+                                            }
                                             t == TAB_HOME -> HomeScreen()
                                             t == TAB_SEARCH -> SearchScreen()
                                             t == TAB_LIBRARY -> LibraryScreen()
@@ -338,8 +351,9 @@ fun Root() {
 private fun NavBar(tab: Int, loaded: Boolean) {
     val barModifier = Modifier
         .fillMaxWidth()
-        .height(48.dp)
         .background(MaterialTheme.colorScheme.surfaceContainer)
+        .navigationBarsPadding()
+        .height(48.dp)
     androidx.compose.foundation.layout.Row(barModifier) {
         NavItem("Home", Icons.Default.Home, tab == TAB_HOME, true) {
             Nav.tab = TAB_HOME
@@ -349,10 +363,10 @@ private fun NavBar(tab: Int, loaded: Boolean) {
             Nav.tab = TAB_SEARCH
             Nav.stacks[TAB_SEARCH].clear()
         }
-        NavItem("Player", Icons.Default.PlayArrow, tab == TAB_PLAYER, loaded) {
+        NavItem("Player", PlayerTabIcon, tab == TAB_PLAYER, loaded) {
             Nav.tab = TAB_PLAYER
         }
-        NavItem("Library", Icons.AutoMirrored.Filled.List, tab == TAB_LIBRARY, true) {
+        NavItem("Library", LibraryIcon, tab == TAB_LIBRARY, true) {
             Nav.tab = TAB_LIBRARY
             Nav.stacks[TAB_LIBRARY].clear()
         }
@@ -407,4 +421,43 @@ private fun androidx.compose.foundation.layout.RowScope.NavItem(
         }
         Text(label, fontSize = 10.sp, lineHeight = 12.sp, color = color, maxLines = 1)
     }
+}
+
+private fun icon(name: String, path: String) = androidx.compose.ui.graphics.vector.ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f).apply {
+    addPath(
+        androidx.compose.ui.graphics.vector.PathParser().parsePathString(path).toNodes(),
+        fill = androidx.compose.ui.graphics.SolidColor(androidx.compose.ui.graphics.Color.Black),
+    )
+}.build()
+
+/** The Player tab: a disc (Material's "album"), so it doesn't repeat the play button just above it. */
+val PlayerTabIcon by lazy {
+    icon(
+        "player",
+        "M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2zM12,16.5c-2.49,0 -4.5,-2.01 -4.5,-4.5S9.51,7.5 12,7.5s4.5,2.01 4.5,4.5 -2.01,4.5 -4.5,4.5zM12,11c-0.55,0 -1,0.45 -1,1s0.45,1 1,1 1,-0.45 1,-1 -0.45,-1 -1,-1z",
+    )
+}
+
+/** The Library tab: stacked records with a note (Material's "library_music"), apart from the queue's list. */
+val LibraryIcon by lazy {
+    icon(
+        "library",
+        "M20,2H8c-1.1,0 -2,0.9 -2,2v12c0,1.1 0.9,2 2,2h12c1.1,0 2,-0.9 2,-2V4c0,-1.1 -0.9,-2 -2,-2zM18,7h-3v5.5c0,1.38 -1.12,2.5 -2.5,2.5S10,13.88 10,12.5s1.12,-2.5 2.5,-2.5c0.57,0 1.08,0.19 1.5,0.51V5h4v2zM4,6H2v14c0,1.1 0.9,2 2,2h14v-2H4V6z",
+    )
+}
+
+/** The queue: lines with a note (Material's "queue_music"). */
+val QueueIcon by lazy {
+    icon(
+        "queue",
+        "M15,6H3v2h12V6zM15,10H3v2h12v-2zM3,16h8v-2H3V16zM17,6v8.18C16.69,14.07 16.35,14 16,14c-1.66,0 -3,1.34 -3,3s1.34,3 3,3 3,-1.34 3,-3V8h3V6H17z",
+    )
+}
+
+/** An empty star (Material's "star_border"), for sources that star rather than like. */
+val StarOutlineIcon by lazy {
+    icon(
+        "star_border",
+        "M22,9.24l-7.19,-0.62L12,2 9.19,8.63 2,9.24l5.46,4.73L5.82,21 12,17.27 18.18,21l-1.63,-7.03L22,9.24zM12,15.4l-3.76,2.27 1,-4.28 -3.32,-2.88 4.38,-0.38L12,6.1l1.71,4.04 4.38,0.38 -3.32,2.88 1,4.28L12,15.4z",
+    )
 }

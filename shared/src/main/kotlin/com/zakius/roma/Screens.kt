@@ -36,6 +36,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
@@ -90,7 +92,11 @@ import roma.core.Song
 import roma.core.item
 import roma.core.song
 
-/** A name in the chosen display mode: romanized, both (Latin, original small underneath), ruby (reading above) or original. */
+/**
+ * A name in the chosen display mode: romanized, both (Latin, original small underneath), ruby (reading above) or
+ * original. The original under the Latin form is in the name's own colour, only smaller, so it reads as part of the
+ * name and apart from the dimmed artist line below it. The Latin form gets [maxLines] in every mode.
+ */
 @Composable
 fun Name(t: roma.core.Text, mode: String, style: TextStyle = MaterialTheme.typography.bodyLarge, center: Boolean = false, maxLines: Int = 2) {
     val align = if (center) TextAlign.Center else TextAlign.Start
@@ -117,8 +123,8 @@ fun Name(t: roma.core.Text, mode: String, style: TextStyle = MaterialTheme.typog
             }
         }
         else -> Column(mod) {
-            Text(t.latin, Modifier.fillMaxWidth(), style = style, textAlign = align, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(t.original, Modifier.fillMaxWidth(), style = small, color = dim, textAlign = align, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(t.latin, Modifier.fillMaxWidth(), style = wrapping, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+            Text(t.original, Modifier.fillMaxWidth(), style = small.copy(color = style.color), textAlign = align, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -129,8 +135,21 @@ fun shownThumb(url: String?, size: Dp): String? = thumbAt(url, with(LocalDensity
 
 fun thumbAt(url: String?, px: Int): String? = url?.let { backend.thumbAt(it, px) }
 
+/**
+ * A song in a list. On an album page [number] (its track number) takes the cover's place, the artist line is left out
+ * when it is the album's own ([artist] false), and the length shows on the right ([length]).
+ */
 @Composable
-fun SongRow(s: Song, highlight: Boolean = false, extra: String? = null, onMenu: () -> Unit, onClick: () -> Unit) {
+fun SongRow(
+    s: Song,
+    highlight: Boolean = false,
+    extra: String? = null,
+    number: Int? = null,
+    artist: Boolean = true,
+    length: Boolean = false,
+    onMenu: () -> Unit,
+    onClick: () -> Unit,
+) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -139,7 +158,14 @@ fun SongRow(s: Song, highlight: Boolean = false, extra: String? = null, onMenu: 
             .padding(start = 16.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Thumb(shownThumb(s.thumb, 48.dp), 48.dp, Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)))
+        if (number != null) {
+            val color = if (highlight) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+            Box(Modifier.size(width = 48.dp, height = 40.dp), contentAlignment = Alignment.Center) {
+                Text("$number", style = MaterialTheme.typography.bodyMedium, color = color, maxLines = 1)
+            }
+        } else {
+            Thumb(shownThumb(s.thumb, 48.dp), 48.dp, Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)))
+        }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             val body = MaterialTheme.typography.bodyLarge
@@ -149,14 +175,24 @@ fun SongRow(s: Song, highlight: Boolean = false, extra: String? = null, onMenu: 
                 body
             }
             Name(s.title, Store.listMode, style)
-            val suffix = if (extra != null) " · $extra" else ""
-            val sub = s.artistLatin + suffix
+            val sub = listOfNotNull(if (artist) s.artistLatin else null, extra).joinToString(" · ")
+            if (sub.isNotEmpty()) {
+                Text(
+                    sub,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (length && s.durationSec > 0) {
             Text(
-                sub,
+                time(s.durationSec * 1000L),
+                Modifier.padding(start = 8.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
         }
         IconButton(onClick = onMenu) { Icon(Icons.Default.MoreVert, "Song menu") }
@@ -172,7 +208,7 @@ fun ItemRow(item: Item, onClick: () -> Unit) {
         .padding(horizontal = 16.dp, vertical = 6.dp)
     Row(rowModifier, verticalAlignment = Alignment.CenterVertically) {
         val shape = if (item.kind == "artist") CircleShape else RoundedCornerShape(4.dp)
-        Thumb(shownThumb(item.thumb, 56.dp), 56.dp, Modifier.size(56.dp).clip(shape))
+        Thumb(shownThumb(item.thumb, 48.dp), 48.dp, Modifier.size(48.dp).clip(shape))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Name(item.title, Store.listMode)
@@ -243,8 +279,9 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
     LaunchedEffect(s.id) { Playback.checkLike(s) }
     val link by produceState<String?>(null, s.id) { value = withContext(Dispatchers.IO) { backend.shareUrl(s) } }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-    // It opens fully at once, because half open, the bans at the bottom would need a drag first.
-    ModalBottomSheet(onDismissRequest = onClose, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    // It opens fully at once, because half open, the bans at the bottom would need a drag first. It closes while the
+    // correction dialog is open, so the dialog has no sheet behind it.
+    if (!fixing) ModalBottomSheet(onDismissRequest = onClose, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.padding(bottom = 24.dp)) {
             Column(Modifier.padding(horizontal = 24.dp)) {
                 Name(s.title, "both", MaterialTheme.typography.titleMedium)
@@ -265,7 +302,7 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
                 Nav.tab = TAB_PLAYER
                 onClose()
             }
-            MenuItem(if (liked) "Unlike" else "Like", backend.canLike) {
+            MenuItem(likeAction(liked), backend.canLike) {
                 Playback.toggleLike(s)
                 onClose()
             }
@@ -300,7 +337,9 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
                 Playback.remove(queueIndex!!)
                 onClose()
             }
-            MenuItem("Ban song", true) {
+            // The bans are set apart at the bottom, in the error colour.
+            HorizontalDivider()
+            MenuItem("Ban song", true, danger = true) {
                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.Reject)
                 if (Playback.current()?.song?.id == s.id) {
                     // Bans the playing song, skips it and offers Undo.
@@ -311,7 +350,7 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
                 }
                 onClose()
             }
-            MenuItem("Ban artist", s.firstArtistId != null) {
+            MenuItem("Ban artist", s.firstArtistId != null, danger = true) {
                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.Reject)
                 val a = s.artists.first { it.id != null }
                 Store.ban("artist", a.id!!, a.name.latin)
@@ -329,7 +368,7 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
 }
 
 @Composable
-private fun MenuItem(label: String, enabled: Boolean, onClick: () -> Unit) {
+private fun MenuItem(label: String, enabled: Boolean, danger: Boolean = false, onClick: () -> Unit) {
     Text(
         label,
         Modifier
@@ -337,6 +376,7 @@ private fun MenuItem(label: String, enabled: Boolean, onClick: () -> Unit) {
             .clickable(enabled = enabled, onClick = onClick)
             .dim(if (enabled) 1f else 0.35f)
             .padding(horizontal = 24.dp, vertical = 14.dp),
+        color = if (danger) MaterialTheme.colorScheme.error else Color.Unspecified,
         style = MaterialTheme.typography.bodyLarge,
     )
 }
@@ -383,7 +423,8 @@ fun CorrectDialog(song: Song, onDone: () -> Unit) {
         title = { Text("Correct romanization") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                named.forEachIndexed { i, (what, t) -> Choice("$what: ${t.original}", field == i) { field = i } }
+                GroupLabel("Name")
+                named.forEachIndexed { i, (what, t) -> Choice("$what: ${t.original}", field == i, modifier = onEdge) { field = i } }
                 if (words.size > 1) {
                     Text("Or one word's reading:", style = MaterialTheme.typography.bodySmall)
                     androidx.compose.foundation.layout.FlowRow {
@@ -392,10 +433,10 @@ fun CorrectDialog(song: Song, onDone: () -> Unit) {
                         }
                     }
                 }
-                HorizontalDivider()
-                Choice("Only this song", scope == "song") { scope = "song" }
-                Choice("This artist's songs", scope == "artist", enabled = s.firstArtistId != null) { scope = "artist" }
-                Choice("Everywhere", scope == "text") { scope = "text" }
+                GroupLabel("Applies to")
+                Choice("Only this song", scope == "song", modifier = onEdge) { scope = "song" }
+                Choice("This artist's songs", scope == "artist", enabled = s.firstArtistId != null, modifier = onEdge) { scope = "artist" }
+                Choice("Everywhere", scope == "text", modifier = onEdge) { scope = "text" }
                 OutlinedTextField(latin, { latin = it }, label = "Latin form (empty: automatic)")
             }
         },
@@ -468,8 +509,8 @@ fun WordDialog(word: String, inContext: String?, songId: String, onDone: () -> U
                     Text("${t.surface}  ${t.kana} · ${t.romaji} · ${t.partOfSpeech}$base", style = MaterialTheme.typography.bodySmall, color = dim)
                 }
                 OutlinedTextField(latin, { latin = it }, Modifier.padding(top = 8.dp), singleLine = true, label = "Reading (empty: automatic)")
-                Choice("In this song", !everywhere) { everywhere = false }
-                Choice("Everywhere: every song, title and line", everywhere) { everywhere = true }
+                Choice("In this song", !everywhere, modifier = onEdge) { everywhere = false }
+                Choice("Everywhere: every song, title and line", everywhere, modifier = onEdge) { everywhere = true }
             }
         },
         confirmButton = { TextButton(onClick = { save(latin) }) { Text("Save") } },
@@ -499,11 +540,12 @@ fun TextInputDialog(title: String, initial: String, onDone: () -> Unit, onSave: 
     )
 }
 
+/** A radio button row. In a dialog, [modifier] can shift it so the circle, not its padding, sits on the text's edge. */
 @Composable
-internal fun Choice(label: String, selected: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
+internal fun Choice(label: String, selected: Boolean, enabled: Boolean = true, modifier: Modifier = Modifier, onClick: () -> Unit) {
     // The row is the one radio button TalkBack sees, with its label.
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
             .selectable(selected, enabled, role = androidx.compose.ui.semantics.Role.RadioButton, onClick = onClick)
             .dim(if (enabled) 1f else 0.4f)
@@ -514,6 +556,9 @@ internal fun Choice(label: String, selected: Boolean, enabled: Boolean = true, o
         Text(label)
     }
 }
+
+/** Moves a dialog's radio rows left by the button's padding, so the circles line up with the dialog's text. */
+private val onEdge = Modifier.offset(x = (-12).dp)
 
 /** A loaded page, when it was fetched, and with which [Store.dataVersion]. */
 private class Kept(val value: Any, val at: Long, val dataVersion: Int)
@@ -616,9 +661,56 @@ fun Modifier.dim(alpha: Float) = graphicsLayer {
     compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
 }
 
+/** A section's label in a list: settings groups, search sections, the queue, an artist's songs and albums. */
 @Composable
 internal fun Header(text: String) {
-    Text(text, Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp), style = MaterialTheme.typography.titleMedium)
+    Text(
+        text,
+        Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp),
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+    )
+}
+
+/** A group's label inside a dialog, in the same style as [Header]. */
+@Composable
+internal fun GroupLabel(text: String) {
+    Text(
+        text,
+        Modifier.padding(top = 12.dp, bottom = 2.dp),
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+    )
+}
+
+/**
+ * The top of a page opened on a tab's stack: a back arrow and, for a settings page, its title. Album, artist and
+ * playlist pages show their title in their own header below it.
+ */
+@Composable
+fun PageBar(title: String?) {
+    Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = { Nav.back() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+        if (title != null) {
+            Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/** A settings page's title, shown in its [PageBar]. Other pages have none there. */
+@Composable
+fun pageTitle(p: Page): String? {
+    if (p.kind != "settings") return null
+    return when (p.id) {
+        "source" -> backend.settingsTitle
+        "appearance" -> "Appearance"
+        "romanization" -> "Romanization"
+        "corrections" -> "Corrections"
+        "lyrics" -> "Lyrics"
+        "playback" -> "Queue and radio"
+        "banned" -> "Banned"
+        else -> "Last.fm"
+    }
 }
 
 private const val MIX_PAGES = 10
@@ -903,7 +995,8 @@ fun HomeScreen() {
         LazyColumn(Modifier.fillMaxSize(), Home.list) {
             // A library's shelves don't change from start to start, so on a server they follow the tiles at once.
             item(key = "mixes") {
-                Column(if (backend.mixes) Modifier.heightIn(min = height) else Modifier) {
+                // Signed out, the hint is short, and YouTube's shelves follow it at once.
+                Column(if (backend.mixes && backend.libraryReady) Modifier.heightIn(min = height) else Modifier) {
                     Text(
                         if (backend.mixes) "Your mixes" else "Your library",
                         Modifier.padding(start = 16.dp, top = 16.dp),
@@ -917,7 +1010,8 @@ fun HomeScreen() {
                 Box(Modifier.padding(start = 16.dp, top = 16.dp)) {
                     Name(sec.title, Store.listMode, MaterialTheme.typography.titleMedium)
                 }
-                LazyRow {
+                // The cards' own 6 dp and this 10 dp put the first picture at 16 dp, under the shelf's title.
+                LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp)) {
                     items(sec.items) { item -> Card(item) { openItem(item) } }
                 }
             }
@@ -992,8 +1086,9 @@ fun SearchScreen() {
         // The filters keep a fixed order, and videos are left out on purpose. With a large system font they wrap onto a
         // second line, in the same order, instead of squeezing the last one into a column of letters.
         androidx.compose.foundation.layout.FlowRow(
-            Modifier.padding(horizontal = 12.dp),
+            Modifier.padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             FILTERS.forEachIndexed { i, label ->
                 val onClick = {
@@ -1066,7 +1161,7 @@ fun SearchScreen() {
             ) { found ->
                 val songThumbs = local.map { it.thumb } + found.items.filter { it.song != null }.map { it.thumb }
                 PrefetchCovers(songThumbs, 48.dp)
-                PrefetchCovers(found.items.filter { it.song == null }.map { it.thumb }, 56.dp)
+                PrefetchCovers(found.items.filter { it.song == null }.map { it.thumb }, 48.dp)
                 LaunchedEffect(found) {
                     val topFound = listOfNotNull(found.items.firstOrNull()?.playable)
                     val likely = (local.take(1) + topFound).distinctBy { it.id }
@@ -1152,7 +1247,7 @@ fun LibraryScreen() {
         return
     }
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    val tabs = listOf("Playlists", "Albums", "Artists")
+    val tabs = source.libraryTabs
     Column(Modifier.fillMaxSize()) {
         TabRow(tab) {
             tabs.forEachIndexed { i, label ->
@@ -1167,8 +1262,8 @@ fun LibraryScreen() {
             { items -> items.map { it.id } },
             ListSerializer(Item.serializer()),
         ) { items ->
-            PrefetchCovers(items.map { it.thumb }, 56.dp, list)
-            if (items.isEmpty()) Centered("Nothing here yet. ${tabs[tab]} you save in ${source.name} show here.")
+            PrefetchCovers(items.map { it.thumb }, 48.dp, list)
+            if (items.isEmpty()) Centered(source.libraryEmpty(tab))
             Box {
                 LazyColumn(Modifier.fillMaxSize(), list) {
                     items(items) { item -> ItemRow(item) { openItem(item) } }
@@ -1198,29 +1293,51 @@ fun PageScreen(p: Page) {
             if (shown) Playback.prepare(d.songs.take(1))
         }
         PrefetchCovers(d.songs.map { it.thumb }, 48.dp, list)
-        PrefetchCovers(d.items.map { it.thumb }, 56.dp)
+        val album = p.kind == "album"
+        Playback.tick
+        val playingId = Playback.shown()?.id
+        PrefetchCovers(d.items.map { it.thumb }, 48.dp)
         Box {
             LazyColumn(Modifier.fillMaxSize(), list) {
                 item {
-                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         val shape = if (p.kind == "artist") CircleShape else RoundedCornerShape(6.dp)
                         Thumb(shownThumb(d.thumb, 96.dp), 96.dp, Modifier.size(96.dp).clip(shape))
                         Spacer(Modifier.width(16.dp))
                         Column(Modifier.weight(1f)) {
                             Name(d.title, Store.listMode, MaterialTheme.typography.titleLarge)
-                            if (d.subtitle.isNotBlank()) Text(d.subtitle, style = MaterialTheme.typography.bodySmall)
+                            val subtitle = listOf(d.subtitle, if (album) totalLength(d.songs) else "")
+                                .filter { it.isNotBlank() }
+                                .joinToString(" · ")
+                            if (subtitle.isNotEmpty()) {
+                                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                             PageButtons(p, d)
                         }
                     }
                 }
+                // An artist's page heads its songs as well as its releases.
+                if (d.songs.isNotEmpty() && d.items.isNotEmpty()) item { Header("Songs") }
+                // An album's own artist is said once, in the header; a track by someone else names them.
+                val albumArtist = if (album) d.songs.groupingBy { it.artistLatin }.eachCount().maxByOrNull { it.value }?.key else null
                 itemsIndexed(d.songs) { i, s ->
-                    SongRow(s, onMenu = { menuFor = s }) {
+                    val disc = d.discs.getOrNull(i)
+                    if (disc != null && disc != d.discs.getOrNull(i - 1) && d.discs.toSet().size > 1) Header("Disc $disc")
+                    SongRow(
+                        s,
+                        highlight = s.id == playingId,
+                        number = if (album) d.tracks.getOrNull(i)?.takeIf { it > 0 } ?: (i + 1) else null,
+                        artist = s.artistLatin != albumArtist,
+                        length = album,
+                        onMenu = { menuFor = s },
+                    ) {
                         Playback.play(d.songs, i)
                         Nav.tab = TAB_PLAYER
                     }
                 }
                 if (d.items.isNotEmpty()) {
-                    item { Header("Albums and more") }
+                    val allAlbums = d.items.all { it.kind == "album" }
+                    item { Header(if (allAlbums) "Albums" else "Albums and more") }
                     items(d.items) { item -> ItemRow(item) { openItem(item) } }
                 }
             }
@@ -1241,12 +1358,14 @@ private fun PageButtons(p: Page, d: Detail) {
     val source = backend
     var state by remember(p) { mutableStateOf<InLibrary?>(null) }
     LaunchedEffect(p) { state = withContext(Dispatchers.IO) { source.saved(p) } }
+    // The first button's text starts where the title above it does.
+    val padding = androidx.compose.foundation.layout.PaddingValues(start = 0.dp, end = 16.dp, top = 8.dp, bottom = 8.dp)
     Row {
         if (d.songs.isNotEmpty()) {
             TextButton(onClick = {
                 playList(p, d.songs)
                 Nav.tab = TAB_PLAYER
-            }) { Text("Play") }
+            }, contentPadding = padding) { Text("Play") }
         }
         val now = state
         if (now != null) {
@@ -1263,13 +1382,27 @@ private fun PageButtons(p: Page, d: Detail) {
                         state = readBack ?: InLibrary(!now.saved)
                     }
                 }
-            }) { Text(if (now.saved) "Remove from library" else "Add to library") }
+            }, contentPadding = padding) {
+                val label = when {
+                    source.stars -> if (now.saved) "Unstar" else "Star"
+                    now.saved -> "Remove from library"
+                    else -> "Add to library"
+                }
+                Text(label)
+            }
         }
     }
     val note = state?.note
     if (note != null) {
         Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
+}
+
+/** An album's length, such as "42 min" or "1 h 5 min", or "" when the songs' lengths aren't known. */
+private fun totalLength(songs: List<Song>): String {
+    if (songs.any { it.durationSec <= 0 }) return ""
+    val minutes = (songs.sumOf { it.durationSec } + 30) / 60
+    return if (minutes < 60) "$minutes min" else "${minutes / 60} h ${minutes % 60} min"
 }
 
 /** Generated playlists (mixes, editorial RD… lists) load more pages as they play. Anything else plays what the page holds. */
@@ -1328,7 +1461,7 @@ fun SettingsScreen() {
 }
 
 @Composable
-private fun Category(id: String, title: String, subtitle: String) = Row1(title, subtitle) { Nav.open(Page("settings", id)) }
+private fun Category(id: String, title: String, subtitle: String) = Row1(title, subtitle, opens = true) { Nav.open(Page("settings", id)) }
 
 /** One category of [SettingsScreen], opened as a page of the Settings tab, so Back returns to the list. */
 @Composable
@@ -1348,7 +1481,6 @@ fun SettingsPage(id: String) {
 
 @Composable
 private fun AppearanceSettings() = LazyColumn(Modifier.fillMaxSize()) {
-    item { Header("Appearance") }
     item { Switch1("Left-handed player controls", "ui.leftHanded", false) }
     item { Switch1("True black in dark mode (saves power on OLED screens)", "ui.trueBlack", false) }
     item { Switch1("Accent colour from the song's artwork", "ui.artColors", false) }
@@ -1356,7 +1488,6 @@ private fun AppearanceSettings() = LazyColumn(Modifier.fillMaxSize()) {
 
 @Composable
 private fun RomanizationSettings() = LazyColumn(Modifier.fillMaxSize()) {
-    item { Header("Romanization") }
     item { Options("Placement", Store.PLACE_KEY, Store.place, PLACES) }
     // Custom placement sets each surface on its own, with the modes a single place can't express (Latin only,
     // original only).
@@ -1374,7 +1505,7 @@ private fun RomanizationSettings() = LazyColumn(Modifier.fillMaxSize()) {
     item {
         val n = Store.romanizer.overrides.size
         val summary = if (n == 0) "None yet · import a file" else "$n · export, import or remove them"
-        Row1("Corrections", summary) { Nav.open(Page("settings", "corrections")) }
+        Row1("Corrections", summary, opens = true) { Nav.open(Page("settings", "corrections")) }
     }
     item { Header("Schemes") }
     if (backend.romanizes) {
@@ -1405,22 +1536,16 @@ private fun RomanizationSettings() = LazyColumn(Modifier.fillMaxSize()) {
     }
     item { Options("Han text without kana is", "rom.han", "ja", listOf("ja" to "Japanese", "zh" to "Chinese")) }
     // Text only in scripts the user reads shows as written, in lists, the player, the notification and lyrics.
-    item {
-        Text(
-            "Scripts you read (shown as written, not romanized)",
-            Modifier.padding(start = 16.dp, top = 8.dp),
-            fontSize = 13.sp,
-            color = MaterialTheme.colorScheme.primary,
-        )
-    }
+    // The same question as the first start, checked meaning romanized; the others show as written.
+    item { Header("Romanize these scripts") }
     items(SCRIPTS) { (k, label) ->
         val read = Store.readScripts
         val rowModifier = Modifier
             .fillMaxWidth()
             .clickable { Store.setReads(k, k !in read) }
-            .padding(horizontal = 16.dp)
+            .padding(start = 5.dp, end = 16.dp)
         Row(rowModifier, verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(k in read, null, Modifier.padding(end = 8.dp))
+            Checkbox(k !in read, null, Modifier.padding(end = 8.dp))
             Text(label)
         }
     }
@@ -1445,7 +1570,6 @@ private fun CorrectionSettings() {
     }
     val corrections = Store.romanizer.overrides
     LazyColumn(Modifier.fillMaxSize()) {
-        item { Header("Corrections") }
         item {
             val what = count(corrections.size, "correction") ?: "corrections"
             Row1("Export $what", "To one file", enabled = corrections.isNotEmpty()) { export() }
@@ -1477,7 +1601,6 @@ private fun CorrectionSettings() {
 
 @Composable
 private fun LyricsSettings() = LazyColumn(Modifier.fillMaxSize()) {
-    item { Header("Lyrics") }
     // At least one of the two stays on, because with neither the lyrics would be blank.
     val original = Store.bool("lyrics.layer.original", true)
     val latin = Store.bool("lyrics.layer.latin", true)
@@ -1485,7 +1608,7 @@ private fun LyricsSettings() = LazyColumn(Modifier.fillMaxSize()) {
     item { Switch1("Show romanization", "lyrics.layer.latin", true, enabled = original || !latin) }
     item {
         val place = PLACES.first { it.first == Store.place }.second.lowercase()
-        Row1("Romanization settings", "Placement: $place · schemes · corrections") {
+        Row1("Romanization settings", "Placement: $place · schemes · corrections", opens = true) {
             Nav.open(Page("settings", "romanization"))
         }
     }
@@ -1517,9 +1640,13 @@ private fun LyricsSettings() = LazyColumn(Modifier.fillMaxSize()) {
     val order = Store.lyricsOrder()
     itemsIndexed(order) { i, p ->
         Row(Modifier.fillMaxWidth().padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("${i + 1}. ${p.name}", Modifier.weight(1f))
-            IconButton(onClick = { move(order, i, -1) }, enabled = i > 0) { Icon(Icons.Default.KeyboardArrowUp, "Move up") }
-            IconButton(onClick = { move(order, i, 1) }, enabled = i < order.size - 1) { Icon(Icons.Default.KeyboardArrowDown, "Move down") }
+            if (order.size > 1) {
+                Text("${i + 1}. ${p.name}", Modifier.weight(1f))
+                IconButton(onClick = { move(order, i, -1) }, enabled = i > 0) { Icon(Icons.Default.KeyboardArrowUp, "Move up") }
+                IconButton(onClick = { move(order, i, 1) }, enabled = i < order.size - 1) { Icon(Icons.Default.KeyboardArrowDown, "Move down") }
+            } else {
+                Text(p.name, Modifier.weight(1f))
+            }
             Switch(Store.lyricsEnabled(p), { on -> Store.set("lyrics.on.${p.id}", on) }, Modifier.padding(end = 16.dp))
         }
     }
@@ -1536,7 +1663,6 @@ private fun LyricsSettings() = LazyColumn(Modifier.fillMaxSize()) {
 
 @Composable
 private fun PlaybackSettings() = LazyColumn(Modifier.fillMaxSize()) {
-    item { Header("Queue and radio") }
     item {
         val leashes = listOf(
             "close" to "Close: same and related artists",
@@ -1578,7 +1704,6 @@ private fun PlaybackSettings() = LazyColumn(Modifier.fillMaxSize()) {
 
 @Composable
 private fun BannedSettings() = LazyColumn(Modifier.fillMaxSize()) {
-    item { Header("Banned") }
     val banned = Store.banned
     if (banned.isEmpty()) {
         item { Text("Nothing banned. Ban a song or artist from a song's ⋯ menu.", Modifier.padding(horizontal = 16.dp)) }
@@ -1594,7 +1719,6 @@ private fun LastFmSettings() {
     // The setting's key and the dialog's title.
     var editing by remember { mutableStateOf<Pair<String, String>?>(null) }
     LazyColumn(Modifier.fillMaxSize()) {
-        item { Header("Last.fm") }
         item {
             val apiKey = Store.str("lastfm.key", "").ifBlank { "Not set" }
             Row1("API key", apiKey) { editing = "lastfm.key" to "Last.fm API key" }
@@ -1719,7 +1843,7 @@ private val SCRIPTS = listOf(
 )
 
 private val PLACES = listOf(
-    "below" to "Under the original",
+    "below" to "On its own line",
     "above" to "Above each word, like furigana",
     "custom" to "Differently in lists, the player and lyrics",
 )
@@ -1738,16 +1862,34 @@ private fun move(order: List<roma.core.LyricsProvider>, i: Int, by: Int) {
     Store.set("lyrics.order", list.joinToString(",") { it.id })
 }
 
+/**
+ * A settings row: a title and what it holds. One that [opens] a page ends in a chevron. A " · " list in the subtitle
+ * wraps before a dot, never after it.
+ */
 @Composable
-internal fun Row1(title: String, subtitle: String, enabled: Boolean = true, onClick: () -> Unit) {
+internal fun Row1(title: String, subtitle: String, enabled: Boolean = true, opens: Boolean = false, onClick: () -> Unit) {
     val rowModifier = Modifier
         .fillMaxWidth()
         .clickable(enabled = enabled, onClick = onClick)
         .dim(if (enabled) 1f else 0.4f)
         .padding(horizontal = 16.dp, vertical = 10.dp)
-    Column(rowModifier) {
-        Text(title)
-        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Row(rowModifier, verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title)
+            Text(
+                subtitle.replace(" · ", "\u00A0· "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (opens) {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                null,
+                Modifier.padding(start = 8.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -1775,11 +1917,15 @@ internal fun Switch1(title: String, key: String, def: Boolean, enabled: Boolean 
     }
 }
 
+/**
+ * A group of choices under its label. The radio buttons' circles sit on the same 16 dp edge as the label and as
+ * checkboxes and other rows' text: the button's own 12 dp of padding takes most of it.
+ */
 @Composable
 internal fun Options(title: String, key: String, def: String, options: List<Pair<String, String>>) {
     val value = Store.str(key, def)
-    Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-        Text(title, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+    Header(title)
+    Column(Modifier.padding(start = 4.dp, end = 16.dp)) {
         options.forEach { (v, label) -> Choice(label, value == v) { Store.set(key, v) } }
     }
 }

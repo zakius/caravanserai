@@ -331,9 +331,15 @@ class SubsonicClient(url: String, val user: String, private val password: String
         return playlist to songs
     }
 
-    fun starredSongs(): List<SubSong> {
-        val starred = call("getStarred2")["starred2"].obj()
-        return starred?.get("song").arr().orEmpty().mapNotNull { song(it, romanization) }
+    fun starredSongs(): List<SubSong> = starred().first
+
+    /** Everything starred (getStarred2): songs, albums and artists. */
+    fun starred(): Triple<List<SubSong>, List<SubAlbum>, List<SubArtist>> {
+        val r = call("getStarred2")["starred2"].obj()
+        val songs = r?.get("song").arr().orEmpty().mapNotNull { song(it, romanization) }
+        val albums = r?.get("album").arr().orEmpty().mapNotNull { album(it, romanization, oasis) }
+        val artists = r?.get("artist").arr().orEmpty().mapNotNull { artist(it, romanization, oasis) }
+        return Triple(songs, albums, artists)
     }
 
     /** Songs like the song, album or artist [id] (getSimilarSongs takes any of the three). */

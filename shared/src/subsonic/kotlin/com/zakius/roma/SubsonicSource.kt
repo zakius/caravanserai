@@ -348,17 +348,38 @@ object SubsonicSource : Source {
     }
 
     override val libraryReady get() = client != null
-    override val libraryHint = "Add your server in Settings to see its playlists and albums."
+    override val libraryHint = "Add your server in Settings to see its albums and playlists."
     override val libraryHintPage = Page("settings", "source")
-    override fun libraryKey(tab: Int) = "subsonic-$tab"
+    // A server's library is its albums, so they come first.
+    override val libraryTabs = listOf("Albums", "Artists", "Playlists", "Starred")
+    override fun libraryKey(tab: Int) = "subsonic-" + libraryTabs[tab].lowercase()
+    override fun libraryEmpty(tab: Int) = when (libraryTabs[tab]) {
+        "Playlists" -> "No playlists on your server yet."
+        "Starred" -> "Nothing starred yet. Star songs, albums and artists to find them here."
+        else -> "Your server's library is empty."
+    }
 
     override suspend fun library(tab: Int, partial: suspend (List<Item>) -> Unit): List<Item> {
         val l = lib()
-        return when (tab) {
-            0 -> playlists()
-            1 -> l.albums.sortedBy { it.title.latin.lowercase() }
-            else -> l.artists.sortedBy { it.title.latin.lowercase() }
+        return when (libraryTabs[tab]) {
+            "Albums" -> l.albums.sortedBy { it.title.latin.lowercase() }
+            "Artists" -> l.artists.sortedBy { it.title.latin.lowercase() }
+            "Playlists" -> playlists()
+            else -> starred(l)
         }
+    }
+
+    /** What is starred: artists, then albums, then songs, each as the library holds it. */
+    private fun starred(l: Library): List<Item> {
+        val r = Store.romanizer
+        val (songs, albums, artists) = need().starred()
+        val artistItems = artists.map { a -> l.artistById[SubsonicIds.encode(a.id)] ?: r.item(a) }
+        val albumItems = albums.map { a -> l.albumById[SubsonicIds.encode(a.id)] ?: r.item(a) }
+        val songItems = songs.map { sub ->
+            val song = l.byId[SubsonicIds.encode(sub.id)] ?: r.song(sub)
+            Item("song", song.id, song.title, song.artistText, song.thumb, song)
+        }
+        return artistItems + albumItems + songItems
     }
 
     // The mixes live in Home's tiles; Playlists holds the rest.
@@ -385,7 +406,9 @@ object SubsonicSource : Source {
                 val year = sub?.year
                 val yearText = if (year != null && year > 0) year.toString() else null
                 val subtitle = listOfNotNull(a?.subtitle?.latin, yearText).joinToString(" · ")
-                Detail(title, subtitle, a?.thumb ?: songs.firstOrNull()?.thumb, songs, emptyList())
+                val discs = songs.map { song -> l.sub(song.id)?.disc ?: 0 }
+                val tracks = songs.map { song -> l.sub(song.id)?.track ?: 0 }
+                Detail(title, subtitle, a?.thumb ?: songs.firstOrNull()?.thumb, songs, emptyList(), discs, tracks)
             }
             "playlist" -> {
                 val (pl, subs) = need().playlist(SubsonicIds.decode(p.id))
@@ -483,6 +506,7 @@ object SubsonicSource : Source {
     override val likedId = STARRED
 
     override val canLike get() = client != null
+    override val stars = true
     override fun like(id: String, like: Boolean) = runCatching { need().star(SubsonicIds.decode(id), like) }.isSuccess
     override fun liked(id: String) = runCatching { need().song(SubsonicIds.decode(id)).starred }.getOrNull()
 

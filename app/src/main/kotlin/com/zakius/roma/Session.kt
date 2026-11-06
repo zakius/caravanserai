@@ -184,8 +184,8 @@ class PlaybackService : MediaBrowserService() {
             .setState(state, p.currentPosition, if (p.isPlaying) p.speed else 0f)
             .setActions(actions)
         if (Playback.canLike(Playback.current()?.song)) {
-            val likeLabel = if (liked) "Unlike" else "Like"
-            val likeIcon = if (liked) R.drawable.thumb_up else R.drawable.thumb_up_outline
+            val likeLabel = likeAction(liked)
+            val likeIcon = likeDrawable(liked)
             playback.addCustomAction(PlaybackState.CustomAction.Builder(LIKE, likeLabel, likeIcon).build())
         }
         session.setPlaybackState(playback.build())
@@ -274,8 +274,8 @@ class PlaybackService : MediaBrowserService() {
             .addAction(action(R.drawable.next, "Next", KeyEvent.KEYCODE_MEDIA_NEXT))
             .setStyle(Notification.MediaStyle().setMediaSession(session.sessionToken).setShowActionsInCompactView(0, 1, 2))
         if (Playback.canLike(Playback.current()?.song)) {
-            val likeIcon = if (liked) R.drawable.thumb_up else R.drawable.thumb_up_outline
-            val likeLabel = if (liked) "Unlike" else "Like"
+            val likeIcon = likeDrawable(liked)
+            val likeLabel = likeAction(liked)
             val onTap = PendingIntent.getBroadcast(this, 1, Intent(LIKE).setClass(this, MediaButtons::class.java), PendingIntent.FLAG_IMMUTABLE)
             val iconImage = android.graphics.drawable.Icon.createWithResource(this, likeIcon)
             b.addAction(Notification.Action.Builder(iconImage, likeLabel, onTap).build())
@@ -350,3 +350,10 @@ class MediaButtons : BroadcastReceiver() {
  * only its romanized form.
  */
 fun artistLine(s: roma.core.Song) = if (s.title.isLatin || Store.reads(s.title.original)) s.artistLatin else "${s.artistLatin} · ${s.title.original}"
+
+/** The notification's like button: a thumb, or a star on a source that stars. */
+private fun likeDrawable(liked: Boolean) = when {
+    backend.stars -> if (liked) R.drawable.star else R.drawable.star_outline
+    liked -> R.drawable.thumb_up
+    else -> R.drawable.thumb_up_outline
+}

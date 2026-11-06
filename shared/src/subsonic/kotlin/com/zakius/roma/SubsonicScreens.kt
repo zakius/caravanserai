@@ -39,7 +39,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.ThumbUp
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
@@ -138,7 +138,7 @@ internal fun LibraryTiles(mixes: List<Item>) {
                 } else {
                     Drawn {
                         if (id == SubsonicSource.STARRED) {
-                            Icon(Icons.Filled.ThumbUp, null, Modifier.size(side / 3), tint = tint)
+                            Icon(Icons.Filled.Star, null, Modifier.size(side / 3), tint = tint)
                         } else {
                             val shuffle = androidx.compose.ui.res.painterResource(R.drawable.shuffle)
                             Icon(shuffle, null, Modifier.size(side / 3), tint = tint)
@@ -156,8 +156,7 @@ internal fun ServerSettings() {
     // Read through Store, so connecting redraws the page.
     val configured = Store.str("subsonic.url", "").isNotBlank()
     LazyColumn(Modifier.fillMaxSize()) {
-        item { Header("Server") }
-        item { ServerForm(if (!configured) "Connect" else "Save") {} }
+        item { ServerForm(if (!configured) "Connect" else "Save", Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {} }
         if (!configured) return@LazyColumn
         if (Store.str("subsonic.url", "").startsWith("http://")) item {
             Text(
@@ -184,15 +183,18 @@ internal fun ServerSettings() {
             Row1("Sync now", state, enabled = !SubsonicSource.syncing) { SubsonicSource.sync() }
         }
         item {
-            val serverNote = if (!SubsonicSource.lastFmDefault) {
-                "The server says it scrobbles to Last.fm itself, so this starts off"
-            } else {
-                "Turn this off if the server scrobbles to Last.fm itself"
+            // Without a Last.fm connection there is nothing to scrobble to, so the switch is dimmed and says so.
+            val connected = Store.str("lastfm.session", "").isNotBlank()
+            val serverNote = when {
+                !connected -> "Connect Last.fm in Settings → Last.fm first"
+                !SubsonicSource.lastFmDefault -> "The server says it scrobbles to Last.fm itself, so this starts off"
+                else -> "Turn this off if the server scrobbles to Last.fm itself"
             }
             Switch1(
                 "Also scrobble to Last.fm from ${BuildConfig.APP_NAME}",
                 "subsonic.lastfm",
                 SubsonicSource.lastFmDefault,
+                enabled = connected,
                 subtitle = "${BuildConfig.APP_NAME} always tells the server. " + serverNote,
             )
         }
@@ -214,7 +216,8 @@ internal fun ServerSetup() {
             Modifier.padding(top = 8.dp, bottom = 16.dp),
             style = MaterialTheme.typography.bodyMedium,
         )
-        ServerForm("Continue") {}
+        // On the screen's own 24 dp edge, like the heading above it.
+        ServerForm("Continue", Modifier) {}
     }
 }
 
@@ -225,16 +228,18 @@ internal fun ServerSetup() {
  * network, the form says so and connects over http only on a second tap.
  */
 @Composable
-internal fun ServerForm(action: String, onConnected: () -> Unit) {
+internal fun ServerForm(action: String, modifier: Modifier, onConnected: () -> Unit) {
     var url by rememberSaveable { mutableStateOf(Store.str("subsonic.url", "")) }
     var user by rememberSaveable { mutableStateOf(Store.str("subsonic.user", "")) }
     var password by rememberSaveable { mutableStateOf(Store.str("subsonic.password", "")) }
     var status by remember { mutableStateOf<String?>(null) }
+    // A failure or a warning, shown in the error colour; "Connecting…" isn't.
+    var statusIsProblem by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     // The http address found when https failed, until the user agrees to it or edits the address.
     var plain by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedTextField(
             url,
             { typed ->
@@ -248,9 +253,11 @@ internal fun ServerForm(action: String, onConnected: () -> Unit) {
         )
         OutlinedTextField(user, { user = it }, Modifier.fillMaxWidth(), singleLine = true, label = "User")
         OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), singleLine = true, label = "Password", password = true)
-        Button(enabled = !busy && url.isNotBlank(), onClick = {
+        // At the end, as on the scripts step after it.
+        Button(enabled = !busy && url.isNotBlank(), modifier = Modifier.align(Alignment.End), onClick = {
             busy = true
             status = "Connecting…"
+            statusIsProblem = false
             scope.launch {
                 val typed = url.trim()
                 val r = withContext(Dispatchers.IO) {
@@ -272,6 +279,7 @@ internal fun ServerForm(action: String, onConnected: () -> Unit) {
                 r.onSuccess { c ->
                     if (c == null) {
                         plain = "http://$typed"
+                        statusIsProblem = true
                         status = "This server has no https. Over plain http, your music and a token made from your password cross the network unencrypted: fine on your own network, not elsewhere."
                         return@onSuccess
                     }
@@ -287,11 +295,17 @@ internal fun ServerForm(action: String, onConnected: () -> Unit) {
                     status = null
                     onConnected()
                     SubsonicSource.sync()
-                }.onFailure { status = serverError(it) }
+                }.onFailure {
+                    statusIsProblem = true
+                    status = serverError(it)
+                }
             }
         }) { Text(if (plain != null) "Connect over http" else action) }
         val shownStatus = status
-        if (shownStatus != null) Text(shownStatus, style = MaterialTheme.typography.bodySmall)
+        if (shownStatus != null) {
+            val color = if (statusIsProblem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+            Text(shownStatus, style = MaterialTheme.typography.bodySmall, color = color)
+        }
     }
 }
 

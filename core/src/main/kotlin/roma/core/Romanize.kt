@@ -242,7 +242,15 @@ class Romanizer(
             }
             words.map { punctuation(it.toString()) }.toMutableList()
         }
-        val first = out.indexOfFirst { it.isNotBlank() }
+        // Each part's punctuation was turned into Latin on its own, so a 、 or 。 that ends a part gets its space here,
+        // before the next part's word ("kotae wa," | "itsu?" reads "kotae wa, itsu?").
+        for (k in 0 until out.size - 1) {
+            val endsClause = norm[k].trimEnd().lastOrNull() in CLAUSE_ENDS
+            val nextWord = out[k + 1].firstOrNull()?.isLetterOrDigit() == true
+            if (endsClause && nextWord && !out[k].endsWith(' ')) out[k] = out[k] + " "
+        }
+        // The line's first letter, which may come after a part with none (an opening 「 karaoke times on its own).
+        val first = out.indexOfFirst { part -> part.any(Char::isLetter) }
         if (first >= 0) out[first] = capFirst(norm[first], out[first])
         return parts.indices.map { i ->
             val partOverride = override.firstOrNull { it.original == parts[i].trim() }
@@ -1062,6 +1070,9 @@ class Romanizer(
             return Character.UnicodeScript.LATIN in scripts &&
                 (Character.UnicodeScript.GREEK in scripts || Character.UnicodeScript.CYRILLIC in scripts)
         }
+
+        /** Japanese clause and sentence ends, which take a space after them in Latin. */
+        private val CLAUSE_ENDS = setOf('、', '。')
 
         // Turns 、。「」『』・～ into Latin punctuation. ・ becomes a space only between words, so (´・ω・`) keeps it.
         private fun punctuation(s: String): String = s
