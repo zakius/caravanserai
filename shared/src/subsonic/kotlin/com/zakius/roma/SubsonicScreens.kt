@@ -192,16 +192,17 @@ internal fun ServerSettings() {
     // Read through Store, so connecting redraws the page.
     val configured = Store.str("subsonic.url", "").isNotBlank()
     LazyColumn(Modifier.fillMaxSize()) {
-        item { ServerForm(if (!configured) "Connect" else "Save", Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {} }
-        if (!configured) return@LazyColumn
+        // The plain-http warning is about the address, so it comes before the form, not under its button.
         if (Store.str("subsonic.url", "").startsWith("http://")) item {
             Text(
                 "Not encrypted: plain http sends your music and a token made from your password as they are. Fine on your own network only.",
-                Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
             )
         }
+        item { ServerForm(if (!configured) "Connect" else "Save", Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {} }
+        if (!configured) return@LazyColumn
         item {
             // Reading changes redraws this row when the library changes.
             SubsonicSource.changes

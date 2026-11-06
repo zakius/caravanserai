@@ -29,6 +29,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.zIndex
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.unit.dp
@@ -81,6 +83,8 @@ object Nav {
      * back to its first screen.
      */
     fun select(t: Int) {
+        // Home tapped on Home also goes back to its top.
+        if (t == tab && t == TAB_HOME && stacks[t].isEmpty()) Home.list.requestScrollToItem(0)
         if (t == tab) stacks[t].clear()
         tab = t
     }
@@ -97,6 +101,23 @@ object Nav {
 
     fun leavePlayer() {
         tab = if (before != TAB_PLAYER) before else TAB_HOME
+    }
+}
+
+/**
+ * Why a dimmed control is off, said for 2.5 s at the top of the screen when it is tapped. A system toast would sit
+ * over the player's controls, and Android no longer lets an app move one.
+ */
+object Why {
+    var text by mutableStateOf<String?>(null)
+        private set
+    private var shownAt = 0L
+
+    fun say(t: String) {
+        text = t
+        val at = uptimeMillis()
+        shownAt = at
+        postMain(2_500) { if (shownAt == at) text = null }
     }
 }
 
@@ -317,6 +338,7 @@ fun Root() {
     val sides = WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
     Column(Modifier.fillMaxSize().windowInsetsPadding(sides).imePadding()) {
         Box(Modifier.weight(1f)) {
+            WhyNote()
             for (t in visited) androidx.compose.runtime.key(t) {
                 Box(if (t == tab) Modifier.fillMaxSize() else Modifier.hidden()) {
                     val tabStack = Nav.stacks[t]
@@ -354,6 +376,24 @@ fun Root() {
         // (48 dp), with an icon and a small label but no pill, so the player's controls get the height.
         FixedRowsFont { NavBar(tab, loaded) }
     }
+}
+
+/** [Why]'s note: a pill at the top of the screen, over the content and clear of every control below. */
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.WhyNote() {
+    val t = Why.text ?: return
+    Text(
+        t,
+        Modifier
+            .align(androidx.compose.ui.Alignment.TopCenter)
+            .zIndex(1f)
+            .padding(top = 8.dp, start = 16.dp, end = 16.dp)
+            .background(MaterialTheme.colorScheme.inverseSurface, androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        color = MaterialTheme.colorScheme.inverseOnSurface,
+        style = MaterialTheme.typography.bodyMedium,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+    )
 }
 
 @Composable
@@ -408,7 +448,7 @@ private fun androidx.compose.foundation.layout.RowScope.NavItem(
                 enabled = enabled || whyOff != null,
                 role = androidx.compose.ui.semantics.Role.Tab,
                 // A dimmed tab with [whyOff] says why it is off.
-                onClick = if (enabled) onClick else ({ toast(whyOff!!) }),
+                onClick = if (enabled) onClick else ({ Why.say(whyOff!!) }),
             )
             .dim(if (enabled) 1f else 0.35f),
         horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
@@ -457,6 +497,30 @@ val QueueIcon by lazy {
     icon(
         "queue",
         "M15,6H3v2h12V6zM15,10H3v2h12v-2zM3,16h8v-2H3V16zM17,6v8.18C16.69,14.07 16.35,14 16,14c-1.66,0 -3,1.34 -3,3s1.34,3 3,3 3,-1.34 3,-3V8h3V6H17z",
+    )
+}
+
+/** Radio: Material's "radio". */
+val RadioIcon by lazy {
+    icon(
+        "radio",
+        "M3.24,6.15C2.51,6.43 2,7.17 2,8v12c0,1.1 0.89,2 2,2h16c1.11,0 2,-0.9 2,-2V8c0,-1.11 -0.89,-2 -2,-2H8.3l8.26,-3.34L15.88,1 3.24,6.15zM7,20c-1.66,0 -3,-1.34 -3,-3s1.34,-3 3,-3 3,1.34 3,3 -1.34,3 -3,3zM20,12h-2v-2h-2v2H4V8h16v4z",
+    )
+}
+
+/** Romanize or not: Material's "translate". */
+val ScriptIcon by lazy {
+    icon(
+        "script",
+        "M12.87,15.07l-2.54,-2.51 0.03,-0.03c1.74,-1.94 2.98,-4.17 3.71,-6.53L17,6L17,4h-7L10,2L8,2v2L1,4v1.99h11.17C11.5,7.92 10.44,9.75 9,11.35 8.07,10.32 7.3,9.19 6.69,8h-2c0.73,1.63 1.73,3.17 2.98,4.56l-5.09,5.02L4,19l5,-5 3.11,3.11 0.76,-2.04zM18.5,10h-2L12,22h2l1.12,-3h4.75L21,22h2l-4.5,-12zM15.88,17l1.62,-4.33L19.12,17h-3.24z",
+    )
+}
+
+/** Ban: Material's "block". */
+val BanIcon by lazy {
+    icon(
+        "ban",
+        "M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2zM4,12c0,-4.42 3.58,-8 8,-8 1.85,0 3.55,0.63 4.9,1.69L5.69,16.9C4.63,15.55 4,13.85 4,12zM12,20c-1.85,0 -3.55,-0.63 -4.9,-1.69L18.31,7.1C19.37,8.45 20,10.15 20,12c0,4.42 -3.58,8 -8,8z",
     )
 }
 

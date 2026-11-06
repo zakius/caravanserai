@@ -231,7 +231,11 @@ fun PlayerScreen() {
                                 view == "lyrics",
                                 label = "Lyrics",
                                 state = if (view == "lyrics") "shown" else null,
-                                whyOff = if (lyrics == null) "Still looking for lyrics" else "No lyrics found for this song",
+                                whyOff = when {
+                                    lyrics == null -> "Still looking for lyrics"
+                                    !Playback.online -> "No connection: lyrics are searched again when it's back"
+                                    else -> "No lyrics found for this song"
+                                },
                             ) {
                                 view = if (view == "lyrics") "song" else "lyrics"
                             }
@@ -541,7 +545,7 @@ private fun RowScope.Slot(
                 role = Role.Button,
                 onLongClick = if (enabled) onLongClick else null,
                 onLongClickLabel = longClickLabel,
-                onClick = if (enabled) onClick else ({ toast(whyOff!!) }),
+                onClick = if (enabled) onClick else ({ Why.say(whyOff!!) }),
             )
             .semantics {
                 val shownState = if (enabled) state else "unavailable"
@@ -1037,7 +1041,12 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
     LaunchedEffect(current) { if (current > 2) state.animateScrollToItem(current - 2) }
     // Lines scroll out below the chips' strip (Translate, the sleep timer), so a chip never covers one.
     Box {
-        LazyColumn(Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, top = CHIP_STRIP), state = state) {
+        // The first line starts below the top fade, so at rest no line is under it.
+        LazyColumn(
+            Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, top = CHIP_STRIP),
+            state = state,
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 24.dp),
+        ) {
             itemsIndexed(lines) { i, line ->
                 val active = i == current
                 // The other lines keep about 5:1 contrast. The words still to come in the current line have the same
