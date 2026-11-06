@@ -98,7 +98,14 @@ import roma.core.song
  */
 @Composable
 internal fun LibraryTiles(mixes: List<Item>) {
-    val (cols, _, side) = mixGrid(screenSizeDp().width, mixes.size)
+    // Three to a row; with no mixes, the two drawn tiles share the row between them instead of leaving a third empty.
+    val width = screenSizeDp().width
+    val (cols, side) = if (mixes.isEmpty()) {
+        2 to ((width - 16 * 2 - 12) / 2).dp
+    } else {
+        val grid = mixGrid(width, mixes.size)
+        grid.first to grid.third
+    }
     val tint = MaterialTheme.colorScheme.onSecondaryContainer
     @Composable
     fun Tile(title: String, id: String, picture: @Composable () -> Unit) = Column(
@@ -253,6 +260,12 @@ internal fun ServerForm(action: String, modifier: Modifier, onConnected: () -> U
         )
         OutlinedTextField(user, { user = it }, Modifier.fillMaxWidth(), singleLine = true, label = "User")
         OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), singleLine = true, label = "Password", password = true)
+        // What went wrong sits under the fields it is about, above the button.
+        val shownStatus = status
+        if (shownStatus != null) {
+            val color = if (statusIsProblem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+            Text(shownStatus, style = MaterialTheme.typography.bodySmall, color = color)
+        }
         // At the end, as on the scripts step after it.
         Button(enabled = !busy && url.isNotBlank(), modifier = Modifier.align(Alignment.End), onClick = {
             busy = true
@@ -301,11 +314,6 @@ internal fun ServerForm(action: String, modifier: Modifier, onConnected: () -> U
                 }
             }
         }) { Text(if (plain != null) "Connect over http" else action) }
-        val shownStatus = status
-        if (shownStatus != null) {
-            val color = if (statusIsProblem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
-            Text(shownStatus, style = MaterialTheme.typography.bodySmall, color = color)
-        }
     }
 }
 

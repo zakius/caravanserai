@@ -76,6 +76,15 @@ object Nav {
         stacks[tab].add(p)
     }
 
+    /**
+     * A tap on a tab in the nav bar: another tab is shown as it was left, pages included; a tap on the shown tab goes
+     * back to its first screen.
+     */
+    fun select(t: Int) {
+        if (t == tab) stacks[t].clear()
+        tab = t
+    }
+
     /** Back: closes the top page, else leaves the player for the tab before it, else goes Home. */
     fun back() {
         val stack = stacks[tab]
@@ -355,24 +364,14 @@ private fun NavBar(tab: Int, loaded: Boolean) {
         .navigationBarsPadding()
         .height(48.dp)
     androidx.compose.foundation.layout.Row(barModifier) {
-        NavItem("Home", Icons.Default.Home, tab == TAB_HOME, true) {
-            Nav.tab = TAB_HOME
-            Nav.stacks[TAB_HOME].clear()
-        }
-        NavItem("Search", Icons.Default.Search, tab == TAB_SEARCH, true) {
-            Nav.tab = TAB_SEARCH
-            Nav.stacks[TAB_SEARCH].clear()
-        }
+        NavItem("Home", Icons.Default.Home, tab == TAB_HOME, true) { Nav.select(TAB_HOME) }
+        NavItem("Search", Icons.Default.Search, tab == TAB_SEARCH, true) { Nav.select(TAB_SEARCH) }
         NavItem("Player", PlayerTabIcon, tab == TAB_PLAYER, loaded) {
             Nav.tab = TAB_PLAYER
         }
-        NavItem("Library", LibraryIcon, tab == TAB_LIBRARY, true) {
-            Nav.tab = TAB_LIBRARY
-            Nav.stacks[TAB_LIBRARY].clear()
-        }
+        NavItem("Library", LibraryIcon, tab == TAB_LIBRARY, true) { Nav.select(TAB_LIBRARY) }
         NavItem("Settings", Icons.Default.Settings, tab == TAB_SETTINGS, true, dot = Update.available != null) {
-            Nav.tab = TAB_SETTINGS
-            Nav.stacks[TAB_SETTINGS].clear()
+            Nav.select(TAB_SETTINGS)
         }
     }
 }

@@ -38,6 +38,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
@@ -237,11 +238,12 @@ internal fun Card(item: Item, onClick: () -> Unit) {
         Spacer(Modifier.height(4.dp))
         Name(item.title, Store.listMode, MaterialTheme.typography.bodyMedium)
         if (item.subtitle.latin.isNotBlank()) {
+            val large = LocalDensity.current.fontScale > 1.3f
             Text(
                 item.subtitle.latin,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
+                maxLines = if (large) 2 else 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
@@ -285,7 +287,12 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
         Column(Modifier.padding(bottom = 24.dp)) {
             Column(Modifier.padding(horizontal = 24.dp)) {
                 Name(s.title, "both", MaterialTheme.typography.titleMedium)
-                Text(s.artistLatin, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    s.artistLatin,
+                    Modifier.padding(top = 2.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             Spacer(Modifier.height(8.dp))
             HorizontalDivider()
@@ -441,7 +448,7 @@ fun CorrectDialog(song: Song, onDone: () -> Unit) {
             }
         },
         confirmButton = {
-            TextButton(onClick = {
+            Button(onClick = {
                 val id = when (scope) {
                     "song" -> s.id
                     "artist" -> s.firstArtistId ?: ""
@@ -513,7 +520,7 @@ fun WordDialog(word: String, inContext: String?, songId: String, onDone: () -> U
                 Choice("Everywhere: every song, title and line", everywhere, modifier = onEdge) { everywhere = true }
             }
         },
-        confirmButton = { TextButton(onClick = { save(latin) }) { Text("Save") } },
+        confirmButton = { Button(onClick = { save(latin) }) { Text("Save") } },
         dismissButton = {
             Row {
                 TextButton(onClick = { save(word) }) { Text("Keep original") }
@@ -549,7 +556,7 @@ internal fun Choice(label: String, selected: Boolean, enabled: Boolean = true, m
             .fillMaxWidth()
             .selectable(selected, enabled, role = androidx.compose.ui.semantics.Role.RadioButton, onClick = onClick)
             .dim(if (enabled) 1f else 0.4f)
-            .padding(vertical = 2.dp),
+            .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         RadioButton(selected, null)
@@ -588,9 +595,8 @@ private fun <T : Any> Loader(
     list: LazyListState? = null,
     rows: ((T) -> List<Any?>)? = null,
     disk: KSerializer<T>? = null,
-    loading: @Composable () -> Unit = {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-    },
+    failedTitle: String = "Couldn't load this page.",
+    loading: @Composable () -> Unit = { Loading() },
     content: @Composable (T) -> Unit,
 ) {
     @Suppress("UNCHECKED_CAST")
@@ -637,14 +643,8 @@ private fun <T : Any> Loader(
     val f = failed
     val r = shown
     when {
-        f != null -> Column(
-            Modifier.fillMaxSize().padding(24.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text("Couldn't load this page.", textAlign = TextAlign.Center)
-            Text(f, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
-            TextButton(onClick = { attempt++ }) { Text("Retry") }
+        f != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Failed(failedTitle, f) { attempt++ }
         }
         r == null -> loading()
         else -> content(r)
@@ -689,7 +689,8 @@ internal fun GroupLabel(text: String) {
  */
 @Composable
 fun PageBar(title: String?) {
-    Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+    // At least 48 dp, taller when a large font needs it, so the title never runs over the page below.
+    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = { Nav.back() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
         if (title != null) {
             Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -992,23 +993,21 @@ fun HomeScreen() {
             val byPosition = Home.sections.flatMap { it.items.withIndex() }.sortedBy { it.index }
             PrefetchCovers(byPosition.map { it.value.thumb }, 128.dp, near = 40)
         }
-        LazyColumn(Modifier.fillMaxSize(), Home.list) {
+        LazyColumn(Modifier.fillMaxSize(), Home.list, contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 16.dp)) {
             // A library's shelves don't change from start to start, so on a server they follow the tiles at once.
             item(key = "mixes") {
                 // Signed out, the hint is short, and YouTube's shelves follow it at once.
                 Column(if (backend.mixes && backend.libraryReady) Modifier.heightIn(min = height) else Modifier) {
-                    Text(
-                        if (backend.mixes) "Your mixes" else "Your library",
-                        Modifier.padding(start = 16.dp, top = 16.dp),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
+                    Header(if (backend.mixes) "Your mixes" else "Your library")
                     backend.HomeTiles(Home.mixes, Home.mixesRead)
                 }
             }
             if (!shelves) return@LazyColumn
             items(Home.sections) { sec ->
-                Box(Modifier.padding(start = 16.dp, top = 16.dp)) {
-                    Name(sec.title, Store.listMode, MaterialTheme.typography.titleMedium)
+                // Shelf titles are section labels like every other list's, in the same style.
+                val label = MaterialTheme.typography.titleSmall.copy(color = MaterialTheme.colorScheme.primary)
+                Box(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp)) {
+                    Name(sec.title, Store.listMode, label)
                 }
                 // The cards' own 6 dp and this 10 dp put the first picture at 16 dp, under the shelf's title.
                 LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp)) {
@@ -1018,14 +1017,7 @@ fun HomeScreen() {
             item(key = "end") {
                 val f = Home.failed
                 when {
-                    f != null -> Column(
-                        Modifier.fillMaxWidth().padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Text("Couldn't load Home.", textAlign = TextAlign.Center)
-                        Text(f, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
-                        TextButton(onClick = { Home.start() }) { Text("Retry") }
-                    }
+                    f != null -> Failed("Couldn't load Home.", f) { Home.start() }
                     Home.more -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator()
                     }
@@ -1075,14 +1067,36 @@ fun SearchScreen() {
         focusManager.clearFocus()
     }
     val source = backend
+    // A source that searches its own index (Subsonic) answers as you type; others search on Enter.
+    if (source.searchIsLocal) {
+        LaunchedEffect(query) {
+            delay(300)
+            if (query.trim() != submitted) {
+                submitted = query.trim()
+                asTyped = null
+            }
+        }
+    }
     Column(Modifier.fillMaxSize()) {
-        OutlinedTextField(
-            query, { query = it },
-            Modifier.fillMaxWidth().padding(12.dp).focusRequester(focus),
-            placeholder = "Songs, albums, artists",
-            singleLine = true,
-            onSearch = { search(query) },
-        )
+        Box(Modifier.fillMaxWidth().padding(12.dp)) {
+            OutlinedTextField(
+                query, { query = it },
+                Modifier.fillMaxWidth().focusRequester(focus),
+                placeholder = "Songs, albums, artists",
+                singleLine = true,
+                onSearch = { search(query) },
+            )
+            if (query.isNotEmpty()) {
+                IconButton(
+                    onClick = {
+                        query = ""
+                        submitted = ""
+                        focus.requestFocus()
+                    },
+                    Modifier.align(Alignment.CenterEnd),
+                ) { Icon(Icons.Default.Clear, "Clear") }
+            }
+        }
         // The filters keep a fixed order, and videos are left out on purpose. With a large system font they wrap onto a
         // second line, in the same order, instead of squeezing the last one into a column of letters.
         androidx.compose.foundation.layout.FlowRow(
@@ -1109,7 +1123,9 @@ fun SearchScreen() {
             delay(250)
             suggestions = withContext(Dispatchers.IO) { source.suggestions(query) }
         }
-        if (suggestions.isNotEmpty() && query.trim() != submitted) {
+        if (query.isBlank()) {
+            Centered("Search ${source.name} for songs, albums, artists and playlists.")
+        } else if (query.trim() != submitted && !source.searchIsLocal) {
             LazyColumn(Modifier.fillMaxSize()) {
                 items(suggestions) { q ->
                     val rowModifier = Modifier
@@ -1148,6 +1164,7 @@ fun SearchScreen() {
             Loader(
                 searchKey,
                 { partial -> source.search(submitted, filter, asTyped, partial) },
+                failedTitle = "Couldn't search.",
                 loading = {
                     LazyColumn(Modifier.fillMaxSize()) {
                         localRows()
@@ -1238,7 +1255,7 @@ fun LibraryScreen() {
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(source.libraryHint, textAlign = TextAlign.Center)
+            Text(source.libraryHint, textAlign = TextAlign.Center, style = LocalTextStyle.current.copy(lineBreak = androidx.compose.ui.text.style.LineBreak.Heading))
             Spacer(Modifier.height(12.dp))
             Button(onClick = { Nav.open(source.libraryHintPage) }) {
                 Text(if (source.libraryHintPage.kind == "settings") "Settings" else "Sign in")
@@ -1249,9 +1266,12 @@ fun LibraryScreen() {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val tabs = source.libraryTabs
     Column(Modifier.fillMaxSize()) {
-        TabRow(tab) {
-            tabs.forEachIndexed { i, label ->
-                Tab(tab == i, { tab = i }, text = { Text(label) })
+        // A fixed row, like the nav bar: its labels follow the font only up to 1.3×, so four still fit.
+        FixedRowsFont {
+            TabRow(tab) {
+                tabs.forEachIndexed { i, label ->
+                    Tab(tab == i, { tab = i }, text = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) })
+                }
             }
         }
         val list = key(tab) { rememberLazyListState() }
@@ -1294,6 +1314,7 @@ fun PageScreen(p: Page) {
         }
         PrefetchCovers(d.songs.map { it.thumb }, 48.dp, list)
         val album = p.kind == "album"
+        val artistPage = p.kind == "artist"
         Playback.tick
         val playingId = Playback.shown()?.id
         PrefetchCovers(d.items.map { it.thumb }, 48.dp)
@@ -1306,7 +1327,7 @@ fun PageScreen(p: Page) {
                         Spacer(Modifier.width(16.dp))
                         Column(Modifier.weight(1f)) {
                             Name(d.title, Store.listMode, MaterialTheme.typography.titleLarge)
-                            val subtitle = listOf(d.subtitle, if (album) totalLength(d.songs) else "")
+                            val subtitle = listOf(d.subtitle, if (!artistPage) totalLength(d.songs) else "")
                                 .filter { it.isNotBlank() }
                                 .joinToString(" · ")
                             if (subtitle.isNotEmpty()) {
@@ -1318,8 +1339,13 @@ fun PageScreen(p: Page) {
                 }
                 // An artist's page heads its songs as well as its releases.
                 if (d.songs.isNotEmpty() && d.items.isNotEmpty()) item { Header("Songs") }
-                // An album's own artist is said once, in the header; a track by someone else names them.
-                val albumArtist = if (album) d.songs.groupingBy { it.artistLatin }.eachCount().maxByOrNull { it.value }?.key else null
+                // An album's own artist is said once, in the header, and an artist page's is its title; a track by
+                // someone else names them.
+                val pageArtist = when {
+                    album -> d.songs.groupingBy { it.artistLatin }.eachCount().maxByOrNull { it.value }?.key
+                    artistPage -> d.title.latin
+                    else -> null
+                }
                 itemsIndexed(d.songs) { i, s ->
                     val disc = d.discs.getOrNull(i)
                     if (disc != null && disc != d.discs.getOrNull(i - 1) && d.discs.toSet().size > 1) Header("Disc $disc")
@@ -1327,8 +1353,8 @@ fun PageScreen(p: Page) {
                         s,
                         highlight = s.id == playingId,
                         number = if (album) d.tracks.getOrNull(i)?.takeIf { it > 0 } ?: (i + 1) else null,
-                        artist = s.artistLatin != albumArtist,
-                        length = album,
+                        artist = s.artistLatin != pageArtist,
+                        length = !artistPage,
                         onMenu = { menuFor = s },
                     ) {
                         Playback.play(d.songs, i)
@@ -1360,12 +1386,13 @@ private fun PageButtons(p: Page, d: Detail) {
     LaunchedEffect(p) { state = withContext(Dispatchers.IO) { source.saved(p) } }
     // The first button's text starts where the title above it does.
     val padding = androidx.compose.foundation.layout.PaddingValues(start = 0.dp, end = 16.dp, top = 8.dp, bottom = 8.dp)
-    Row {
+    Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         if (d.songs.isNotEmpty()) {
-            TextButton(onClick = {
+            Button(onClick = {
                 playList(p, d.songs)
                 Nav.tab = TAB_PLAYER
-            }, contentPadding = padding) { Text("Play") }
+            }) { Text("Play") }
+            Spacer(Modifier.width(8.dp))
         }
         val now = state
         if (now != null) {
@@ -1429,6 +1456,13 @@ fun SettingsScreen() {
     val place = PLACES.first { it.first == Store.place }.second.lowercase()
     val dictionary = if (Dictionary.installed || backend.romanizes) "" else " · no Japanese dictionary"
     LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            Text(
+                "Settings",
+                Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 8.dp),
+                style = MaterialTheme.typography.titleLarge,
+            )
+        }
         val update = Update.available
         if (update != null) {
             item {
@@ -1545,7 +1579,7 @@ private fun RomanizationSettings() = LazyColumn(Modifier.fillMaxSize()) {
             .clickable { Store.setReads(k, k !in read) }
             .padding(start = 5.dp, end = 16.dp)
         Row(rowModifier, verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(k !in read, null, Modifier.padding(end = 8.dp))
+            Checkbox(k !in read, null, Modifier.padding(end = 4.dp))
             Text(label)
         }
     }
@@ -1706,7 +1740,7 @@ private fun PlaybackSettings() = LazyColumn(Modifier.fillMaxSize()) {
 private fun BannedSettings() = LazyColumn(Modifier.fillMaxSize()) {
     val banned = Store.banned
     if (banned.isEmpty()) {
-        item { Text("Nothing banned. Ban a song or artist from a song's ⋯ menu.", Modifier.padding(horizontal = 16.dp)) }
+        item { Text("Nothing banned. Ban a song or artist from a song's ⋮ menu.", Modifier.padding(horizontal = 16.dp)) }
     }
     items(banned) { b ->
         val kind = if (b.kind == "artist") "Artist" else "Song"

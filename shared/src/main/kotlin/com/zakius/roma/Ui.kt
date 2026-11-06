@@ -32,6 +32,8 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
@@ -566,9 +568,11 @@ fun rememberModalBottomSheetState(skipPartiallyExpanded: Boolean = true) = remem
 fun ModalBottomSheet(onDismissRequest: () -> Unit, sheetState: SheetState, content: @Composable ColumnScope.() -> Unit) {
     Dialog(onDismissRequest = onDismissRequest, properties = sheetDialogProperties) {
         var drag by remember { mutableFloatStateOf(0f) }
+        // A tall sheet (a large font) stops below the status bar instead of running under the clock.
         val scrim = Modifier
             .fillMaxSize()
             .clickable(interactionSource = null, indication = null, onClick = onDismissRequest)
+            .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.statusBars)
         Box(scrim, contentAlignment = Alignment.BottomCenter) {
             Surface(
                 Modifier

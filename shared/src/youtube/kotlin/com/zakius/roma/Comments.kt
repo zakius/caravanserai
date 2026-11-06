@@ -191,11 +191,11 @@ internal fun CommentsView() {
     val scope = rememberCoroutineScope()
     when {
         state.disabled && state.items.isEmpty() -> return Centered("Comments are turned off for this song.")
-        state.items.isEmpty() && state.error != null -> return Column(Modifier.fillMaxSize(), Arrangement.Center, Alignment.CenterHorizontally) {
-            Text(state.error!!, Modifier.padding(horizontal = 24.dp), textAlign = TextAlign.Center)
-            TextButton(onClick = { scope.launch { state.load() } }) { Text("Retry") }
+        state.items.isEmpty() && state.error != null -> return Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Failed("Couldn't load the comments.", state.error!!) { scope.launch { state.load() } }
         }
-        state.items.isEmpty() -> return Centered(if (state.loading) "Loading comments…" else "No comments yet.")
+        state.items.isEmpty() && state.loading -> return Loading("Loading comments…")
+        state.items.isEmpty() -> return Centered("No comments yet.")
     }
     // A strip at the top holds the Translate and sleep chips, as in the lyrics. The comments scroll under the strip,
     // not under the chips.
@@ -241,19 +241,9 @@ internal fun CommentsView() {
             }
         }
         FastScroll(list)
-        // Like the lyrics' chip, but a toggle: comments keep coming as the list scrolls, so it stays on for them.
-        Surface(
-            Modifier.align(Alignment.TopEnd).padding(4.dp),
-            shape = RoundedCornerShape(50),
-            color = if (state.translate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
-        ) {
-            Text(
-                if (state.translate) "Original" else "Translate",
-                Modifier
-                    .clickable { state.translate = !state.translate }
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                style = MaterialTheme.typography.labelMedium,
-            )
+        // The lyrics' chip, as a toggle: comments keep coming as the list scrolls, so it stays on for them.
+        Chip(if (state.translate) "Original" else "Translate", enabled = true, Modifier.align(Alignment.TopEnd)) {
+            state.translate = !state.translate
         }
     }
 }
