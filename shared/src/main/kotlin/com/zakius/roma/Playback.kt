@@ -96,8 +96,12 @@ object Playback {
         // with the launch. Nothing before the first frame plays or needs them, and [online] starts true.
         Startup.later {
             watchNetwork { up ->
-                // Radio that couldn't load while offline loads now.
+                // Radio that couldn't load while offline loads now, and lyrics a failed search left out.
                 if (up && !online && player.isPlaying) topUpRadio()
+                if (up && !online) {
+                    val song = shown()
+                    if (song != null && song.id == lyricsUnfinished) postMain { loadLyrics(song) }
+                }
                 online = up
             }
         }
@@ -829,8 +833,11 @@ object Playback {
     var online by mutableStateOf(true)
         private set
 
-    /** Playing, but stuck until the network is back: the player shows a quiet note instead of an error. */
-    val waitingForNetwork get() = !online && player.playWhenReady && player.playbackState == AudioPlayer.STATE_BUFFERING
+    /**
+     * Asked to play, but stuck until the network is back: the player shows a quiet note instead of an error. That is
+     * while the stream buffers, and also while a song not on the phone waits for its stream to be looked up.
+     */
+    val waitingForNetwork get() = !online && !player.isPlaying && (player.playWhenReady || pending != null)
 
     fun cycleRepeat() {
         player.repeatMode = when (player.repeatMode) {
@@ -1028,11 +1035,20 @@ object Playback {
                 val onDisk = romanizedOnDisk(s)
                 if (onDisk != null) return@withContext onDisk
                 val raw = lyricsResult(s, network) ?: return@withContext null
+                // A search that failed (no network, a provider down) isn't kept, so the song is searched again: when
+                // the network is back, or on its next play.
+                if (!rawFile(s.id).exists()) {
+                    lyricsUnfinished = s.id
+                    return@withContext LyricsState(s.id, raw.lyrics, raw.translations)
+                }
                 romanize(s, raw)
             }
             if (found != null) lyrics = found
         }
     }
+
+    /** The song whose lyrics search failed, to search again once the network is back. */
+    @Volatile private var lyricsUnfinished: String? = null
 
     // Romanized lyrics are kept so that opening lyrics again, or after a restart, skips Sudachi: in memory for the
     // last 40 songs, and on disk next to the raw copy. The key carries the romanization version, which changes with

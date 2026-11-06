@@ -39,6 +39,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
@@ -161,7 +166,7 @@ fun SongRow(
     ) {
         if (number != null) {
             val color = if (highlight) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-            Box(Modifier.size(width = 48.dp, height = 40.dp), contentAlignment = Alignment.CenterStart) {
+            Box(Modifier.size(width = 28.dp, height = 40.dp), contentAlignment = Alignment.CenterStart) {
                 Text("$number", style = MaterialTheme.typography.bodyMedium, color = color, maxLines = 1)
             }
         } else {
@@ -299,42 +304,56 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
             }
             Spacer(Modifier.height(8.dp))
             HorizontalDivider()
-            MenuItem("Play next", true) {
+            MenuItem("Play next", true, Icons.Default.PlayArrow) {
                 Playback.playNext(s)
                 onClose()
             }
-            MenuItem("Add to queue", true) {
+            MenuItem("Add to queue", true, QueueIcon) {
                 Playback.addToQueue(s)
                 onClose()
             }
-            MenuItem("Start radio", true) {
+            MenuItem("Start radio", true, RadioIcon) {
                 Playback.startRadio(s)
                 Nav.tab = TAB_PLAYER
                 onClose()
             }
-            MenuItem(likeAction(liked), backend.canLike, whyOff = "Sign in to ${backend.name} to ${likeWord.lowercase()} songs") {
+            MenuItem(likeAction(liked), backend.canLike, likeIcon(liked), whyOff = "Sign in to ${backend.name} to ${likeWord.lowercase()} songs") {
                 Playback.toggleLike(s)
                 onClose()
             }
-            MenuItem("Go to artist", s.firstArtistId != null, whyOff = "This song has no artist page") {
+            val page = Nav.stacks[Nav.tab].lastOrNull()
+            val onArtist = page?.kind == "artist" && page.id == s.firstArtistId
+            val onAlbum = page?.kind == "album" && page.id == s.album?.id
+            MenuItem(
+                "Go to artist",
+                s.firstArtistId != null && !onArtist,
+                Icons.Default.Person,
+                whyOff = if (onArtist) "You're on this artist's page" else "This song has no artist page",
+            ) {
                 Nav.open(Page("artist", s.firstArtistId!!))
                 onClose()
             }
-            MenuItem("Go to album", s.album?.id != null, whyOff = "This song has no album") {
+            MenuItem(
+                "Go to album",
+                s.album?.id != null && !onAlbum,
+                PlayerTabIcon,
+                whyOff = if (onAlbum) "You're on this album" else "This song has no album",
+            ) {
                 Nav.open(Page("album", s.album!!.id!!))
                 onClose()
             }
             if (backend.canShare) {
-                MenuItem("Share…", link != null, whyOff = "This song has no link to share") {
+                MenuItem("Share…", link != null, Icons.Default.Share, whyOff = "This song has no link to share") {
                     share(link!!, "${s.title.latin} · ${s.artistLatin}")
                     onClose()
                 }
             }
-            MenuItem("Correct romanization…", s.romanizable, whyOff = "Nothing to correct: the names are in Latin letters") { fixing = true }
+            MenuItem("Correct romanization…", s.romanizable, Icons.Default.Edit, whyOff = "Nothing to correct: the names are in Latin letters") { fixing = true }
             val titleKept = Store.keptOriginal("song", s.id, s.title.original)
             MenuItem(
                 if (titleKept) "Romanize title" else "Don't romanize title",
                 titleKept || !s.title.isLatin,
+                ScriptIcon,
                 whyOff = "The title is in Latin letters already",
             ) {
                 Store.toggleKeepOriginal("song", s.id, s.title.original)
@@ -343,17 +362,17 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
             val artist = s.artists.firstOrNull { it.id != null }
             val artistKept = artist != null && Store.keptOriginal("artist", artist.id, artist.name.original)
             val artistLabel = if (artistKept) "Romanize artist" else "Don't romanize artist"
-            MenuItem(artistLabel, artist != null && (artistKept || !artist.name.isLatin), whyOff = "The artist's name is in Latin letters already") {
+            MenuItem(artistLabel, artist != null && (artistKept || !artist.name.isLatin), ScriptIcon, whyOff = "The artist's name is in Latin letters already") {
                 Store.toggleKeepOriginal("artist", artist!!.id!!, artist.name.original)
                 onClose()
             }
-            MenuItem("Remove from queue", inQueue, whyOff = "Only songs in the queue, other than the playing one, can be removed") {
+            MenuItem("Remove from queue", inQueue, Icons.Default.Delete, whyOff = "Only songs in the queue, other than the playing one, can be removed") {
                 Playback.remove(queueIndex!!)
                 onClose()
             }
             // The bans are set apart at the bottom, in the error colour.
             HorizontalDivider()
-            MenuItem("Ban song", true, danger = true) {
+            MenuItem("Ban song", true, BanIcon, danger = true) {
                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.Reject)
                 if (Playback.current()?.song?.id == s.id) {
                     // Bans the playing song, skips it and offers Undo.
@@ -364,7 +383,7 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
                 }
                 onClose()
             }
-            MenuItem("Ban artist", s.firstArtistId != null, danger = true, whyOff = "This song has no artist page") {
+            MenuItem("Ban artist", s.firstArtistId != null, BanIcon, danger = true, whyOff = "This song has no artist page") {
                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.Reject)
                 val a = s.artists.first { it.id != null }
                 Store.ban("artist", a.id!!, a.name.latin)
@@ -381,19 +400,33 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
     }
 }
 
-/** A song menu item. A dimmed one stays tappable when it has [whyOff], and a tap says why it is off. */
+/**
+ * A song menu item: its icon and label. A dimmed one stays tappable when it has [whyOff], and a tap says why it is
+ * off, in a toast: the menu covers the player's controls, so a toast there hides nothing.
+ */
 @Composable
-private fun MenuItem(label: String, enabled: Boolean, danger: Boolean = false, whyOff: String? = null, onClick: () -> Unit) {
-    Text(
-        label,
+private fun MenuItem(
+    label: String,
+    enabled: Boolean,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    danger: Boolean = false,
+    whyOff: String? = null,
+    onClick: () -> Unit,
+) {
+    val color = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+    Row(
         Modifier
             .fillMaxWidth()
             .clickable(enabled = enabled || whyOff != null, onClick = if (enabled) onClick else ({ toast(whyOff!!) }))
             .dim(if (enabled) 1f else 0.35f)
-            .padding(horizontal = 24.dp, vertical = 14.dp),
-        color = if (danger) MaterialTheme.colorScheme.error else Color.Unspecified,
-        style = MaterialTheme.typography.bodyLarge,
-    )
+            .padding(horizontal = 24.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val iconColor = if (danger) color else MaterialTheme.colorScheme.onSurfaceVariant
+        Icon(icon, null, Modifier.size(24.dp), tint = iconColor)
+        Spacer(Modifier.width(16.dp))
+        Text(label, color = color, style = MaterialTheme.typography.bodyLarge)
+    }
 }
 
 /** Whether some name of the song is in a non-Latin script. Only then is there a romanization to correct. */
@@ -667,6 +700,16 @@ private fun <T : Any> Loader(
 fun Modifier.dim(alpha: Float) = graphicsLayer {
     this.alpha = alpha
     compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
+}
+
+/** A tab's title at the top of its first screen: Home, Search, Library and Settings have one, the player doesn't. */
+@Composable
+internal fun ScreenTitle(text: String) {
+    Text(
+        text,
+        Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
+        style = MaterialTheme.typography.titleLarge,
+    )
 }
 
 /** A section's label in a list: settings groups, search sections, the queue, an artist's songs and albums. */
@@ -1009,6 +1052,7 @@ fun HomeScreen() {
         }
         LazyColumn(Modifier.fillMaxSize(), Home.list, contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 16.dp)) {
             // A library's shelves don't change from start to start, so on a server they follow the tiles at once.
+            item(key = "title") { ScreenTitle("Home") }
             item(key = "mixes") {
                 // Signed out, the hint is short, and YouTube's shelves follow it at once.
                 Column(if (backend.mixes && backend.libraryReady) Modifier.heightIn(min = height) else Modifier) {
@@ -1092,7 +1136,8 @@ fun SearchScreen() {
         }
     }
     Column(Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+        ScreenTitle("Search")
+        Box(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 12.dp)) {
             OutlinedTextField(
                 query, { query = it },
                 Modifier.fillMaxWidth().focusRequester(focus),
@@ -1281,7 +1326,9 @@ fun LibraryScreen() {
     }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val tabs = source.libraryTabs
+    var menuFor by remember { mutableStateOf<Song?>(null) }
     Column(Modifier.fillMaxSize()) {
+        ScreenTitle("Library")
         // A fixed row, like the nav bar: its labels follow the font only up to 1.3×, so four still fit.
         FixedRowsFont {
             TabRow(tab) {
@@ -1302,12 +1349,22 @@ fun LibraryScreen() {
             if (items.isEmpty()) Centered(source.libraryEmpty(tab))
             Box {
                 LazyColumn(Modifier.fillMaxSize(), list) {
-                    items(items) { item -> ItemRow(item) { openItem(item) } }
+                    // A song (in Starred) is a song row, with its length and ⋮ menu, as songs are everywhere else.
+                    items(items) { item ->
+                        val s = item.song
+                        if (s != null) {
+                            SongRow(s, onMenu = { menuFor = s }) { openItem(item) }
+                        } else {
+                            ItemRow(item) { openItem(item) }
+                        }
+                    }
                 }
                 FastScroll(list)
             }
         }
     }
+    val menuSong = menuFor
+    if (menuSong != null) SongMenu(menuSong, null) { menuFor = null }
 }
 
 @Composable
@@ -1471,13 +1528,7 @@ fun SettingsScreen() {
     val place = PLACES.first { it.first == Store.place }.second.lowercase()
     val dictionary = if (Dictionary.installed || backend.romanizes) "" else " · no Japanese dictionary"
     LazyColumn(Modifier.fillMaxSize()) {
-        item {
-            Text(
-                "Settings",
-                Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 8.dp),
-                style = MaterialTheme.typography.titleLarge,
-            )
-        }
+        item { ScreenTitle("Settings") }
         val update = Update.available
         if (update != null) {
             item {
@@ -1505,7 +1556,14 @@ fun SettingsScreen() {
             Category("banned", "Banned", summary)
         }
         item { Category("lastfm", "Last.fm", if (lastFm) "Scrobbling" else "Not connected") }
-        item { Text("${BuildConfig.APP_NAME} ${BuildConfig.VERSION_NAME}", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall) }
+        item {
+            Text(
+                "${BuildConfig.APP_NAME} ${BuildConfig.VERSION_NAME}",
+                Modifier.padding(16.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
