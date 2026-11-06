@@ -94,19 +94,27 @@ import roma.core.song
 
 /**
  * Home's pinned tiles, three to a row: the server's mixes (oasis only), then the starred songs and the whole library
- * at random.
+ * at random. A server without mixes gets the last two as a row of two short buttons, which neither leaves a third of
+ * the row empty nor outweighs the album covers below.
  */
 @Composable
 internal fun LibraryTiles(mixes: List<Item>) {
-    // Three to a row; with no mixes, the two drawn tiles share the row between them instead of leaving a third empty.
-    val width = screenSizeDp().width
-    val (cols, side) = if (mixes.isEmpty()) {
-        2 to ((width - 16 * 2 - 12) / 2).dp
-    } else {
-        val grid = mixGrid(width, mixes.size)
-        grid.first to grid.third
-    }
     val tint = MaterialTheme.colorScheme.onSecondaryContainer
+    if (mixes.isEmpty()) {
+        Row(
+            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            ShortTile("Starred", SubsonicSource.STARRED, Modifier.weight(1f)) {
+                Icon(Icons.Filled.Star, null, Modifier.size(24.dp), tint = tint)
+            }
+            ShortTile("Shuffle all", SubsonicSource.SHUFFLE, Modifier.weight(1f)) {
+                Icon(androidx.compose.ui.res.painterResource(R.drawable.shuffle), null, Modifier.size(24.dp), tint = tint)
+            }
+        }
+        return
+    }
+    val (cols, _, side) = mixGrid(screenSizeDp().width, mixes.size)
     @Composable
     fun Tile(title: String, id: String, picture: @Composable () -> Unit) = Column(
         Modifier
@@ -154,6 +162,27 @@ internal fun LibraryTiles(mixes: List<Item>) {
                 }
             }
         }
+    }
+}
+
+/** One of Home's two short buttons, which plays [id]: an icon and its title on the tile's colour. */
+@Composable
+private fun ShortTile(title: String, id: String, modifier: Modifier, icon: @Composable () -> Unit) {
+    Row(
+        modifier
+            .heightIn(min = 56.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .clickable {
+                Playback.playMix(id, title = title)
+                Nav.tab = TAB_PLAYER
+            }
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        icon()
+        Spacer(Modifier.width(12.dp))
+        Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSecondaryContainer)
     }
 }
 
@@ -261,11 +290,9 @@ internal fun ServerForm(action: String, modifier: Modifier, onConnected: () -> U
         OutlinedTextField(user, { user = it }, Modifier.fillMaxWidth(), singleLine = true, label = "User")
         OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), singleLine = true, label = "Password", password = true)
         // What went wrong sits under the fields it is about, above the button.
-        val shownStatus = status
-        if (shownStatus != null) {
-            val color = if (statusIsProblem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
-            Text(shownStatus, style = MaterialTheme.typography.bodySmall, color = color)
-        }
+        // Two lines are kept for it even when empty, so Continue doesn't move when "Connecting…" or an error appears.
+        val color = if (statusIsProblem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+        Text(status ?: "", style = MaterialTheme.typography.bodySmall, color = color, minLines = 2)
         // At the end, as on the scripts step after it.
         Button(enabled = !busy && url.isNotBlank(), modifier = Modifier.align(Alignment.End), onClick = {
             busy = true

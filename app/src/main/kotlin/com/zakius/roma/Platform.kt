@@ -301,7 +301,11 @@ fun OutlinedTextField(
                     } else {
                         inputType = textClass or android.text.InputType.TYPE_TEXT_FLAG_AUTO_CORRECT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
                     }
-                    if (singleLine) maxLines = 1
+                    if (singleLine) {
+                        maxLines = 1
+                        // A placeholder too long for the field (a large font) ends in "…", not mid-word.
+                        ellipsize = android.text.TextUtils.TruncateAt.END
+                    }
                     imeOptions = when {
                         onSearch != null -> android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
                         singleLine -> android.view.inputmethod.EditorInfo.IME_ACTION_DONE

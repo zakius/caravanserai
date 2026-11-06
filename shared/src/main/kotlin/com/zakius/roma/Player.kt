@@ -190,21 +190,25 @@ fun PlayerScreen() {
         FixedRowsFont {
             Column(modifier) {
                 SeekBar { seekPreview = it }
-                // More (the song menu, where Ban lives) sits at the outer edge with two empty slots after it, and Like
-                // at the other edge, under the thumb. Left-handed mode mirrors the row; otherwise slots never move.
-                Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
+                // More (the song menu, where Ban lives) comes first and Like last, under the thumb. Each slot is a
+                // sixth of the row wide whatever the source offers, and the slots are centred together, so a source
+                // without Comments has its buttons no bigger and no further apart. Left-handed mode mirrors the row;
+                // otherwise slots never move.
+                Row(
+                    Modifier.fillMaxWidth().height(44.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     val liked = entry?.song?.id in Playback.liked
-                    val slots: List<@Composable RowScope.() -> Unit> = listOf(
+                    val slots: List<(@Composable RowScope.() -> Unit)?> = listOf(
                         {
                             Slot(rememberVectorPainter(Icons.Default.MoreVert), "More", entry != null, label = "More") {
                                 menuOpen = true
                             }
                         },
-                        // Deliberately empty: no icon, no label, not tappable.
-                        { Spacer(Modifier.weight(1f)) },
-                        // A source without comments leaves this slot empty too.
+                        // A source without comments has no slot for them.
                         if (!backend.hasComments) {
-                            { Spacer(Modifier.weight(1f)) }
+                            null
                         } else {
                             {
                                 Slot(
@@ -227,6 +231,7 @@ fun PlayerScreen() {
                                 view == "lyrics",
                                 label = "Lyrics",
                                 state = if (view == "lyrics") "shown" else null,
+                                whyOff = if (lyrics == null) "Still looking for lyrics" else "No lyrics found for this song",
                             ) {
                                 view = if (view == "lyrics") "song" else "lyrics"
                             }
@@ -251,14 +256,18 @@ fun PlayerScreen() {
                                 liked,
                                 label = likeWord,
                                 state = if (liked) "${likeWord.lowercase()}d" else "not ${likeWord.lowercase()}d",
+                                whyOff = if (!backend.canLike) "Sign in to ${backend.name} to ${likeWord.lowercase()} songs" else null,
                             ) {
                                 haptic.performHapticFeedback(if (liked) HapticFeedbackType.ToggleOff else HapticFeedbackType.ToggleOn)
                                 Playback.toggleLike()
                             }
                         },
                     )
-                    val ordered = if (Store.bool("ui.leftHanded", false)) slots.reversed() else slots
-                    for (slot in ordered) slot()
+                    val shown = slots.filterNotNull()
+                    val ordered = if (Store.bool("ui.leftHanded", false)) shown.reversed() else shown
+                    Row(Modifier.fillMaxWidth(ordered.size / 6f), verticalAlignment = Alignment.CenterVertically) {
+                        for (slot in ordered) slot()
+                    }
                 }
                 Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
                     Slot(
@@ -499,15 +508,19 @@ private fun SleepDialog(onDone: () -> Unit) {
     )
 }
 
-/** One equal-width control slot. Disabled slots keep their place and are dimmed. */
+/**
+ * One equal-width control slot. Disabled slots keep their place and are dimmed; a tap on one with [whyOff] says why it
+ * is off.
+ */
 @Composable
 private fun RowScope.Slot(
     icon: Painter, description: String, enabled: Boolean, selected: Boolean = false, label: String? = null, iconSize: Int = 22,
-    state: String? = null, onLongClick: (() -> Unit)? = null, longClickLabel: String? = null, onClick: () -> Unit,
+    state: String? = null, onLongClick: (() -> Unit)? = null, longClickLabel: String? = null, whyOff: String? = null,
+    onClick: () -> Unit,
 ) {
     // A switch without a label (Shuffle, Repeat) gets the pill when on. When off it is muted, but less than an
     // unavailable control (0.3).
-    val offAlpha = if (state != null && label == null) 0.6f else 1f
+    val offAlpha = if (state != null && label == null) 0.45f else 1f
     val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = offAlpha)
     // A rounded background only when selected, not a rounded clip on every slot: one GPU program less. It is 64 dp
     // wide in both rows, so the five-slot row's pill is no wider than the six-slot row's.
@@ -523,14 +536,17 @@ private fun RowScope.Slot(
             .fillMaxHeight()
             .padding(horizontal = 2.dp)
             .combinedClickable(
-                enabled = enabled,
+                enabled = enabled || whyOff != null,
                 onClickLabel = description,
                 role = Role.Button,
-                onLongClick = onLongClick,
+                onLongClick = if (enabled) onLongClick else null,
                 onLongClickLabel = longClickLabel,
-                onClick = onClick,
+                onClick = if (enabled) onClick else ({ toast(whyOff!!) }),
             )
-            .semantics { if (state != null) stateDescription = state }
+            .semantics {
+                val shownState = if (enabled) state else "unavailable"
+                if (shownState != null) stateDescription = shownState
+            }
             .dim(if (enabled) 1f else 0.3f),
         contentAlignment = Alignment.Center,
     ) {
@@ -834,7 +850,9 @@ private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
             }
         }
         // The names' block keeps the height of the longest it can be (a two-line title with its original, the artist with
-        // theirs, the album), so the art above stays put from song to song.
+        // theirs, the album), so the art above stays put from song to song. It follows the font up to 1.3×, like the
+        // controls under it, so a large font doesn't shrink the art to a thumbnail.
+        FixedRowsFont {
         val title = MaterialTheme.typography.headlineSmall
         val artistStyle = MaterialTheme.typography.titleMedium.copy(
             fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
@@ -866,6 +884,7 @@ private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+        }
         }
         if (fixing) CorrectDialog(s) { fixing = false }
         if (current && Playback.waitingForNetwork) {
@@ -1018,7 +1037,7 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
     LaunchedEffect(current) { if (current > 2) state.animateScrollToItem(current - 2) }
     // Lines scroll out below the chips' strip (Translate, the sleep timer), so a chip never covers one.
     Box {
-        LazyColumn(Modifier.fillMaxSize().padding(start = 20.dp, end = 20.dp, top = CHIP_STRIP), state = state) {
+        LazyColumn(Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, top = CHIP_STRIP), state = state) {
             itemsIndexed(lines) { i, line ->
                 val active = i == current
                 // The other lines keep about 5:1 contrast. The words still to come in the current line have the same
@@ -1069,7 +1088,12 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
                     }
                     val translation = line.translation
                     if (!translation.isNullOrBlank()) {
-                        Text(translation, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val translationColor = if (lineColor != Color.Unspecified || (active && synced)) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        Text(translation, style = MaterialTheme.typography.bodyMedium, color = translationColor)
                     }
                 }
             }

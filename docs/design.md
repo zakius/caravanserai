@@ -97,13 +97,14 @@ Bottom block of the player, the same on the song, lyrics and queue views (only t
 
 ```
 [ 0:42 ][ seek bar ][ 3:16 ]                                   about 28 dp
-[ More ] [ (empty) ] [ Comments ] [ Lyrics ] [ Queue ] [ Like ] about 44 dp, small icon, 10 sp label
+   [ More ] [ Comments ] [ Lyrics ] [ Queue ] [ Like ]         about 44 dp, small icon, 10 sp label, centred
 [ shuffle ] [ prev ] [ PLAY/PAUSE ] [ next ] [ repeat ]        about 52 dp, play icon 44 dp
 [ Home ] [ Search ] [ Player ] [ Library ] [ Settings ]        bottom navigation, about 48 dp
 ```
 
 - The elapsed and total time sit on the seek bar's line. Every slot is at least 48 dp wide. No extra gap between the rows.
-- The action row has 6 equal slots. Slot 2 is deliberately empty: no icon, no label, not tappable. It keeps More (which holds Ban) away from the other buttons. Slot 3 was empty too until Comments took it (user, 2026-10-26).
+- The action row's slots are each a sixth of the row wide and centred together: five in roma ytm, four in caravan (no Comments), so the buttons are the same size and spacing in both apps. Until 2026-11-06 slot 2 was deliberately empty, to keep More (which holds Ban) away from the other buttons; the user dropped it then, as Ban lives one tap deeper in More anyway.
+- A dimmed control stays tappable where there's a reason to give: the tap shows it in a toast (Like signed out, Lyrics not found, the Player tab with nothing loaded, the song menu's dimmed items). Nothing moves.
 - Left-handed mode (setting) mirrors the action row: Like on the left, More on the right. Nothing else moves.
 - On a landscape screen (a phone on its side, the MatePad) the upper area is on the left and the same block, in the same order, on the right. On a wide portrait screen the block keeps at most 560 dp of width, centred.
 - The Never button was removed (user, 2026-10-24). Ban song / Ban artist live in More; banning the playing song skips it and shows a "Banned · Undo" bar for about 5 s.
