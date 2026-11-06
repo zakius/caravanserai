@@ -184,6 +184,7 @@ fun Text(
     maxLines: Int = Int.MAX_VALUE,
     onTextLayout: ((TextLayoutResult) -> Unit)? = null,
     style: TextStyle = LocalTextStyle.current,
+    minLines: Int = 1,
 ) {
     val merged = style.merge(
         TextStyle(
@@ -194,7 +195,7 @@ fun Text(
             lineHeight = lineHeight,
         ),
     )
-    BasicText(text, modifier, merged, onTextLayout, overflow, maxLines = maxLines)
+    BasicText(text, modifier, merged, onTextLayout, overflow, maxLines = maxLines, minLines = minLines)
 }
 
 @Composable

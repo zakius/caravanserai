@@ -366,7 +366,7 @@ private fun NavBar(tab: Int, loaded: Boolean) {
     androidx.compose.foundation.layout.Row(barModifier) {
         NavItem("Home", Icons.Default.Home, tab == TAB_HOME, true) { Nav.select(TAB_HOME) }
         NavItem("Search", Icons.Default.Search, tab == TAB_SEARCH, true) { Nav.select(TAB_SEARCH) }
-        NavItem("Player", PlayerTabIcon, tab == TAB_PLAYER, loaded) {
+        NavItem("Player", PlayerTabIcon, tab == TAB_PLAYER, loaded, whyOff = "Nothing playing yet. Pick a song in Home, Search or Library.") {
             Nav.tab = TAB_PLAYER
         }
         NavItem("Library", LibraryIcon, tab == TAB_LIBRARY, true) { Nav.select(TAB_LIBRARY) }
@@ -395,6 +395,7 @@ private fun androidx.compose.foundation.layout.RowScope.NavItem(
     selected: Boolean,
     enabled: Boolean,
     dot: Boolean = false,
+    whyOff: String? = null,
     onClick: () -> Unit,
 ) {
     val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
@@ -402,7 +403,13 @@ private fun androidx.compose.foundation.layout.RowScope.NavItem(
         Modifier
             .weight(1f)
             .fillMaxHeight()
-            .selectable(selected = selected, enabled = enabled, role = androidx.compose.ui.semantics.Role.Tab, onClick = onClick)
+            .selectable(
+                selected = selected,
+                enabled = enabled || whyOff != null,
+                role = androidx.compose.ui.semantics.Role.Tab,
+                // A dimmed tab with [whyOff] says why it is off.
+                onClick = if (enabled) onClick else ({ toast(whyOff!!) }),
+            )
             .dim(if (enabled) 1f else 0.35f),
         horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
         verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,

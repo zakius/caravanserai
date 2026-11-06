@@ -13,7 +13,7 @@ The music stack:
 ## Decisions
 
 - Server-neutral: the Subsonic app speaks only Subsonic and OpenSubsonic. It never checks the server's `type` and reads no server's own fields unless the server advertises them as an extension in `getOpenSubsonicExtensions` (or says so in `getUser`); an oasis extra is fine only where other servers lose nothing without it (Home's mixes from `oasisMix`, the wanted states from `oasisWanted`, both only with the extension `oasis` v1, which caravan opts into with `oasis=1` on every request; its canonical text is oasis's docs/oasis-extension.md). Share needs the extension `shareUrl` v1 (oasis's docs/share-url-extension.md): songs carry `shareUrl`, a public link the app shares as is, without knowing what site it points to; anything else only one server would do is a bug. No debug-only details either (decided 2026-11-01).
-- A control a server can't serve is absent, not dimmed (decided 2026-11-02): no Comments button (its slot stays empty, so the others don't move), no Share in the song menu (caravan has it with the extension `shareUrl`, offered only when the song has a link), no "Prefer audio tracks over music videos", and "Even out loudness" only when the server sends ReplayGain.
+- A control a server can't serve is absent, not dimmed (decided 2026-11-02): no Comments button (the row's other slots keep their width, centred), no Share in the song menu (caravan has it with the extension `shareUrl`, offered only when the song has a link), no "Prefer audio tracks over music videos", and "Even out loudness" only when the server sends ReplayGain.
 - One codebase. YouTube Music and Subsonic are two implementations of one small interface (`Source`) under the screens. No screen names a backend; a screen asks the source for what it shows, and the source says what it can't do (a control left out, a hidden hint). Separate builds, or a combined mode with both at once, can come later and must stay cheap: every id says which source it belongs to (Ids below), so a queue, a ban or a scrobble already finds its source per song.
 - ~~On first launch roma asks which backend to use.~~ Since 2026-11-01 each backend is its own app (Two apps below); the build picks the source.
 - Library feel on Subsonic: the whole library index (artists, albums, songs, cover ids) is synced into a local store, so browsing and search are instant and work offline.
@@ -34,7 +34,7 @@ The music stack:
 | Mixes, Liked music | Personal mixes, `LM` | Starred songs (`getStarred2`) for the Liked tile; Shuffle all plays the index at random. |
 | Like | `likeVideo`, `likeStatus` | `star`/`unstar`; the status from the song's `starred`, kept from the sync and from `getSong`. caravan calls it Star (`Source.stars`): the player's button, the song menu, the notification, and Star / Unstar on album and artist pages, with a star icon. |
 | Lyrics: the reference provider | `YouTubeLyrics` (ANDROID_MUSIC browse) | OpenSubsonic `getLyricsBySongId`, only when the server lists the `songLyrics` extension; with `romanization`, its pronunciation layer too (Server romanization below). The third-party providers run as before. |
-| Comments, Share | YouTube comments; a YouTube link | No Comments: the slot stays empty. Share with the extension `shareUrl`: the song's `shareUrl`. |
+| Comments, Share | YouTube comments; a YouTube link | No Comments button. Share with the extension `shareUrl`: the song's `shareUrl`. |
 | Scrobbling | Last.fm from the app | Subsonic `scrobble`; Last.fm from the app only where the rule below says so. |
 | Covers | Google-hosted URLs, sized in the URL | `subsonic:<coverArt id>` in the song; `Images` turns it into a `getCoverArt` URL with fresh auth and `size`. No credentials in stored songs. |
 
@@ -45,7 +45,7 @@ What Subsonic can't provide, and what the UI does:
 - No home feed and no personal mixes: Home shows the server's album lists and two fixed tiles. "Your mixes" becomes "Your library" on Subsonic.
 - Similar songs only through `getSimilarSongs`. A server without them gets radio from the index at random, leash applied, so "close" still keeps the seed's artist.
 - Lyrics from the server only with OpenSubsonic `getLyricsBySongId`; otherwise the third-party providers alone, under rule 5 (no reference text).
-- No comments: the button is left out, its slot kept empty (a control never moves), so every control sits where it does in roma ytm. The gap of two slots between More and Lyrics is deliberate (2026-11-06). Share only with the extension `shareUrl`.
+- No comments: the button is left out. The action row's other four slots keep roma ytm's slot width, centred (docs/design.md, Controls). Share only with the extension `shareUrl`.
 - No spelling correction or suggestions in Search; the local search tolerates typos already.
 
 ## Ids

@@ -137,8 +137,8 @@ fun shownThumb(url: String?, size: Dp): String? = thumbAt(url, with(LocalDensity
 fun thumbAt(url: String?, px: Int): String? = url?.let { backend.thumbAt(it, px) }
 
 /**
- * A song in a list. On an album page [number] (its track number) takes the cover's place, the artist line is left out
- * when it is the album's own ([artist] false), and the length shows on the right ([length]).
+ * A song in a list, with its length on the right ([length]). On an album page [number] (its track number) takes the
+ * cover's place, and the artist line is left out when it is the album's own ([artist] false).
  */
 @Composable
 fun SongRow(
@@ -147,7 +147,7 @@ fun SongRow(
     extra: String? = null,
     number: Int? = null,
     artist: Boolean = true,
-    length: Boolean = false,
+    length: Boolean = true,
     onMenu: () -> Unit,
     onClick: () -> Unit,
 ) {
@@ -161,7 +161,7 @@ fun SongRow(
     ) {
         if (number != null) {
             val color = if (highlight) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-            Box(Modifier.size(width = 48.dp, height = 40.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(width = 48.dp, height = 40.dp), contentAlignment = Alignment.CenterStart) {
                 Text("$number", style = MaterialTheme.typography.bodyMedium, color = color, maxLines = 1)
             }
         } else {
@@ -190,7 +190,7 @@ fun SongRow(
         if (length && s.durationSec > 0) {
             Text(
                 time(s.durationSec * 1000L),
-                Modifier.padding(start = 8.dp),
+                Modifier.padding(start = 12.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -227,14 +227,17 @@ fun ItemRow(item: Item, onClick: () -> Unit) {
 
 @Composable
 internal fun Card(item: Item, onClick: () -> Unit) {
+    // With a large font the card and its picture grow too, up to 1.6×, so a title fits its width instead of breaking
+    // inside a word.
+    val grow = LocalDensity.current.fontScale.coerceIn(1f, 1.6f)
     val cardModifier = Modifier
-        .width(140.dp)
+        .width(140.dp * grow)
         .lookUpOnPress(item.playable)
         .clickable(onClick = onClick)
         .padding(6.dp)
     Column(cardModifier) {
         val shape = if (item.kind == "artist") CircleShape else RoundedCornerShape(6.dp)
-        Thumb(shownThumb(item.thumb, 128.dp), 128.dp, Modifier.size(128.dp).clip(shape))
+        Thumb(shownThumb(item.thumb, 128.dp * grow), 128.dp * grow, Modifier.size(128.dp * grow).clip(shape))
         Spacer(Modifier.height(4.dp))
         Name(item.title, Store.listMode, MaterialTheme.typography.bodyMedium)
         if (item.subtitle.latin.isNotBlank()) {
@@ -309,38 +312,42 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
                 Nav.tab = TAB_PLAYER
                 onClose()
             }
-            MenuItem(likeAction(liked), backend.canLike) {
+            MenuItem(likeAction(liked), backend.canLike, whyOff = "Sign in to ${backend.name} to ${likeWord.lowercase()} songs") {
                 Playback.toggleLike(s)
                 onClose()
             }
-            MenuItem("Go to artist", s.firstArtistId != null) {
+            MenuItem("Go to artist", s.firstArtistId != null, whyOff = "This song has no artist page") {
                 Nav.open(Page("artist", s.firstArtistId!!))
                 onClose()
             }
-            MenuItem("Go to album", s.album?.id != null) {
+            MenuItem("Go to album", s.album?.id != null, whyOff = "This song has no album") {
                 Nav.open(Page("album", s.album!!.id!!))
                 onClose()
             }
             if (backend.canShare) {
-                MenuItem("Share…", link != null) {
+                MenuItem("Share…", link != null, whyOff = "This song has no link to share") {
                     share(link!!, "${s.title.latin} · ${s.artistLatin}")
                     onClose()
                 }
             }
-            MenuItem("Correct romanization…", s.romanizable) { fixing = true }
+            MenuItem("Correct romanization…", s.romanizable, whyOff = "Nothing to correct: the names are in Latin letters") { fixing = true }
             val titleKept = Store.keptOriginal("song", s.id, s.title.original)
-            MenuItem(if (titleKept) "Romanize title" else "Don't romanize title", titleKept || !s.title.isLatin) {
+            MenuItem(
+                if (titleKept) "Romanize title" else "Don't romanize title",
+                titleKept || !s.title.isLatin,
+                whyOff = "The title is in Latin letters already",
+            ) {
                 Store.toggleKeepOriginal("song", s.id, s.title.original)
                 onClose()
             }
             val artist = s.artists.firstOrNull { it.id != null }
             val artistKept = artist != null && Store.keptOriginal("artist", artist.id, artist.name.original)
             val artistLabel = if (artistKept) "Romanize artist" else "Don't romanize artist"
-            MenuItem(artistLabel, artist != null && (artistKept || !artist.name.isLatin)) {
+            MenuItem(artistLabel, artist != null && (artistKept || !artist.name.isLatin), whyOff = "The artist's name is in Latin letters already") {
                 Store.toggleKeepOriginal("artist", artist!!.id!!, artist.name.original)
                 onClose()
             }
-            MenuItem("Remove from queue", inQueue) {
+            MenuItem("Remove from queue", inQueue, whyOff = "Only songs in the queue, other than the playing one, can be removed") {
                 Playback.remove(queueIndex!!)
                 onClose()
             }
@@ -357,7 +364,7 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
                 }
                 onClose()
             }
-            MenuItem("Ban artist", s.firstArtistId != null, danger = true) {
+            MenuItem("Ban artist", s.firstArtistId != null, danger = true, whyOff = "This song has no artist page") {
                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.Reject)
                 val a = s.artists.first { it.id != null }
                 Store.ban("artist", a.id!!, a.name.latin)
@@ -374,13 +381,14 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
     }
 }
 
+/** A song menu item. A dimmed one stays tappable when it has [whyOff], and a tap says why it is off. */
 @Composable
-private fun MenuItem(label: String, enabled: Boolean, danger: Boolean = false, onClick: () -> Unit) {
+private fun MenuItem(label: String, enabled: Boolean, danger: Boolean = false, whyOff: String? = null, onClick: () -> Unit) {
     Text(
         label,
         Modifier
             .fillMaxWidth()
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(enabled = enabled || whyOff != null, onClick = if (enabled) onClick else ({ toast(whyOff!!) }))
             .dim(if (enabled) 1f else 0.35f)
             .padding(horizontal = 24.dp, vertical = 14.dp),
         color = if (danger) MaterialTheme.colorScheme.error else Color.Unspecified,
@@ -536,7 +544,7 @@ fun TextInputDialog(title: String, initial: String, onDone: () -> Unit, onSave: 
     AlertDialog(
         onDismissRequest = onDone,
         title = { Text(title) },
-        text = { OutlinedTextField(value, { value = it }, singleLine = true, autoFocus = true) },
+        text = { OutlinedTextField(value, { value = it }, singleLine = true, autoFocus = true, label = title) },
         confirmButton = {
             TextButton(onClick = {
                 onSave(value)
@@ -698,10 +706,16 @@ fun PageBar(title: String?) {
     }
 }
 
-/** A settings page's title, shown in its [PageBar]. Other pages have none there. */
+/** A pushed page's title in its [PageBar]: a settings page's name, or what kind of page it is. */
 @Composable
 fun pageTitle(p: Page): String? {
-    if (p.kind != "settings") return null
+    when (p.kind) {
+        "album" -> return "Album"
+        "artist" -> return "Artist"
+        "playlist" -> return "Playlist"
+        "settings" -> {}
+        else -> return null
+    }
     return when (p.id) {
         "source" -> backend.settingsTitle
         "appearance" -> "Appearance"
@@ -1070,7 +1084,7 @@ fun SearchScreen() {
     // A source that searches its own index (Subsonic) answers as you type; others search on Enter.
     if (source.searchIsLocal) {
         LaunchedEffect(query) {
-            delay(300)
+            delay(150)
             if (query.trim() != submitted) {
                 submitted = query.trim()
                 asTyped = null
@@ -1078,7 +1092,7 @@ fun SearchScreen() {
         }
     }
     Column(Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxWidth().padding(12.dp)) {
+        Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
             OutlinedTextField(
                 query, { query = it },
                 Modifier.fillMaxWidth().focusRequester(focus),
@@ -1100,7 +1114,7 @@ fun SearchScreen() {
         // The filters keep a fixed order, and videos are left out on purpose. With a large system font they wrap onto a
         // second line, in the same order, instead of squeezing the last one into a column of letters.
         androidx.compose.foundation.layout.FlowRow(
-            Modifier.padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
+            Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -1227,7 +1241,9 @@ fun SearchScreen() {
                     }
                     if (found.items.isEmpty()) {
                         item {
-                            Text("No results for “$submitted”. Check the spelling, or try another filter above.", Modifier.padding(16.dp))
+                            Box(Modifier.fillParentMaxSize()) {
+                                Centered("No results for “$submitted”. Check the spelling, or try another filter above.")
+                            }
                         }
                     }
                     items(found.items) { item ->
@@ -1354,7 +1370,6 @@ fun PageScreen(p: Page) {
                         highlight = s.id == playingId,
                         number = if (album) d.tracks.getOrNull(i)?.takeIf { it > 0 } ?: (i + 1) else null,
                         artist = s.artistLatin != pageArtist,
-                        length = !artistPage,
                         onMenu = { menuFor = s },
                     ) {
                         Playback.play(d.songs, i)
@@ -1577,7 +1592,7 @@ private fun RomanizationSettings() = LazyColumn(Modifier.fillMaxSize()) {
         val rowModifier = Modifier
             .fillMaxWidth()
             .clickable { Store.setReads(k, k !in read) }
-            .padding(start = 5.dp, end = 16.dp)
+            .padding(start = 5.dp, end = 16.dp, top = 6.dp, bottom = 6.dp)
         Row(rowModifier, verticalAlignment = Alignment.CenterVertically) {
             Checkbox(k !in read, null, Modifier.padding(end = 4.dp))
             Text(label)
@@ -1740,7 +1755,7 @@ private fun PlaybackSettings() = LazyColumn(Modifier.fillMaxSize()) {
 private fun BannedSettings() = LazyColumn(Modifier.fillMaxSize()) {
     val banned = Store.banned
     if (banned.isEmpty()) {
-        item { Text("Nothing banned. Ban a song or artist from a song's ⋮ menu.", Modifier.padding(horizontal = 16.dp)) }
+        item { Box(Modifier.fillParentMaxSize()) { Centered("Nothing banned. Ban a song or artist from a song's ⋮ menu.") } }
     }
     items(banned) { b ->
         val kind = if (b.kind == "artist") "Artist" else "Song"
@@ -1838,7 +1853,8 @@ fun SetupScreen() {
             style = MaterialTheme.typography.bodyMedium,
         )
         SCRIPTS.forEach { (k, label) ->
-            val rowModifier = Modifier.fillMaxWidth().clickable {
+            // Shifted by the checkbox's own padding, so its box lines up with the title above.
+            val rowModifier = Modifier.offset(x = (-11).dp).fillMaxWidth().clickable {
                 val updated = if (k in read) read - k else read + k
                 Store.set(Store.READ_KEY, updated.joinToString(","))
             }
