@@ -479,6 +479,7 @@ object Playback {
         mixContinuation = mixNext
         // Otherwise the old queue's top-up would add its songs to this one.
         radioJob?.cancel()
+        radioLoading = null
         radioSeed = songs[start]
         radioContinuation = null
         related = null
@@ -521,6 +522,7 @@ object Playback {
         if (current()?.song?.id != s.id) return play(listOf(s))
         mixId = null
         radioJob?.cancel()
+        radioLoading = null
         radioSeed = s
         radioContinuation = null
         related = null
@@ -536,51 +538,65 @@ object Playback {
     private var related: Set<String>? = null
     private var radioJob: Job? = null
 
+    /** The seed radio songs are being fetched for, so the queue can say so: a server may take seconds to answer. */
+    var radioLoading by mutableStateOf<Song?>(null)
+        private set
+
     private fun topUpRadio(force: Boolean = false) {
         val left = player.mediaItemCount - player.currentMediaItemIndex - 1
         if (left >= 3 || radioJob?.isActive == true) return
         if (mixId != null) return topUpMix()
         if (Store.stopAtEnd && !force) return
         val seed = radioSeed ?: return
+        radioLoading = seed
         radioJob = scope.launch {
-            val settings = Store.radioSettings()
-            // Read on the main thread, because ExoPlayer is single-threaded.
-            val already = entries().map { it.song }
-            var rel = related
-            var continuation = radioContinuation
-            val added = withContext(Dispatchers.IO) {
-                val knownRelated = rel
-                val r: Set<String>
-                if (knownRelated != null) {
-                    r = knownRelated
-                } else {
-                    r = if (settings.leash == "free") emptySet() else relatedArtists(seed)
-                    rel = r
-                }
-                var fresh = emptyList<Song>()
-                // A page can be all filtered out, so a few continuations are tried before giving up.
-                repeat(4) {
-                    if (fresh.isNotEmpty()) return@repeat
-                    // A continuation saved before a restart may have expired. Then the radio's pages start over, and
-                    // the songs already queued are filtered out.
-                    val page = backend.radio(seed, continuation)
-                    if (page == null) {
-                        continuation = null
-                        return@repeat
-                    }
-                    continuation = page.next
-                    fresh = filterRadio(page.songs, seed, r, already, Store.bans(), settings)
-                    if (continuation == null) return@repeat
-                }
-                fresh
+            try {
+                addRadio(seed)
+            } finally {
+                // A radio started meanwhile owns the indicator.
+                if (radioJob === coroutineContext[Job]) radioLoading = null
             }
-            // Another radio or queue started meanwhile.
-            if (radioSeed !== seed) return@launch
-            related = rel
-            radioContinuation = continuation
-            Store.remember(added)
-            player.addMediaItems(added.map { player.item(Entry(it, "radio")) })
         }
+    }
+
+    private suspend fun addRadio(seed: Song) {
+        val settings = Store.radioSettings()
+        // Read on the main thread, because ExoPlayer is single-threaded.
+        val already = entries().map { it.song }
+        var rel = related
+        var continuation = radioContinuation
+        val added = withContext(Dispatchers.IO) {
+            val knownRelated = rel
+            val r: Set<String>
+            if (knownRelated != null) {
+                r = knownRelated
+            } else {
+                r = if (settings.leash == "free") emptySet() else relatedArtists(seed)
+                rel = r
+            }
+            var fresh = emptyList<Song>()
+            // A page can be all filtered out, so a few continuations are tried before giving up.
+            repeat(4) {
+                if (fresh.isNotEmpty()) return@repeat
+                // A continuation saved before a restart may have expired. Then the radio's pages start over, and
+                // the songs already queued are filtered out.
+                val page = backend.radio(seed, continuation)
+                if (page == null) {
+                    continuation = null
+                    return@repeat
+                }
+                continuation = page.next
+                fresh = filterRadio(page.songs, seed, r, already, Store.bans(), settings)
+                if (continuation == null) return@repeat
+            }
+            fresh
+        }
+        // Another radio or queue started meanwhile.
+        if (radioSeed !== seed) return
+        related = rel
+        radioContinuation = continuation
+        Store.remember(added)
+        player.addMediaItems(added.map { player.item(Entry(it, "radio")) })
     }
 
     private var mixId: String? = null

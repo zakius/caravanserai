@@ -44,6 +44,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.LazyListState
@@ -918,6 +919,18 @@ private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
     }
 }
 
+private const val RADIO_LOADING = -2
+
+/** A spinner where a song's cover would be, with what is loading beside it. */
+@Composable
+private fun LoadingRow(text: String) {
+    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        Spacer(Modifier.width(12.dp))
+        Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+}
+
 @Composable
 private fun QueueView() {
     Playback.tick
@@ -927,7 +940,7 @@ private fun QueueView() {
     // The next songs are the likely taps here.
     val shown = LocalTabShown.current
     LaunchedEffect(shown) { if (shown) Playback.prepare(all.drop(cur + 1).map { it.song }) }
-    // Each row is a header with -1, or null with an entry's index.
+    // Each row is a header with -1, the radio's loading row with RADIO_LOADING, or null with an entry's index.
     val rows = ArrayList<Pair<String?, Int>>()
     if (cur in all.indices) {
         rows.add("Now" to -1)
@@ -939,11 +952,15 @@ private fun QueueView() {
         rows.add("Up next" to -1)
         for (i in queued) rows.add(null to i)
     }
+    val loading = Playback.radioLoading
     if (radio.isNotEmpty()) {
         rows.add("Radio" to -1)
         for (i in radio) rows.add(null to i)
+    } else if (loading != null) {
+        rows.add("Radio" to -1)
+        rows.add("Finding songs like ${loading.title.latin}" to RADIO_LOADING)
     }
-    if (queued.isEmpty() && radio.isEmpty()) {
+    if (queued.isEmpty() && radio.isEmpty() && loading == null) {
         val note = if (Store.stopAtEnd) "Nothing next: autoplay is off" else "Nothing next yet"
         rows.add(note to -1)
     }
@@ -953,8 +970,10 @@ private fun QueueView() {
         // The strip is kept for the sleep timer's chip only while it runs.
         val sleeping = Playback.sleepAt != 0L || Playback.sleepAfterSong
         LazyColumn(Modifier.fillMaxSize().padding(top = if (sleeping) CHIP_STRIP else 0.dp), list) {
-            itemsIndexed(rows, contentType = { _, (header, _) -> header == null }) { _, (header, i) ->
-                if (header != null) {
+            itemsIndexed(rows, contentType = { _, (header, i) -> if (header == null) 0 else i }) { _, (header, i) ->
+                if (i == RADIO_LOADING) {
+                    LoadingRow(header!!)
+                } else if (header != null) {
                     Header(header)
                 } else {
                     val e = all[i]

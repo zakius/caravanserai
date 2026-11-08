@@ -150,6 +150,7 @@ Bottom block of the player, the same on the song, lyrics and queue views (only t
 
 - The queue has 3 sections: Now, Up next (pinned: radio never reorders or removes these; whether queued or the rest of a played list), Radio.
 - Each radio item shows why it's there ("same artist", "often played after X") when the API provides that.
+- While radio songs load and none are queued yet, the Radio section shows a spinner row: "Finding songs like ‹seed›". A server can take seconds to answer.
 - Tapping a song in search results or a Home shelf plays that song alone; YouTube's autoplay (radio) follows. Only album and playlist pages queue the rest of their list.
 - Radio leash setting: how far the radio may drift from the seed (close, medium, free). Default is free: YouTube's autoplay as is. The simplest thing that works: when close, filter radio results to the seed's artist and related artists.
 - Filters, each a setting and all on by default:
