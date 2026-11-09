@@ -1,13 +1,13 @@
-# roma
+# caravanserai
 
-roma romanizes every non-Latin title, artist and lyric line. This repository holds its romanization engine and two music players for Android, Linux and Windows built on it, whose controls stay in the same place:
+roma romanizes every non-Latin title, artist and lyric line. This repository, caravanserai, holds roma, its romanization engine, and two music players for Android, Linux and Windows built on it, whose controls stay in the same place:
 
 - **caravan**, for your own Subsonic or OpenSubsonic server (oasis, Navidrome, …), romanized by roma, headed for Google Play.
-- **roma ytm**, for YouTube Music, from [Releases](https://github.com/zakius/roma/releases). The rest of this page is about it.
+- **dragoman**, for YouTube Music, from [Releases](https://github.com/zakius/caravanserai/releases). The rest of this page is about it.
 
 https://github.com/user-attachments/assets/a9b0ed15-224c-46ec-89f7-82014df466c7
 
-Tiny and fast: roma ytm is a 1.7 MB download (caravan 1.5 MB); romanizing Japanese needs an optional dictionary, downloaded separately. Install it and tap around; that shows the speed better than a benchmark.
+Tiny and fast: dragoman is a 1.7 MB download (caravan 1.5 MB); romanizing Japanese needs an optional dictionary, downloaded separately. Install it and tap around; that shows the speed better than a benchmark.
 
 - **Romanization everywhere:** lists, player, queue, search, lyrics, notification.
   - Japanese: [Sudachi](https://github.com/WorksApplications/Sudachi) with SudachiDict core, Hepburn.
@@ -42,7 +42,7 @@ The desktop app shares the Android app's screens and logic (`shared/`, see [docs
 
 ```sh
 ./gradlew :desktop:run                      # run it
-tools/linux-packages.sh                     # dist/roma-ytm_<version>_amd64.deb and dist/roma-ytm-<version>-1.x86_64.rpm
+tools/linux-packages.sh                     # dist/dragoman_<version>_amd64.deb and dist/dragoman-<version>-1.x86_64.rpm
 ```
 
 Its first build also builds roma-aac (`tools/build-ffmpeg.sh`, needs musl-gcc: Debian's and Ubuntu's `musl-tools`), the small ffmpeg that decodes the few songs YouTube has only in AAC.
@@ -51,26 +51,26 @@ Its first build also builds roma-aac (`tools/build-ffmpeg.sh`, needs musl-gcc: D
 
 ### Android
 
-Get `roma-ytm-<version>.apk` from [Releases](https://github.com/zakius/roma/releases). If you want Japanese romanized, roma ytm offers to download its Japanese dictionary on the first start (32 MB, 62 MB on the phone), kept apart so its own updates stay small. The "roma Japanese dictionary" app that roma ytm 0.1.57 and earlier installed is no longer used: you can uninstall it.
+Get `dragoman-<version>.apk` from [Releases](https://github.com/zakius/caravanserai/releases). If you want Japanese romanized, dragoman offers to download its Japanese dictionary on the first start (32 MB, 62 MB on the phone), kept apart so its own updates stay small. The "roma Japanese dictionary" app that roma ytm 0.1.57 and earlier installed is no longer used: you can uninstall it.
 
 `caravan-<version>.apk`, in the same release, is caravan, the app for a Subsonic server (docs/subsonic.md).
 
 ### Linux
 
-[Releases](https://github.com/zakius/roma/releases) has two packages for x86_64, which run on your distribution's Java (21 or newer):
+[Releases](https://github.com/zakius/caravanserai/releases) has two packages for x86_64, which run on your distribution's Java (21 or newer):
 
 | File | For |
 |------|-----|
-| `roma-ytm_*_amd64.deb` | Debian 13, Ubuntu 24.04 and newer: `sudo apt install ./roma-ytm_*_amd64.deb` |
-| `roma-ytm-*.x86_64.rpm` | Fedora: `sudo dnf install ./roma-ytm-*.x86_64.rpm` |
+| `dragoman_*_amd64.deb` | Debian 13, Ubuntu 24.04 and newer: `sudo apt install ./dragoman_*_amd64.deb` |
+| `dragoman-*.x86_64.rpm` | Fedora: `sudo dnf install ./dragoman-*.x86_64.rpm` |
 
 ### Windows
 
-`roma-ytm-*-x64.msi` installs for your user without administrator rights; `roma-ytm-*-windows-x64.zip` is the same app to unpack and run (`roma-ytm.exe`). Both use your Java 21 or newer, or download [Eclipse Temurin](https://adoptium.net)'s on the first start (about 49 MB). `roma-ytm-*-x64-full.msi` includes Java.
+`dragoman-*-x64.msi` installs for your user without administrator rights; `dragoman-*-windows-x64.zip` is the same app to unpack and run (`dragoman.exe`). Both use your Java 21 or newer, or download [Eclipse Temurin](https://adoptium.net)'s on the first start (about 49 MB). `dragoman-*-x64-full.msi` includes Java.
 
 ### On the desktop
 
-The Japanese dictionary downloads on the first start if you want Japanese romanized (32 MB). Signing in and some songs need a Chromium-family browser (Chrome, Edge, Chromium, Brave, Vivaldi, Opera, oganesson…); roma ytm starts it with its own profile, never yours. Without one, roma ytm downloads Chromium (CEF, about 150 MB) when first needed. Esc and the mouse's back button go back.
+The Japanese dictionary downloads on the first start if you want Japanese romanized (32 MB). Signing in and some songs need a Chromium-family browser (Chrome, Edge, Chromium, Brave, Vivaldi, Opera, oganesson…); dragoman starts it with its own profile, never yours. Without one, dragoman downloads Chromium (CEF, about 150 MB) when first needed. Esc and the mouse's back button go back.
 
 ## Credits
 

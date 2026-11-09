@@ -2,7 +2,7 @@
 """Fails when one app carries the other's code (docs/subsonic.md, Two apps).
 
   residue_check.py subsonic <artifact>...   caravan: no YouTube code, client or string
-  residue_check.py youtube <artifact>...    roma ytm: no Subsonic code
+  residue_check.py youtube <artifact>...    dragoman: no Subsonic code
 
 An artifact is an APK, a jar, or a directory: a desktop distribution, whose files are all read (a jar's entries one
 by one), except the bundled Java runtime. Every file or entry is searched for each pattern, ignoring case, as UTF-8 and

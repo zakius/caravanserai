@@ -11,5 +11,5 @@ OUT=/tmp/roma-latency-$$.apk
 rm -f $OUT.aligned
 $BT/zipalign -f -p 4 $IN $OUT.aligned
 $BT/apksigner sign --ks ~/.android/debug.keystore --ks-pass pass:android --ks-key-alias androiddebugkey --out $OUT $OUT.aligned
-adb -s ${SERIAL:?} install -r $OUT || { adb -s $SERIAL uninstall com.zakius.roma; adb -s $SERIAL install $OUT; }
+adb -s ${SERIAL:?} install -r $OUT || { adb -s $SERIAL uninstall com.zakius.dragoman; adb -s $SERIAL install $OUT; }
 rm -f $OUT $OUT.aligned

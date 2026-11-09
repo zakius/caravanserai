@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- roma ytm's colour: YouTube Music's red, a shade off YouTube's own (the brand's colour, not its logo). Also the
+<!-- dragoman's colour: YouTube Music's red, a shade off YouTube's own (the brand's colour, not its logo). Also the
      app's accent (YouTubeMusic.brandColor). -->
 <resources>
     <color name="app_icon">#E62117</color>

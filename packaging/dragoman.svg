@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- dragoman's icon, on YouTube Music's red (a shade off YouTube's own): roma's glyph, the play triangle with a bar beneath it like the romanization under the original. Placed by
+       eye, not by the numbers: the triangle's box sits right of centre so it looks centred, the bar spans it, and the
+       pair is centred by weight. The same glyph in both apps (app/src/main/res/drawable/app_icon_foreground.xml). -->
+  <rect width="256" height="256" rx="56" fill="#E62117"/>
+  <path d="M94 66V154L170 110z" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="12" stroke-linejoin="round"/>
+  <rect x="94" y="176" width="76" height="14" rx="7" fill="#FFFFFF"/>
+</svg>

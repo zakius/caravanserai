@@ -10,7 +10,7 @@ val dictVersion = project(":core").extra["dictRelease"] as String
 val dictSha256 = project(":core").extra["dictSha256"] as String
 
 android {
-    namespace = "com.zakius.roma"
+    namespace = "com.zakius.caravanserai"
     compileSdk = 37
     buildToolsVersion = "37.0.0"
 
@@ -20,16 +20,16 @@ android {
         versionCode = 66
         versionName = "0.1.65"
         // `-Proma.dictBase=<url>` points a build at another folder holding the dictionary's zip.
-        val dictBase = (findProperty("roma.dictBase") as String?) ?: "https://github.com/zakius/roma/releases/download/dict-$dictVersion"
+        val dictBase = (findProperty("roma.dictBase") as String?) ?: "https://github.com/zakius/caravanserai/releases/download/dict-$dictVersion"
         buildConfigField("String", "DICT_URL", "\"$dictBase/roma-dict-$dictVersion.zip\"")
         buildConfigField("String", "DICT_VERSION", "\"$dictVersion\"")
         buildConfigField("String", "DICT_SHA256", "\"$dictSha256\"")
-        // The separate dictionary app of roma ytm 0.1.57 and earlier, which roma ytm tells the user to uninstall (Flavor.kt).
+        // The separate dictionary app of roma ytm 0.1.57 and earlier, which dragoman tells the user to uninstall (Flavor.kt).
         buildConfigField("String", "DICT_PACKAGE", "\"com.zakius.roma.dict\"")
         manifestPlaceholders["dictPackage"] = "com.zakius.roma.dict"
     }
 
-    // Two apps come from one codebase (docs/subsonic.md, "Two apps"). roma ytm (the youtube flavor) plays YouTube Music
+    // Two apps come from one codebase (docs/subsonic.md, "Two apps"). dragoman (the youtube flavor) plays YouTube Music
     // only and is released on GitHub. caravan (the subsonic flavor) is for Subsonic servers and Google Play, and its APK
     // carries no YouTube code at all. Each flavor brings its own music source.
     flavorDimensions += "app"

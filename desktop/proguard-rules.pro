@@ -1,7 +1,7 @@
 # The release distribution (createReleaseDistributable): shrinking and renaming, as finimal's desktop build does, into
 # one package with short names; no optimizing (ProGuard 7.8 and 7.10 fail on Kotlin 2.4's code). No line numbers or
 # generic signatures, which nothing reads (1.2 MB): stack traces name methods, read through build/proguard-mapping.txt
-# (roma ytm's: proguard-youtube.pro; retrace; each release attaches it). Exception names stay: the UI shows some.
+# (dragoman's: proguard-youtube.pro; retrace; each release attaches it). Exception names stay: the UI shows some.
 -dontoptimize
 -keepattributes *Annotation*, InnerClasses, Exceptions, EnclosingMethod
 -repackageclasses ''

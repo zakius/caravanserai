@@ -1,6 +1,6 @@
 #!/bin/bash
 # Builds roma-aac, the audio-only ffmpeg the desktop apps run for what they don't decode in Java (desktop/Media.kt):
-# - roma ytm's songs that YouTube has only in AAC, about 1 in 150 (AacPcm: ADTS frames on stdin, 16-bit PCM on stdout);
+# - dragoman's songs that YouTube has only in AAC, about 1 in 150 (AacPcm: ADTS frames on stdin, 16-bit PCM on stdout);
 # - caravan's files from a Subsonic server (FilePcm: MP3, FLAC, Ogg Vorbis or Opus, WAV or ADTS AAC on stdin, a 16-bit
 #   WAV on stdout).
 # It has nothing else: no network and no video. It is a static binary under the LGPL, with no GPL or non-free parts.

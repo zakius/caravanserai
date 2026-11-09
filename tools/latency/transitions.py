@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Times roma's view transitions on a USB phone: every ordered pair of tabs (first visit and revisit), of the
+"""Times dragoman's view transitions on a USB phone: every ordered pair of tabs (first visit and revisit), of the
 player's views, and Home to a page and back. Per transition: the frame the finger's release produces, from its vsync
 to FrameCompleted (dumpsys gfxinfo framestats), median over the rounds.
 
 Usage: transitions.py [rounds] [out.json] [groups, default first,tab,view,page]. Coordinates are for a 1080x2400 screen at 374 dpi (ASUS Zenfone 10).
-Takes the shared phone lock (/tmp/phone-adb.lock) per burst; start with roma installed and set up."""
+Takes the shared phone lock (/tmp/phone-adb.lock) per burst; start with dragoman installed and set up."""
 import json, statistics, subprocess, sys, time
 
-PKG = "com.zakius.roma"
+PKG = "com.zakius.dragoman"
 TABS = {"Home": (108, 2290), "Search": (324, 2290), "Player": (540, 2290), "Library": (756, 2290), "Settings": (972, 2290)}
 VIEWS = {"comments": (450, 2060), "lyrics": (630, 2060), "queue": (810, 2060)}  # each slot toggles its view and song
 ROW = (500, 465)  # Library's second playlist (the first, Liked Music, is long)

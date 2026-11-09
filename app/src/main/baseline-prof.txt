@@ -1,8 +1,8 @@
-# Code ART compiles ahead of time: roma's own and the libraries its launch runs through. Compose and the other
+# Code ART compiles ahead of time: The app's own and the libraries its launch runs through. Compose and the other
 # androidx libraries bring their own rules. Sudachi is left out: it runs after launch.
 # tools/repack_apk.py embeds the merged profile so ART compiles it when the APK is installed.
-HSPLcom/zakius/roma/**->**(**)**
-Lcom/zakius/roma/**;
+HSPLcom/zakius/caravanserai/**->**(**)**
+Lcom/zakius/caravanserai/**;
 HSPLroma/core/**->**(**)**
 Lroma/core/**;
 HSPLcom/metrolist/innertube/**->**(**)**

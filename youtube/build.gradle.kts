@@ -1,6 +1,6 @@
-// YouTube Music for roma ytm. It holds the vendored com.metrolist.innertube sources on top of InnerTubeX (also
+// YouTube Music for dragoman. It holds the vendored com.metrolist.innertube sources on top of InnerTubeX (also
 // vendored), running over HttpURLConnection (core's Http.kt); the stream lookup with its JavaScript player
-// (meow.nyx.quackjs); comments; the personal mixes; and the lyrics providers besides LRCLIB. Only roma ytm (the youtube
+// (meow.nyx.quackjs); comments; the personal mixes; and the lyrics providers besides LRCLIB. Only dragoman (the youtube
 // flavor) depends on this module, because caravan must carry none of it (docs/subsonic.md, "Two apps").
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 

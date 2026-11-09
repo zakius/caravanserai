@@ -1,12 +1,12 @@
-roma includes these libraries. Their licence texts are in this folder.
+This app includes these libraries. Their licence texts are in this folder.
 
 - Sudachi 0.8.2 (https://github.com/WorksApplications/Sudachi), Copyright (c) 2017-2026
   Works Applications Co., Ltd., Apache License 2.0 (LICENSE-2.0.txt).
 - jdartsclone 1.2.0 (https://github.com/WorksApplications/jdartsclone), Copyright (c) 2017
   Works Applications Co., Ltd., Apache License 2.0 (LICENSE-2.0.txt).
 - javax.json 1.1.4 (org.glassfish), Copyright (c) Oracle and/or its affiliates. It is offered
-  under CDDL 1.1 or GPL 2 with the Classpath Exception (CDDL+GPL-1.1.txt); roma uses it under
-  GPL 2 with the Classpath Exception. Its source code is attached to each roma release on GitHub
+  under CDDL 1.1 or GPL 2 with the Classpath Exception (CDDL+GPL-1.1.txt); the app uses it under
+  GPL 2 with the Classpath Exception. Its source code is attached to each release on GitHub
   (javax.json-1.1.4-sources.jar).
 
 roma changed these files from Sudachi:

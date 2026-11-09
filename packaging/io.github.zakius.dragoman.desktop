@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=dragoman
+Comment=YouTube Music, every title and lyric romanized
+Exec=dragoman
+Icon=io.github.zakius.dragoman
+Categories=AudioVideo;Audio;Player;
+StartupWMClass=com-zakius-caravanserai-MainKt

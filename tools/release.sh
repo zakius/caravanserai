@@ -1,6 +1,6 @@
 #!/bin/bash
 # Builds the release files. APKs are signed with the key named in keystore.properties, which is kept outside git.
-#   dist/roma-ytm-<version>.apk: roma ytm (the youtube flavor), shrunk by R8, recompressed with Zopfli
+#   dist/dragoman-<version>.apk: dragoman (the youtube flavor), shrunk by R8, recompressed with Zopfli
 #     (tools/repack_apk.py) and zipaligned. One APK covers arm64 and x86_64.
 #   dist/caravan-<version>.apk: caravan (the subsonic flavor), made the same way. tools/residue_check.py checks that
 #     neither carries the other's code, and fails the run if one does.
@@ -49,7 +49,7 @@ sign() { "$tools/apksigner" sign --v1-signing-enabled false --ks "$storeFile" --
 mkdir -p dist
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-for flavor in youtube:roma-ytm subsonic:caravan; do
+for flavor in youtube:dragoman subsonic:caravan; do
   out="dist/${flavor#*:}-$version.apk"
   python3 tools/repack_apk.py $apks/${flavor%:*}/release/app-${flavor%:*}-release-unsigned.apk "$tmp/repacked.apk"
   "$tools/zipalign" -f -P 16 4 "$tmp/repacked.apk" "$tmp/aligned.apk"
