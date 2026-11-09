@@ -1,7 +1,7 @@
-// Builds roma ytm and caravan for Linux and Windows. The app's screens and playback logic (shared/, also compiled into
-// :app) run on Compose for Desktop, with roma's own audio decoding and the system's Chromium-family browser for BotGuard
+// Builds dragoman and caravan for Linux and Windows. The app's screens and playback logic (shared/, also compiled into
+// :app) run on Compose for Desktop, with the app's own audio decoding and the system's Chromium-family browser for BotGuard
 // and sign-in (docs/design.md).
-// :desktop builds roma ytm, the YouTube Music app. caravan, the Subsonic app, is built by this script too, as
+// :desktop builds dragoman, the YouTube Music app. caravan, the Subsonic app, is built by this script too, as
 // :desktop-subsonic (settings.gradle.kts). It has its own sources (src/subsonic, shared/src/subsonic), name and
 // packages, and no YouTube code, browser or CEF (docs/subsonic.md, "Two apps").
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
@@ -42,7 +42,7 @@ kotlin {
     sourceSets["test"].kotlin.setSrcDirs(listOfNotNull("$src/test/kotlin", "$src/testYoutube/kotlin".takeIf { youtube }))
 }
 // Resources taken from the Android app: the player's icons (vector drawables, which Compose for Desktop reads too),
-// BotGuard's page (roma ytm only) and the licence notices. The flavor's own resources add the window's icon.
+// BotGuard's page (dragoman only) and the licence notices. The flavor's own resources add the window's icon.
 sourceSets["main"].resources.setSrcDirs(listOfNotNull(rootProject.file("app/src/main/res"), rootProject.file("app/src/main/assets"), rootProject.file("app/src/youtube/assets").takeIf { youtube }, "$src/$flavor/resources"))
 sourceSets["main"].resources.include("drawable/*.xml", "po_token.html", "NOTICE", "*.txt", "icon.png")
 
@@ -50,7 +50,7 @@ sourceSets["main"].resources.include("drawable/*.xml", "po_token.html", "NOTICE"
 val buildConfig = tasks.register("buildConfig") {
     val out = layout.buildDirectory.file("generated/buildConfig/BuildConfig.kt")
     val refuse = findProperty("roma.refuseVisionOs") == "true"
-    val dictBase = (findProperty("roma.dictBase") as String?) ?: "https://github.com/zakius/roma/releases/download/dict-$dictVersion"
+    val dictBase = (findProperty("roma.dictBase") as String?) ?: "https://github.com/zakius/caravanserai/releases/download/dict-$dictVersion"
     val jars = if (youtube) cefJars else provider { "" }
     val name = appName
     val dataSlug = slug
@@ -59,13 +59,13 @@ val buildConfig = tasks.register("buildConfig") {
     inputs.property("cef", jars)
     outputs.file(out)
     doLast {
-        // Only roma ytm has these: the CEF jars that Browser.kt fetches and the VISIONOS test switch (Streams).
+        // Only dragoman has these: the CEF jars that Browser.kt fetches and the VISIONOS test switch (Streams).
         val roma = if (!own) "" else """
             |    const val CEF_JARS = "${jars.get()}"
             |    const val REFUSE_VISIONOS = $refuse
             |""".trimMargin() + "\n"
         out.get().asFile.writeText("""
-            |package com.zakius.roma
+            |package com.zakius.caravanserai
             |
             |object BuildConfig {
             |    const val APP_NAME = "$name"
@@ -112,18 +112,18 @@ val copyAppResources = tasks.register<Sync>("copyAppResources") {
 }
 tasks.matching { it.name.startsWith("prepareAppResources") }.configureEach { dependsOn(copyAppResources) }
 
-// roma uses ICU4J only to transliterate. This builds ICU4J without the locale data roma never reads (dates, zones,
+// The app uses ICU4J only to transliterate. This builds ICU4J without the locale data the app never reads (dates, zones,
 // collation, units, names, line breaks, and word dictionaries other than Thai's) and without the transliteration rules
-// roma's transliterators never load (icuRules). ProGuard then drops the classes transliteration doesn't reach, which
+// The app's transliterators never load (icuRules). ProGuard then drops the classes transliteration doesn't reach, which
 // shrinks the jar from 15.2 to 2.1 MB. :desktop:icuCheck shows that the released jar gives the full jar's output on every
-// assigned code point, for every transliterator roma uses.
+// assigned code point, for every transliterator the app uses.
 val icu = configurations.create("icu")
 val icuTrim = sourceSets.create("icuTrim") { java.setSrcDirs(listOf("$src/icuTrim/java")) }
 configurations[icuTrim.implementationConfigurationName].extendsFrom(icu)
 sourceSets.test { compileClasspath += icuTrim.output; runtimeClasspath += icuTrim.output }
 val icuRules = tasks.register<JavaExec>("icuRules") {
     classpath = icuTrim.runtimeClasspath
-    mainClass = "com.zakius.roma.IcuTrim"
+    mainClass = "com.zakius.caravanserai.IcuTrim"
     val out = layout.buildDirectory.file("icu/root.res")
     outputs.file(out)
     args(out.get().asFile.path)
@@ -166,7 +166,7 @@ dependencies {
     testImplementation(files(icu)) // icuCheck compares the slim jar against it
     // Opus, the format YouTube serves nearly every song in, decoded in pure Java. AAC goes to roma-aac.
     implementation("io.github.jaredmdobson:concentus:1.0.2")
-    // CEF is roma's own Chromium for BotGuard and sign-in when the system has no Chromium-family browser. Like CEF
+    // CEF is the app's own Chromium for BotGuard and sign-in when the system has no Chromium-family browser. Like CEF
     // itself, its Java side isn't packaged: Browser.kt downloads these jars on first need (BuildConfig.CEF_JARS pins
     // them). It stays on 146 because CEF 152 exits at start on Linux (code 28), off-screen or not.
     if (youtube) {
@@ -179,8 +179,8 @@ dependencies {
 
 compose.desktop {
     application {
-        mainClass = "com.zakius.roma.MainKt"
-        // The release distribution (createReleaseDistributable) runs ProGuard to drop what roma never calls.
+        mainClass = "com.zakius.caravanserai.MainKt"
+        // The release distribution (createReleaseDistributable) runs ProGuard to drop what the app never calls.
         buildTypes.release.proguard {
             configurationFiles.from(listOfNotNull(rootProject.file("desktop/proguard-rules.pro"), rootProject.file("desktop/proguard-youtube.pro").takeIf { youtube }))
             obfuscate = true
@@ -208,7 +208,7 @@ compose.desktop {
                 perUserInstall = true
                 shortcut = true
                 // Fixed, so a new .msi (full or small) replaces the installed version instead of installing beside it.
-                upgradeUuid = if (youtube) "6d0b7c3e-1f5a-4d7e-9a43-6f8f0b2c9e41" else "3f2a9c5e-8b14-4d6f-a0e7-5c9d2b71e486"
+                upgradeUuid = if (youtube) "664c4038-0414-4573-a00c-30cd42d48574" else "3f2a9c5e-8b14-4d6f-a0e7-5c9d2b71e486"
             }
         }
     }
@@ -222,14 +222,14 @@ dependencies { testImplementation(kotlin("test")) }
 tasks.test { useJUnitPlatform() }
 tasks.register<JavaExec>("decodeCheck") {
     classpath = sourceSets["test"].runtimeClasspath
-    mainClass = "com.zakius.roma.DecodeCheckKt"
+    mainClass = "com.zakius.caravanserai.DecodeCheckKt"
     dependsOn(copyAppResources)
     systemProperty("roma.aac", (findProperty("aac") as String?) ?: File(aacDir, if (windowsHost) "windows/roma-aac.exe" else "linux/roma-aac").path)
     args((findProperty("files") as String? ?: "").split(',').filter { it.isNotBlank() })
 }
 if (youtube) tasks.register<JavaExec>("botGuardCheck") {
     classpath = sourceSets["test"].runtimeClasspath
-    mainClass = "com.zakius.roma.BotGuardCheckKt"
+    mainClass = "com.zakius.caravanserai.BotGuardCheckKt"
     if (project.hasProperty("cef")) systemProperty("cef", "")
 }
 
@@ -287,7 +287,7 @@ tasks.matching { it.name == "createDistributable" || it.name == "createReleaseDi
     }
 }
 
-// Compose's default ProGuard rules keep all of Kotlin's standard library (5.6 MB of jars, most of which roma doesn't
+// Compose's default ProGuard rules keep all of Kotlin's standard library (5.6 MB of jars, most of which the app doesn't
 // call), all of Skia's Java side, and every serializer whole and by name, which keeps the YouTube models' package names
 // too. This removes those rules. Skia's native code needs only what proguard-rules.pro keeps, and kotlinx.serialization
 // gets its own rules there, the same ones Android's R8 reads.
@@ -319,14 +319,14 @@ val skiaFull = tasks.register<Copy>("skiaFull") {
 }
 tasks.register<JavaExec>("skiaCheck") {
     classpath = sourceSets["test"].runtimeClasspath
-    mainClass = "com.zakius.roma.SkiaCheckKt"
+    mainClass = "com.zakius.caravanserai.SkiaCheckKt"
     val app = "compose/binaries/main-release/app/$slug/" + if (windowsHost) "app" else "lib/app" // jpackage's layouts
     args(skiaFull.get().destinationDir.path, layout.buildDirectory.dir(app).get().asFile.path)
     dependsOn(skiaFull, "createReleaseDistributable")
 }
 tasks.register<JavaExec>("icuCheck") {
     classpath = sourceSets["test"].runtimeClasspath
-    mainClass = "com.zakius.roma.IcuCheckKt"
+    mainClass = "com.zakius.caravanserai.IcuCheckKt"
     val app = layout.buildDirectory.dir("compose/binaries/main-release/app/$slug/lib/app")
     argumentProviders += CommandLineArgumentProvider {
         listOf(icu.singleFile.path, app.get().asFile.listFiles()!!.single { it.name.startsWith("icu4j-slim") }.path)

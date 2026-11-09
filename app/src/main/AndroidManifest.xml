@@ -7,12 +7,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <!-- roma ytm's own updates (Update.kt); the Subsonic app has none. -->
+    <!-- dragoman's own updates (Update.kt); the Subsonic app has none. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <!-- Android 12+: roma updating itself, once it installed itself, without asking each time -->
+    <!-- Android 12+: The app updating itself, once it installed itself, without asking each time -->
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
-    <!-- The dictionary app of roma ytm 0.1.57 and earlier, which roma ytm says can go (Flavor.kt). -->
+    <!-- The dictionary app of roma ytm 0.1.57 and earlier, which dragoman says can go (Flavor.kt). -->
     <queries>
         <package android:name="${dictPackage}" />
     </queries>
@@ -54,12 +54,12 @@
                 <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
-        <!-- Without emoji2's start-up step: it looks up a downloadable emoji font (package manager calls) before roma's
+        <!-- Without emoji2's start-up step: it looks up a downloadable emoji font (package manager calls) before the app's
              code runs, then lays text out again when it arrives. The system font's emoji are used instead. -->
         <provider android:name="androidx.startup.InitializationProvider" android:authorities="${applicationId}.androidx-startup" tools:node="merge">
             <meta-data android:name="androidx.emoji2.text.EmojiCompatInitializer" tools:node="remove" />
         </provider>
-        <!-- A headset's or car's Play button when roma isn't running: it starts the service, which resumes. -->
+        <!-- A headset's or car's Play button when the app isn't running: it starts the service, which resumes. -->
         <receiver android:name=".MediaButtons" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MEDIA_BUTTON" />

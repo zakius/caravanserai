@@ -1,8 +1,8 @@
 #!/bin/bash
-# Builds roma ytm's Windows packages from the release app image (createReleaseDistributable, whose Skia ICU data is
+# Builds dragoman's Windows packages from the release app image (createReleaseDistributable, whose Skia ICU data is
 # trimmed):
-# - dist/roma-ytm-<version>-x64-full.msi, with its own Java;
-# - dist/roma-ytm-<version>-x64.msi and dist/roma-ytm-<version>-windows-x64.zip, the small builds: the app without its
+# - dist/dragoman-<version>-x64-full.msi, with its own Java;
+# - dist/dragoman-<version>-x64.msi and dist/dragoman-<version>-windows-x64.zip, the small builds: the app without its
 #   Java runtime, started by packaging/windows/Launcher.cs, which finds Java 21 or later on the machine or downloads
 #   Temurin's JRE once (about 49 MB). This follows finimal's small build, minus libmpv. The small app image stays in
 #   desktop/build/windows-small for CI.
@@ -28,18 +28,18 @@ static class Pins
 }
 PINS
 /c/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe -nologo -optimize -target:winexe \
-  -out:"$(cygpath -w "$tmp/roma-ytm.exe")" -win32icon:"$(cygpath -w packaging/roma-ytm.ico)" \
+  -out:"$(cygpath -w "$tmp/dragoman.exe")" -win32icon:"$(cygpath -w packaging/dragoman.ico)" \
   -r:System.IO.Compression.dll -r:System.IO.Compression.FileSystem.dll -r:System.Windows.Forms.dll -r:System.Drawing.dll \
   "$(cygpath -w packaging/windows/Launcher.cs)" "$(cygpath -w "$tmp/Pins.cs")"
 
-small=desktop/build/windows-small/roma-ytm
+small=desktop/build/windows-small/dragoman
 rm -rf "$small"
 mkdir -p "$(dirname "$small")" dist
-cp -r desktop/build/compose/binaries/main-release/app/roma-ytm "$small"
+cp -r desktop/build/compose/binaries/main-release/app/dragoman "$small"
 rm -rf "$small/runtime"
-rm -f "$small/roma-ytm.exe" # jpackage's launcher, read-only
-cp "$tmp/roma-ytm.exe" "$small/roma-ytm.exe"
-(cd "$(dirname "$small")" && 7z a -tzip -mx=9 "$OLDPWD/dist/roma-ytm-$version-windows-x64.zip" roma-ytm > /dev/null)
+rm -f "$small/dragoman.exe" # jpackage's launcher, read-only
+cp "$tmp/dragoman.exe" "$small/dragoman.exe"
+(cd "$(dirname "$small")" && 7z a -tzip -mx=9 "$OLDPWD/dist/dragoman-$version-windows-x64.zip" dragoman > /dev/null)
 
 # Both installers share one upgrade code, so either build replaces the other.
 candle=$(find desktop/build build ~/AppData/Local -name candle.exe 2> /dev/null | head -n 1)
@@ -48,11 +48,11 @@ candle=$(find desktop/build build ~/AppData/Local -name candle.exe 2> /dev/null 
 msi() {
   rm -rf "$tmp/msi"
   PATH="$(dirname "$candle"):$PATH" "$JAVA_HOME/bin/jpackage" --type msi --app-image "$(cygpath -w "$1")" \
-    --name roma-ytm --app-version "$version" --vendor zakius --description "YouTube Music, every title and lyric romanized" \
-    --license-file LICENSE --win-per-user-install --win-menu --win-menu-group "roma ytm" --win-shortcut \
-    --win-upgrade-uuid 6d0b7c3e-1f5a-4d7e-9a43-6f8f0b2c9e41 --dest "$(cygpath -w "$tmp/msi")"
+    --name dragoman --app-version "$version" --vendor zakius --description "YouTube Music, every title and lyric romanized" \
+    --license-file LICENSE --win-per-user-install --win-menu --win-menu-group "dragoman" --win-shortcut \
+    --win-upgrade-uuid 664c4038-0414-4573-a00c-30cd42d48574 --dest "$(cygpath -w "$tmp/msi")"
   cp "$tmp"/msi/*.msi "$2"
 }
-msi "$small" "dist/roma-ytm-$version-x64.msi"
-msi desktop/build/compose/binaries/main-release/app/roma-ytm "dist/roma-ytm-$version-x64-full.msi"
-ls -l dist/roma-ytm-"$version"-*
+msi "$small" "dist/dragoman-$version-x64.msi"
+msi desktop/build/compose/binaries/main-release/app/dragoman "dist/dragoman-$version-x64-full.msi"
+ls -l dist/dragoman-"$version"-*
