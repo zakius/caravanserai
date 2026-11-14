@@ -295,14 +295,23 @@ object SubsonicSource : Source {
     override val searchIsLocal = true
     override suspend fun suggestions(query: String) = emptyList<String>()
 
-    /** The index's matches at once, then the server's own results after them. */
+    /**
+     * The index's matches at once, then the server's own results after them. A server can take many seconds: oasis asks
+     * YouTube Music and MusicBrainz. When it can't be asked, the index's matches are the answer; with none of those the
+     * search fails, because "No results" would be said of music the server may well have.
+     */
     override suspend fun search(query: String, filter: Int, asTyped: String?, partial: suspend (Found) -> Unit): Found {
         val local = searchLocal(query, filter)
         if (filter == 3) return local
-        partial(local)
+        partial(Found(local.items, searching = true))
         val l = lib()
         val r = Store.romanizer
-        val found = runCatching { need().search(query) }.getOrNull() ?: return local
+        val found = try {
+            need().search(query)
+        } catch (e: Exception) {
+            if (local.items.isEmpty()) throw e
+            return local
+        }
         val remote = when (filter) {
             0 -> {
                 val songs = found.first.map { sub -> l.byId[SubsonicIds.encode(sub.id)] ?: r.song(sub) }

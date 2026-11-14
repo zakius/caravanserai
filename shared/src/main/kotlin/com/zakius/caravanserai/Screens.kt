@@ -1219,6 +1219,13 @@ fun SearchScreen() {
                 }
                 item { Header(source.name) }
             }
+            fun LazyListScope.searchingRow() {
+                item {
+                    Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                }
+            }
             val searchKey = listOf(submitted, filter, asTyped).toString()
             Loader(
                 searchKey,
@@ -1227,11 +1234,7 @@ fun SearchScreen() {
                 loading = {
                     LazyColumn(Modifier.fillMaxSize()) {
                         localRows()
-                        item {
-                            Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                                CircularProgressIndicator()
-                            }
-                        }
+                        searchingRow()
                     }
                 },
             ) { found ->
@@ -1284,7 +1287,7 @@ fun SearchScreen() {
                             }
                         }
                     }
-                    if (found.items.isEmpty()) {
+                    if (found.items.isEmpty() && !found.searching) {
                         item {
                             Box(Modifier.fillParentMaxSize()) {
                                 Centered("No results for “$submitted”. Check the spelling, or try another filter above.")
@@ -1299,6 +1302,8 @@ fun SearchScreen() {
                             ItemRow(item) { openItem(item) }
                         }
                     }
+                    // The source's first results are up and it still looks for more.
+                    if (found.searching) searchingRow()
                 }
             }
         }

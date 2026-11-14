@@ -142,7 +142,7 @@ Bottom block of the player, the same on the song, lyrics and queue views (only t
 - Chips over the upper area (Translate, the sleep timer) are pills on the 16 dp edge inside a 48 dp touch target; the strip above the lists is that tall. The queue keeps the strip only while the sleep timer runs.
 - Buttons have Material's disabled colours, not an alpha layer.
 - Home signed out, and the Library tab without a library, show the same centred hint and filled button. The nav bar's background runs under the system gesture strip.
-- Search: a clear button in the field; with nothing typed, a line saying what it searches. A source that searches its own index (Subsonic) answers as you type; YouTube Music on Enter, with its suggestions while the text differs from the last search, never the old results.
+- Search: a clear button in the field; with nothing typed, a line saying what it searches. A source that searches its own index (Subsonic) answers as you type; YouTube Music on Enter, with its suggestions while the text differs from the last search, never the old results. While a source that has shown its first results still looks for more (Subsonic: the index's matches are up, the server hasn't answered), a spinner row sits under them; "No results" is said only of a search that has ended.
 - The notification permission is asked once, right after the first start's questions, not over the player at the first song.
 - Text fields: single-line fields have no spell check. A placeholder is fainter than typed text and, under a label, shows only while the field has focus.
 

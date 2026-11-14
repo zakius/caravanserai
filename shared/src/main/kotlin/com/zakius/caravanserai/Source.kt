@@ -26,9 +26,16 @@ class Detail(
 
 /**
  * Search results. [corrected], [autoCorrected] and [originalParams] describe the source's spelling correction, and
- * are left empty by sources that don't correct.
+ * are left empty by sources that don't correct. [searching] marks first results handed over while the source still
+ * looks for more: the screen shows a spinner under them, and says "No results" only of a search that has ended.
  */
-class Found(val items: List<Item>, val corrected: String? = null, val autoCorrected: Boolean = false, val originalParams: String? = null)
+class Found(
+    val items: List<Item>,
+    val corrected: String? = null,
+    val autoCorrected: Boolean = false,
+    val originalParams: String? = null,
+    val searching: Boolean = false,
+)
 
 /** Songs and where the next page starts. [next] is null on the last page. */
 class SongPage(val songs: List<Song>, val next: String?)
