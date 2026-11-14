@@ -67,7 +67,7 @@ class SubsonicTest {
                         list + "]"
                     }
                     "search3" -> {
-                        val offset = if (emptySearch) songs.size else if (ignoreOffset) 0 else p("songOffset")!!.toInt()
+                        val offset = if (emptySearch) songs.size else if (ignoreOffset) 0 else p("songOffset")?.toInt() ?: 0
                         val latin = p("romanization") == "both"
                         val page = songs.drop(offset).take(p("songCount")!!.toInt())
                         val listed = page.map { song ->
@@ -216,6 +216,16 @@ class SubsonicTest {
         assertEquals("YOASOBI", index.artists.single().name)
         assertEquals(203, index.songs[2].duration)
         assertEquals(true, index.serverScrobbles)
+    }
+
+    @Test fun searchAsksForOneKindOnly() {
+        val client = SubsonicClient(url, "admin", "secret")
+        assertEquals(7, client.search("夜", kind = 0).first.size)
+        client.search("夜", kind = 1)
+        val asked = calls.filter { it.first == "search3" }.map { it.second.toMap() }
+        val counts = listOf("songCount", "albumCount", "artistCount")
+        assertEquals(listOf("30", "0", "0"), counts.map { asked[0][it] })
+        assertEquals(listOf("0", "30", "0"), counts.map { asked[1][it] })
     }
 
     @Test fun syncAlbumByAlbumWhenTheEmptySearchFindsNothing() {

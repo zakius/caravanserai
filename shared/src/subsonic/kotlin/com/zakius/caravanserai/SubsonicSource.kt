@@ -296,9 +296,10 @@ object SubsonicSource : Source {
     override suspend fun suggestions(query: String) = emptyList<String>()
 
     /**
-     * The index's matches at once, then the server's own results after them. A server can take many seconds: oasis asks
-     * YouTube Music and MusicBrainz. When it can't be asked, the index's matches are the answer; with none of those the
-     * search fails, because "No results" would be said of music the server may well have.
+     * The index's matches at once, then the server's own results after them, asked for the filter's kind alone. A server
+     * can take many seconds: oasis asks YouTube Music, and MusicBrainz too for albums and artists. When it can't be
+     * asked, the index's matches are the answer; with none of those the search fails, because "No results" would be
+     * said of music the server may well have.
      */
     override suspend fun search(query: String, filter: Int, asTyped: String?, partial: suspend (Found) -> Unit): Found {
         val local = searchLocal(query, filter)
@@ -307,7 +308,7 @@ object SubsonicSource : Source {
         val l = lib()
         val r = Store.romanizer
         val found = try {
-            need().search(query)
+            need().search(query, filter)
         } catch (e: Exception) {
             if (local.items.isEmpty()) throw e
             return local
