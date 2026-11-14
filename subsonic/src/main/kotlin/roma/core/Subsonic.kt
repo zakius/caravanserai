@@ -369,9 +369,14 @@ class SubsonicClient(url: String, val user: String, private val password: String
         return result?.get("song").arr().orEmpty().mapNotNull { song(it, romanization) }
     }
 
-    /** The server's own search. */
-    fun search(query: String, count: Int = 30): Triple<List<SubSong>, List<SubAlbum>, List<SubArtist>> {
-        val params = listOf("query" to query, "songCount" to "$count", "albumCount" to "$count", "artistCount" to "$count")
+    /**
+     * The server's own search for one [kind]: 0 songs, 1 albums, 2 artists. The other two are asked for with a count
+     * of 0, so the server doesn't look them up. oasis asks MusicBrainz for the artists and for the albums a search
+     * wants, which can take many seconds, and a search for songs needs neither.
+     */
+    fun search(query: String, kind: Int, count: Int = 30): Triple<List<SubSong>, List<SubAlbum>, List<SubArtist>> {
+        fun wanted(k: Int) = if (k == kind) "$count" else "0"
+        val params = listOf("query" to query, "songCount" to wanted(0), "albumCount" to wanted(1), "artistCount" to wanted(2))
         val r = call("search3", params)["searchResult3"].obj()
         val songs = r?.get("song").arr().orEmpty().mapNotNull { song(it, romanization) }
         val albums = r?.get("album").arr().orEmpty().mapNotNull { album(it, romanization, oasis) }
