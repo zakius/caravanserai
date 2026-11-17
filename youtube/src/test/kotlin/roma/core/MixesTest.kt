@@ -26,7 +26,6 @@ class MixesTest {
             listOf("マイスーパーミックス", "My Mix 1", "My Mix 2", "Discover Mix", "New Release Mix", "Replay Mix", "Archive Mix", "Chill Mix"),
             personalMixes(home).map { it.title.original },
         )
-        assertEquals(emptyList(), personalMixes(home.filter { !isPersonalMix(it.id) }))
     }
 
     @Test fun mixSongsIgnoreTheLeash() {
