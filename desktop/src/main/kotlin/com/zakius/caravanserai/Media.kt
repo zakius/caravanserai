@@ -151,9 +151,6 @@ class FedProcess(command: List<String>, name: String, feed: (java.io.OutputStrea
         start()
     }
 
-    /** The feeding thread is still at it. */
-    val feeding get() = writer.isAlive
-
     /**
      * Kills the process and lets go of its pipes without waiting for anything. Process.destroy would close the input
      * first, which waits for the feeder's write. When the process is stuck writing output that nobody reads any more,

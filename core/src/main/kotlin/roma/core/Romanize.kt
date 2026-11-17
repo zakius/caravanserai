@@ -638,7 +638,7 @@ class Romanizer(
     }
 
     /** Katakana (or hiragana) to Modified Hepburn. */
-    fun kana(input: String): String {
+    private fun kana(input: String): String {
         val s = toKatakana(input)
         val out = StringBuilder()
         var i = 0
@@ -1046,7 +1046,7 @@ class Romanizer(
          * Lyrics typed on Chinese keyboards often write the katakana long-vowel mark ー as the kanji 一 or a dash:
          * ブル一ライト. After katakana, and not before a kanji (カード一枚 is "one card"), those mean ー.
          */
-        fun longVowelMarks(s: String) = s
+        private fun longVowelMarks(s: String) = s
             .replace(Regex("(?<=[ァ-ヺ])[一—―－‐](?=[ァ-ヺ]|[^\\p{IsHan}]|$)"), "ー")
             .replace(Regex("(?<=[ァ-ヺ])-(?=[ァ-ヺ])"), "ー")
 

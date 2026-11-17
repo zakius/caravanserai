@@ -17,8 +17,6 @@ import kotlin.math.abs
 object SubsonicIds {
     const val PREFIX = "s."
 
-    fun of(id: String) = id.startsWith(PREFIX)
-
     fun encode(raw: String) = PREFIX + buildString {
         for (b in raw.toByteArray()) {
             val c = b.toInt().toChar()
@@ -540,7 +538,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
         private const val PAIRING_WINDOW_MS = 1000L
         private val random = SecureRandom()
         private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
-        fun md5(s: String) = MessageDigest.getInstance("MD5").digest(s.toByteArray()).joinToString("") { byte -> "%02x".format(byte) }
+        private fun md5(s: String) = MessageDigest.getInstance("MD5").digest(s.toByteArray()).joinToString("") { byte -> "%02x".format(byte) }
 
         const val ROMANIZATION = "romanization"
         const val OASIS = "oasis"

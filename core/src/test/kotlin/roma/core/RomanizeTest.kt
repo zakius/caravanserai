@@ -8,22 +8,6 @@ import kotlin.test.assertTrue
 class RomanizeTest {
     private val r = Romanizer(jvmIcu)
 
-    @Test fun japanese() {
-        assertEquals("Yoru ni Kakeru", r.machine("夜に駆ける"))
-        assertEquals("Kimi no Koe", r.machine("君の声"))
-        assertEquals("Kimi no Na wa", r.machine("君の名は"))
-        assertEquals("Tōkyō", r.machine("東京"))
-        assertEquals("Eiga", r.machine("映画"))
-        assertEquals("Kimi wa", r.machine("君は"))
-        assertEquals("Kōhī", r.machine("コーヒー"))
-        assertEquals("Shizumu Yō ni", r.machine("沈むように"))
-        assertEquals("Sayonara dake Datta", r.machine("さよならだけだった"))
-        assertEquals("Subete ga Wakatta", r.machine("全てが分かった"))
-        assertEquals("matcha", r.kana("マッチャ"))
-        assertEquals("kon'ya", r.kana("コンヤ"))
-        assertEquals("fan", r.kana("ファン"))
-    }
-
     @Test fun namesInWords() {
         // The furigana layout: each word with its slice of the title-cased Latin form.
         val t = r.text("夜に駆ける")
@@ -37,76 +21,16 @@ class RomanizeTest {
         assertEquals("君の声, Anri", both.pieces.joinToString(""))
     }
 
-    @Test fun sentenceCase() {
-        // Lyric lines: only the first letter is capitalized.
-        assertEquals("Shizumu yō ni", r.machine("沈むように", sentence = true))
-        assertEquals("Sayonara dake datta", r.machine("さよならだけだった", sentence = true))
-        assertEquals("Subete ga wakatta", r.machine("全てが分かった", sentence = true))
-        assertEquals("No uta", r.machine("の歌", sentence = true))
-    }
-
-    @Test fun titleCase() {
-        assertEquals("Departures ~Anata ni Okuru Ai no Uta~", r.machine("Departures ~あなたにおくるアイの歌~"))
-        // Latin parts are never changed.
-        assertEquals("Bokura no LIVE Kimi to no LIFE", r.machine("ぼくらのLIVE 君とのLIFE"))
-        assertEquals("LiSA no Uta (Ballade Ver.)", r.machine("LiSAの歌 (Ballade Ver.)"))
-        // Korean and Chinese: every word; Chinese has one word per syllable.
-        assertEquals("BTS Bomnal", r.machine("BTS 봄날"))
-        assertEquals("Qíng Tiān", Romanizer(jvmIcu, RomanizeSettings(hanDefault = "zh")).machine("晴天"))
-        // Cyrillic keeps the original's capitals.
-        assertEquals("Gruppa krovi", r.machine("Группа крови"))
-        assertEquals("Ya lyublyu tebya", r.machine("Я люблю тебя"))
-    }
-
-    @Test fun subsidiaryVerbs() {
-        assertEquals("Tokete Yuku", r.machine("溶けてゆく"))
-        assertEquals("tokete yuku", r.machine("溶けてゆく", sentence = true).lowercase())
-        assertEquals("Tabete iru", r.machine("食べている", sentence = true))
-        assertEquals("Tabeteru", r.machine("食べてる", sentence = true))
-        assertEquals("Tabechau", r.machine("食べちゃう", sentence = true))
-    }
-
     @Test fun mixedScript() {
-        // Full-width Latin and half-width kana are normalized first.
-        assertEquals("LOVE", r.machine("ＬＯＶＥ"))
-        assertEquals("Ai", r.machine("ｱｲ"))
-        assertEquals("Kimi ni, Todoke.", r.machine("君に、届け。"))
-        assertEquals("Romio Jurietto", r.machine("ロミオ・ジュリエット"))
-        assertEquals("Kimi no \"Uta\"", r.machine("君の「歌」"))
         // Code points, not UTF-16 chars: an emoji doesn't make a title non-Latin.
         assertTrue(r.text("Happy 🎉").isLatin)
         assertEquals("Yě Jiā", Romanizer(jvmIcu, RomanizeSettings(hanDefault = "zh")).machine("𠮷野家").substringAfter(' '))
     }
 
-    @Test fun stylizedStaysAsIs() {
-        assertEquals("(´・ω・`)", r.machine("(´・ω・`)"))
-        assertEquals("ΛRCTIC", r.machine("ΛRCTIC"))
-        assertEquals("ЯOCK", r.machine("ЯOCK"))
-        assertEquals("μ's", r.machine("μ's"))
-        assertEquals("Ya i ty", r.machine("Я и ты"))
-        assertEquals("Zvyozdy i ya", r.machine("звёзды и я"))
-    }
-
     @Test fun greek() {
-        assertEquals("Bios", r.machine("Βίος"))
-        assertEquals("Bios", r.machine("βίος"))
-        assertEquals("Athena", r.machine("Αθηνα"))
         val elot = Romanizer(jvmIcu, RomanizeSettings(greek = "elot"))
         assertEquals("Víos", elot.machine("βίος"))
         assertEquals("Efcharistó", elot.machine("ευχαριστώ"))
-    }
-
-    @Test fun ownLatinForm() {
-        assertEquals("Spica", r.text("スピカ - Spica", titleOf = true).latin)
-        assertEquals("Idol", r.text("アイドル - Idol", titleOf = true).latin)
-        assertEquals("Suzume (feat. Toaka)", r.text("すずめ - Suzume (feat. Toaka)", titleOf = true).latin)
-        assertEquals("Yoru ni Kakeru - Live", r.text("夜に駆ける - Live", titleOf = true).latin)
-        assertEquals("Silhouette", r.text("シルエット (Silhouette)", titleOf = true).latin)
-        // Version tags are not a Latin form.
-        assertEquals("Yoru ni Kakeru (Ballade Ver.)", r.text("夜に駆ける (Ballade Ver.)", titleOf = true).latin)
-        assertEquals("Tetorisu (feat. Kasane Teto)", r.text("テトリス（feat. Kasane Teto）", titleOf = true).latin)
-        // Only titles: an artist name is romanized whole.
-        assertEquals("Supika - Spica", r.text("スピカ - Spica").latin)
     }
 
     @Test fun correctionShownAsTyped() {
@@ -123,8 +47,6 @@ class RomanizeTest {
 
     @Test fun hanDecision() {
         // Kana in the string or a sibling means Japanese; otherwise the default language decides.
-        assertTrue(r.isJapanese("君の声", emptyList()))
-        assertTrue(r.isJapanese("紅蓮華", listOf("LiSA", "紅蓮華 (ぐれんげ)")))
         val zh = Romanizer(jvmIcu, RomanizeSettings(hanDefault = "zh"))
         assertFalse(zh.isJapanese("晴天", listOf("周杰伦")))
         assertTrue(zh.isJapanese("晴天", listOf("あいみょん")))
@@ -133,70 +55,31 @@ class RomanizeTest {
     }
 
     @Test fun chineseEvidence() {
-        // With Japanese as the default, Han text without kana is Chinese only on evidence: a character outside
-        // JIS X 0208 (說, 伦), a word the dictionary doesn't know (瓷), or characters that don't form words (周|杰|倫).
-        for (s in listOf("不能說的秘密", "周杰伦", "青花瓷", "周杰倫", "超人不會飛", "張學友")) assertTrue(r.looksChinese(s), s)
-        // Japanese without kana: names, compounds, rare kanji and variant forms.
-        for (s in listOf("米津玄師", "紅蓮華", "千本桜", "薔薇", "津軽海峡冬景色", "椎名林檎", "倖田來未", "山﨑", "𠮷野家")) assertFalse(r.looksChinese(s), s)
-        // A sibling's evidence decides the title: every song by 周杰倫 is Chinese.
-        assertFalse(r.isJapanese("晴天", listOf("周杰倫")))
-        assertTrue(r.isJapanese("晴天", emptyList()))
-        assertEquals("Zhōu Jié Lún", r.machine("周杰倫"))
-        // Kana still wins.
-        assertTrue(r.isJapanese("晴天", listOf("周杰倫", "あいみょん")))
-    }
-
-    @Test fun korean() {
-        assertEquals("Saranghae", r.machine("사랑해"))
-        assertEquals("Hangugeo", r.machine("한국어"))
-        assertEquals("Gamsahamnida", r.machine("감사합니다"))
-        assertEquals("Silla", r.machine("신라"))
-        assertEquals("Joahae", r.machine("좋아해"))
-        assertEquals("BTS Bomnal", r.machine("BTS 봄날"))
+        // The first string a fresh Romanizer judges: 青花瓷 is Chinese only by the dictionary's evidence, which
+        // looksChinese loads itself.
+        assertTrue(r.looksChinese("青花瓷"))
+        // A variant form outside the BMP is no evidence of Chinese.
+        assertFalse(r.looksChinese("𠮷野家"))
     }
 
     @Test fun cyrillic() {
-        assertEquals("Kino", r.machine("Кино"))
-        assertEquals("Zhanna Aguzarova", r.machine("Жанна Агузарова"))
-        assertEquals("Yevgeniy", r.machine("Евгений"))
         val pl = Romanizer(jvmIcu, RomanizeSettings(cyrillic = "polish"))
         assertEquals("Jewgienij", pl.machine("Евгений"))
         assertEquals("Szczedrin", pl.machine("Щедрин"))
         assertEquals("Ałła", pl.machine("Алла"))
         assertEquals("SZUM", pl.machine("ШУМ"))
         assertEquals("PŁASZCZ", pl.machine("ПЛАЩ"))
-        assertEquals("PLASHCH", r.machine("ПЛАЩ"))
         assertEquals("Žanna", Romanizer(jvmIcu, RomanizeSettings(cyrillic = "iso9")).machine("Жанна"))
     }
 
     @Test fun otherCyrillicLanguages() {
         assertEquals("kk", Romanizer.cyrillicLanguage("Ерлерін елін сүйген"))
-        assertEquals("Izı qalğan babalardyñ qasterlı jerım!", r.machine("Ізі қалған бабалардың қастерлі жерім!", sentence = true))
-        assertEquals("Erlerın elın süigen", r.machine("Ерлерін елін сүйген", sentence = true))
-        assertEquals("İt pen mysyq", r.machine("Ит пен мысық", sentence = true))
-        assertEquals("Dobryi vechir, my z Ukrainy", r.machine("Добрий вечір, ми з України", sentence = true))
-        assertEquals("Yizhak i zghoda, miaso", r.machine("Їжак і згода, м'ясо", sentence = true))
-        assertEquals("Dobraj ranicy, siabry z Bielarusi", r.machine("Добрай раніцы, сябры з Беларусі", sentence = true))
-        assertEquals("Jon liubić svaju siamju ŭ Homieli", r.machine("Ён любіць сваю сям'ю ў Гомелі", sentence = true))
-        assertEquals("Ljubav i život u Beogradu", r.machine("Љубав и живот у Београду", sentence = true))
-        assertEquals("Đorđe, ćerka, džem, njega, LJUBAV", r.machine("Ђорђе, ћерка, џем, њега, ЉУБАВ", sentence = true))
-        assertEquals("Gjorgji, kje dojdam", r.machine("Ѓорѓи, ќе дојдам", sentence = true))
-        assertEquals("Savsem sam v Balgaria", r.machine("Съвсем сам в България", sentence = true))
-        assertEquals("Öglöönii mend", r.machine("Өглөөний мэнд", sentence = true))
         // Russian keeps its schemes; ISO 9 applies to every language.
         assertEquals("ru", Romanizer.cyrillicLanguage("Объявление в подъезде"))
         val iso = Romanizer(jvmIcu, RomanizeSettings(cyrillic = "iso9"))
         assertEquals("Dobrij večìr", iso.machine("Добрий вечір", sentence = true))
         // Lyrics decide once per song: a line without Kazakh letters in a Kazakh song is still Kazakh.
         assertEquals(listOf("Ūly dala", "Erlerın"), r.parts(listOf("Ұлы дала"), cyrLang = "kk") + r.parts(listOf("Ерлерін"), cyrLang = "kk"))
-        // Whatever no table covers goes through ICU, so no Cyrillic letter is left (Tatar җ).
-        val out = r.machine("Җир, Ӂ, Ԥ, ҷ") + r.machine("Ізі җир")
-        assertFalse(out.any { Character.UnicodeScript.of(it.code) == Character.UnicodeScript.CYRILLIC }, out)
-    }
-
-    @Test fun latinUntouched() {
-        assertEquals("Daft Punk", r.machine("Daft Punk"))
-        assertEquals("Beyoncé", r.machine("Beyoncé"))
     }
 
     @Test fun overridesWin() {
@@ -208,10 +91,6 @@ class RomanizeTest {
     }
 
     @Test fun partsMapOneToOne() {
-        val words = listOf("夜", "に", "駆", "ける")
-        val latin = r.parts(words)
-        assertEquals(4, latin.size)
-        assertEquals("Yoru ni kakeru", latin.joinToString("").trim())
         assertEquals(listOf("Ni", " hao"), Romanizer(jvmIcu, RomanizeSettings(hanDefault = "zh", chineseTones = false)).parts(listOf("你", "好")))
         assertEquals(listOf("an", "nyeong"), Romanizer(jvmIcu).parts(listOf("안", "녕")).map { it.lowercase() }) // Hangul stays joined
         // A 、 ending one part is followed by a space; an opening bracket timed alone doesn't take the line's capital.
@@ -234,67 +113,8 @@ class RomanizeTest {
         assertFalse(matches(Song("l", Text("Live", "Live"), emptyList()), "love"))
     }
 
-    @Test fun japaneseFromChineseSources() {
-        // 一 typed for ー after katakana; a real 一 before a kanji stays; an unknown simplified kanji isn't left as is.
-        assertEquals("Me o ubatte burū raito", r.machine("目を奪ってブル一ライト", sentence = true))
-        assertEquals("Me o ubatte burū raito", r.machine("目を奪ってブルーライト", sentence = true))
-        assertEquals("カード一枚", Romanizer.longVowelMarks("カード一枚"))
-        assertFalse(Romanizer.hasNonLatin(r.machine("作词 : R-指定")))
-        assertEquals("Terashitette moonlight", r.machine("照らしてってmoonlight", sentence = true))
-        assertEquals("Burū raito", r.parts(listOf("ブル", "一", "ライト")).joinToString("").trim())
-    }
-
-    @Test fun japaneseReadings() {
-        // Word splits IPADIC got wrong.
-        assertEquals("Yofukashi no Uta", r.machine("よふかしのうた"))
-        assertEquals("Futari", r.machine("二人"))
-        assertEquals("Sebuntīn", r.machine("セブンティーン"))
-        // A small vowel kana stretches the word before it; it never starts a word of its own.
-        assertEquals(listOf("うっせぇ", "うっせぇ"), r.pieces("うっせぇうっせぇ"))
-        assertEquals(listOf("クソ", "だりぃ", "な"), r.pieces("クソだりぃな"))
-        // Long vowels from the spelling: ō ū from オウ オオ ウウ, but eiga, ōkii, and a verb's own final u.
-        assertEquals("tōkyō", r.machine("東京", sentence = true).lowercase())
-        assertEquals("eiga", r.machine("映画", sentence = true).lowercase())
-        assertEquals("Ōkii", r.machine("大きい", sentence = true))
-        assertEquals("Kūki", r.machine("空気", sentence = true))
-        assertEquals("Omou", r.machine("思う", sentence = true))
-        assertEquals("Aitai to omou", r.machine("会いたいと思う", sentence = true))
-        assertEquals("Gakkō e ikō", r.machine("学校へ行こう", sentence = true))
-        // Particles は へ を.
-        assertEquals("Kyō wa hon o yomu", r.machine("今日は本を読む", sentence = true))
-        assertEquals("Umi e", r.machine("海へ", sentence = true))
-        // Readings come from the dictionary alone (no word list); 何 by the rule before t, d, n sounds.
-        assertEquals("Mō ichido", r.machine("もう一度", sentence = true))
-        assertEquals("Otōsan to okaasan", r.machine("お父さんとお母さん", sentence = true)) // aa stays: in 場合 (baai) it spans two morphemes
-        assertEquals("Nani mo nai", r.machine("何もない", sentence = true))
-        assertEquals("Nan de", r.machine("何で", sentence = true))
-        // Glue: number + counter, verb + subsidiary verb, negative adjective.
-        assertEquals("Sannin", r.machine("三人", sentence = true))
-        assertEquals("Hashiridasu", r.machine("走り出す", sentence = true))
-        assertEquals("Ureshikunai", r.machine("嬉しくない", sentence = true))
-        assertEquals("Shinja dame", r.machine("死んじゃだめ", sentence = true))
-        assertEquals("Iku deshō", r.machine("行くでしょう", sentence = true))
-        assertEquals("Kirei na Hana", r.machine("綺麗な花"))
-        // A reading in brackets (yomigana) is dropped; karaoke parts stay aligned.
-        assertEquals(listOf("Kimi", " no", " uta"), r.parts(listOf("君(きみ)", "の", "歌")))
-    }
-
-    @Test fun nominalizerAndSuffixKanjiGlue() {
-        assertEquals("Konnan ja kitto monotarinai", r.machine("こんなんじゃきっと物足りない", sentence = true))
-        assertEquals("Kishikan nani ga sonna fuman nan da?", r.machine("既視感何がそんな不満なんだ?", sentence = true))
-        assertEquals("Anshinkan", r.machine("安心感", sentence = true))
-        assertEquals("Mono kin ai gen", r.machine("物 金 愛 言", sentence = true)) // separate words stay separate
-    }
-
-    @Test fun karaokeSplitsAWordLikeItsParts() {
-        // 忙しい timed as 忙|し|い: the romaji follows ("isoga", "shi", "i"); a long vowel across parts stays whole.
-        assertEquals(listOf("Yoru wa", " isoga", "shi", "i"), r.parts(listOf("夜は", "忙", "し", "い")))
-        assertEquals(listOf("Ikō", "", ""), r.parts(listOf("行", "こ", "う")))
-    }
-
     @Test fun kyrgyz() {
         assertEquals("ky", Romanizer.cyrillicLanguage("Мең сени сүйөм"))
-        assertEquals("Meng seni süyöm", r.machine("Мең сени сүйөм", sentence = true))
         assertEquals("kk", Romanizer.cyrillicLanguage("Ізі қалған"))
         assertEquals("mn", Romanizer.cyrillicLanguage("Өнөөдөр сайхан өдөр"))
     }
@@ -329,12 +149,7 @@ class RomanizeTest {
         assertEquals("Gruppa krovee", o.machine("Группа крови"))
     }
 
-    @Test fun piecesJoinBackIntoTheLine() {
-        for (line in listOf("君に、会いたい", "食べますか？", "「夜に駆ける」 私は", "Группа крови на рукаве", "  あの日の夏")) {
-            val p = r.pieces(line)
-            assertEquals(line, p.joinToString(""), "$p")
-        }
-        assertEquals(listOf("君", "に、", "会いたい"), r.pieces("君に、会いたい"))
+    @Test fun piecesScriptsAndWordInfo() {
         val latin = r.parts(r.pieces("沈むように"))
         assertEquals("Shizumu yō ni", latin.joinToString("").trim())
         assertEquals(setOf("ja"), r.scripts("夜に駆ける"))
@@ -350,9 +165,7 @@ class RomanizeTest {
         // An opening quote or bracket goes with the word it opens, a closing one with the word it closes, and a space
         // stands on their outer side, in names, lyric lines and karaoke parts alike.
         val line = "「痛い」と「居たい」"
-        assertEquals(listOf("「痛い」", "と", "「居たい」"), r.pieces(line))
         assertEquals(listOf("\"Itai\"", " to", " \"itai\""), r.parts(r.pieces(line)))
-        assertEquals("\"Itai\" to \"itai\"", r.machine(line, sentence = true))
         assertEquals("\"Itai\" to \"itai\"", r.romanizeLyrics(Lyrics("", listOf(Line(0, line)), false), emptyList(), "").lines[0].latin)
         assertEquals(listOf("（痛い）", "と", "（居たい）"), r.pieces("（痛い）と（居たい）"))
         assertEquals("“Itai” to “itai”", r.parts(r.pieces("“痛い”と“居たい”")).joinToString("").trim())

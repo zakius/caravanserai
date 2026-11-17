@@ -20,7 +20,7 @@ private val KNOWN_MIXES = listOf(
     "RDTMAK5uy_nilrsVWxrKskY0ZUpVZ3zpB0u4LwWTVJ4", // Replay Mix
 )
 
-fun isPersonalMix(playlistId: String) = playlistId.removePrefix("VL").startsWith("RDTMAK5uy_")
+private fun isPersonalMix(playlistId: String) = playlistId.removePrefix("VL").startsWith("RDTMAK5uy_")
 
 /** The personal mixes among [items], in a fixed order: the known ones as listed above, then any others by title. */
 fun personalMixes(items: List<Item>): List<Item> =

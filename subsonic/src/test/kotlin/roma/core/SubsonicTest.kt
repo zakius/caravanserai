@@ -41,7 +41,7 @@ class SubsonicTest {
             }
             fun p(k: String) = params.firstOrNull { it.first == k }?.second
             calls += method to params
-            val authed = p("u") == "admin" && SubsonicClient.md5("secret" + p("s")) == p("t")
+            val authed = p("u") == "admin" && md5("secret" + p("s")) == p("t")
             if (method == "getOpenSubsonicExtensions" && extensionsHttp != null) {
                 ex.sendResponseHeaders(extensionsHttp!!, -1)
                 ex.close()
@@ -127,12 +127,14 @@ class SubsonicTest {
         return """"lyricsList":{"structuredLyrics":[$translation,$main${if (id == "tr-1") ",$pron" else ""}]}"""
     }
 
+    // The token Subsonic's API documents: the hex MD5 of password and salt.
+    private fun md5(s: String) = java.security.MessageDigest.getInstance("MD5").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
+
     @AfterTest fun stop() = server.stop(0)
 
     @Test fun idsRoundTrip() {
         for (raw in listOf("tr-1", "a1b2C3_x", "folder/song 1.mp3", "曲", "s.x")) {
             val id = SubsonicIds.encode(raw)
-            assertTrue(SubsonicIds.of(id))
             assertTrue(id.removePrefix("s.").all { it.isLetterOrDigit() && it.code < 128 || it in "_-." }, id)
             assertEquals(raw, SubsonicIds.decode(id))
         }
@@ -331,7 +333,7 @@ class SubsonicTest {
         val q = rawQuery.split("&").associate { pair -> pair.substringBefore("=") to pair.substringAfter("=") }
         assertEquals("al-1", q["id"])
         assertEquals("96", q["size"])
-        assertEquals(SubsonicClient.md5("secret" + q["s"]), q["t"])
+        assertEquals(md5("secret" + q["s"]), q["t"])
         assertNull(q["p"])
     }
 
