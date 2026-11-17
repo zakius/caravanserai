@@ -538,7 +538,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
         private const val PAIRING_WINDOW_MS = 1000L
         private val random = SecureRandom()
         private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
-        fun md5(s: String) = MessageDigest.getInstance("MD5").digest(s.toByteArray()).joinToString("") { byte -> "%02x".format(byte) }
+        private fun md5(s: String) = MessageDigest.getInstance("MD5").digest(s.toByteArray()).joinToString("") { byte -> "%02x".format(byte) }
 
         const val ROMANIZATION = "romanization"
         const val OASIS = "oasis"
