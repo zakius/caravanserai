@@ -11,6 +11,8 @@ class FedProcessTest {
      * This decoder ignores SIGTERM, as roma-aac does while it is blocked writing its own output.
      */
     @Test fun closeNeverWaitsForAStuckFeeder() {
+        // The feeder is the thread named after the process.
+        fun feeding() = Thread.getAllStackTraces().keys.any { it.name == "test in" }
         val fed = FedProcess(listOf("sh", "-c", "trap '' TERM; exec sleep 60"), "test in") { o ->
             val b = ByteArray(64 * 1024)
             while (true) o.write(b)
@@ -18,14 +20,14 @@ class FedProcessTest {
         try {
             // By now the 64 KB pipe is full and the feeder is blocked in write.
             Thread.sleep(500)
-            assertTrue(fed.feeding)
+            assertTrue(feeding())
             val closer = Thread(fed::close)
             closer.start()
             closer.join(2_000)
             assertFalse(closer.isAlive, "close blocked on the stuck feeder")
             val until = System.currentTimeMillis() + 5_000
-            while (fed.feeding && System.currentTimeMillis() < until) Thread.sleep(20)
-            assertFalse(fed.feeding, "the feeder is still stuck after close")
+            while (feeding() && System.currentTimeMillis() < until) Thread.sleep(20)
+            assertFalse(feeding(), "the feeder is still stuck after close")
         } finally {
             fed.process.toHandle().destroyForcibly()
         }
