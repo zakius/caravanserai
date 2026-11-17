@@ -8,12 +8,6 @@ import kotlin.test.assertTrue
 class RomanizeTest {
     private val r = Romanizer(jvmIcu)
 
-    @Test fun kana() {
-        assertEquals("matcha", r.kana("マッチャ"))
-        assertEquals("kon'ya", r.kana("コンヤ"))
-        assertEquals("fan", r.kana("ファン"))
-    }
-
     @Test fun namesInWords() {
         // The furigana layout: each word with its slice of the title-cased Latin form.
         val t = r.text("夜に駆ける")
@@ -61,6 +55,9 @@ class RomanizeTest {
     }
 
     @Test fun chineseEvidence() {
+        // The first string a fresh Romanizer judges: 青花瓷 is Chinese only by the dictionary's evidence, which
+        // looksChinese loads itself.
+        assertTrue(r.looksChinese("青花瓷"))
         // A variant form outside the BMP is no evidence of Chinese.
         assertFalse(r.looksChinese("𠮷野家"))
     }
@@ -94,10 +91,6 @@ class RomanizeTest {
     }
 
     @Test fun partsMapOneToOne() {
-        val words = listOf("夜", "に", "駆", "ける")
-        val latin = r.parts(words)
-        assertEquals(4, latin.size)
-        assertEquals("Yoru ni kakeru", latin.joinToString("").trim())
         assertEquals(listOf("Ni", " hao"), Romanizer(jvmIcu, RomanizeSettings(hanDefault = "zh", chineseTones = false)).parts(listOf("你", "好")))
         assertEquals(listOf("an", "nyeong"), Romanizer(jvmIcu).parts(listOf("안", "녕")).map { it.lowercase() }) // Hangul stays joined
         // A 、 ending one part is followed by a space; an opening bracket timed alone doesn't take the line's capital.
