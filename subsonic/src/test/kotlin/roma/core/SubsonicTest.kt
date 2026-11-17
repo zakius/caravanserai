@@ -132,7 +132,6 @@ class SubsonicTest {
     @Test fun idsRoundTrip() {
         for (raw in listOf("tr-1", "a1b2C3_x", "folder/song 1.mp3", "曲", "s.x")) {
             val id = SubsonicIds.encode(raw)
-            assertTrue(SubsonicIds.of(id))
             assertTrue(id.removePrefix("s.").all { it.isLetterOrDigit() && it.code < 128 || it in "_-." }, id)
             assertEquals(raw, SubsonicIds.decode(id))
         }

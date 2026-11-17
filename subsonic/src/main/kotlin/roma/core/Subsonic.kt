@@ -17,8 +17,6 @@ import kotlin.math.abs
 object SubsonicIds {
     const val PREFIX = "s."
 
-    fun of(id: String) = id.startsWith(PREFIX)
-
     fun encode(raw: String) = PREFIX + buildString {
         for (b in raw.toByteArray()) {
             val c = b.toInt().toChar()
