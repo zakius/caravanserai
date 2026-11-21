@@ -323,7 +323,7 @@ The Android app's screens and logic run on Linux and Windows, from the same sour
 ## Process
 
 - Local git repo. Don't create a GitHub repo or a signing key without asking the user.
-- Build toolchain: mirror ~/dev/plainfin (AGP, Kotlin, Gradle, SDK at ~/Android/Sdk, JDK under ~/.local/share/JetBrains/Toolbox/apps/air/jbr). Read its build files first.
+- Build toolchain: mirror plainfin (zakius/plainfin: AGP, Kotlin, Gradle; SDK from $ANDROID_HOME, JDK from $JAVA_HOME). Read its build files first.
 - Test on an emulator. Never install on the user's own devices without asking first.
 - Leave one small runnable check per non-trivial piece: romanization (including the Japanese/Chinese decision), the lyrics parsers (LRC, enhanced LRC), queue filtering.
   - `./gradlew :core:test`: romanization, lyrics parsers (LRC, enhanced LRC), radio filters, scrobble point, Last.fm signature. `:youtube:test`: KRC and YRC, LyricsPlus, personal mix identification and order, comments, stream choice. `:subsonic:test`: the Subsonic client and library sync (against a fake server on localhost), the scrobble rule.

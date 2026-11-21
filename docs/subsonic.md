@@ -2,7 +2,7 @@
 
 caravan is the Subsonic and OpenSubsonic client built from this repository, romanized by roma; until 2026-11-01 it was named roma, and before that it was roma's second backend. A caravan travels between oases and handles many languages: the user's server is oasis, the desktop client mirage.
 
-roma gets a second backend next to YouTube Music: any Subsonic or OpenSubsonic server, and first of all oasis (~/dev/oasis), the user's server that merges the local library with YouTube Music and later other services. Romanization and the fixed controls stay the point of the app; they work on any track's metadata. Decided with the user on 2026-10-30.
+roma gets a second backend next to YouTube Music: any Subsonic or OpenSubsonic server, and first of all oasis (zakius/oasis, beside this repo), the user's server that merges the local library with YouTube Music and later other services. Romanization and the fixed controls stay the point of the app; they work on any track's metadata. Decided with the user on 2026-10-30.
 
 The music stack:
 
