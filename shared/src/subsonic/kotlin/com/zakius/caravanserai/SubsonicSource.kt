@@ -43,7 +43,7 @@ object SubsonicSource : Source {
 
     // Work runs one task at a time and in order, so a server change's deletion runs before the new server's sync.
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+    private val scope by lazy { CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1)) }
     private val dir get() = File(Store.cache, "subsonic")
 
     private var clientKey: String? = null

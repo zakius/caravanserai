@@ -2,5 +2,8 @@
 <!-- The window shown before the first frame, in the system's light or dark mode, so it doesn't flash a dark grey before
      a light UI. -->
 <resources>
-    <style name="Roma" parent="@android:style/Theme.Material.Light.NoActionBar" />
+    <style name="Roma" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowActivityTransitions">false</item>
+        <item name="android:windowContentTransitions">false</item>
+    </style>
 </resources>

@@ -21,7 +21,8 @@ import java.io.File
 
 /** Work the first frame doesn't need waits until it is drawn, so it doesn't compete with it for the CPU or the main thread. */
 object Startup {
-    private var started = false
+    @Volatile var started = false
+        private set
     private val later = ArrayList<() -> Unit>()
 
     /** Runs [f] once the app's first frame is drawn (or now, if it was). Main thread only. */
@@ -53,7 +54,7 @@ object Store {
     /** Everything that can be fetched or rebuilt again, so Android may clear it: dictionary, index, likes, pages, streams. */
     lateinit var cache: File
     private lateinit var pages: File
-    val json = Json { ignoreUnknownKeys = true }
+    val json by lazy { Json { ignoreUnknownKeys = true } }
     var version by mutableIntStateOf(0)
         private set
     var dataVersion by mutableIntStateOf(0)
@@ -63,23 +64,30 @@ object Store {
 
     // The dictionary is memory-mapped in place, in the app's own storage where Dictionary keeps it, so it stays out
     // of the heap. While it is missing, or while the user reads Japanese as written (nothing would show the romaji
-    // then), Japanese gets kana only and the dictionary isn't loaded.
-    val romanizer = Romanizer(icu) {
-        try {
-            check("ja" !in readScripts) { "Japanese is read as written" }
-            val dictionary = Dictionary.map()
-            // Names romanized without the dictionary, in this run or an earlier one, are redone.
-            if (prefs.getBoolean("dict.failed", false)) {
-                prefs.edit().remove("dict.failed").apply()
-                postMain {
-                    Playback.romanizationChanged()
-                    dataChanged()
+    // then), Japanese gets kana only and the dictionary isn't loaded. Built lazily so start-up before the first frame
+    // doesn't load Romanizer, read overrides, or spawn indexThread.
+    val romanizer: Romanizer by lazy {
+        Romanizer(icu) {
+            try {
+                check("ja" !in readScripts) { "Japanese is read as written" }
+                val dictionary = Dictionary.map()
+                // Names romanized without the dictionary, in this run or an earlier one, are redone.
+                if (prefs.getBoolean("dict.failed", false)) {
+                    prefs.edit().remove("dict.failed").apply()
+                    postMain {
+                        Playback.romanizationChanged()
+                        dataChanged()
+                    }
                 }
+                dictionary
+            } catch (e: Exception) {
+                prefs.edit().putBoolean("dict.failed", true).apply()
+                throw e
             }
-            dictionary
-        } catch (e: Exception) {
-            prefs.edit().putBoolean("dict.failed", true).apply()
-            throw e
+        }.apply {
+            settings = romanizeSettings()
+            loadOverrides(indexThread.submit<List<Override>> { loadOverrides() })
+            cache = Names
         }
     }
 
@@ -88,35 +96,30 @@ object Store {
         this.files = files
         this.cache = cache
         pages = File(cache, "pages")
+        backend.init()
         // Cleans up after older versions, off the main thread and before the index and the liked songs are read from
         // the cache folder. Up to 0.1.26 these files sat in filesDir and the mixes in prefs. They are copied, not
         // renamed, because a renamed file keeps its group and Android counts a file as cache by its group. The
         // dictionary unpacked by 0.1.27 and earlier is deleted.
-        indexThread.execute {
-            for (dir in listOf(files, cache)) {
-                for (f in dir.listFiles().orEmpty()) {
-                    if (f.name.startsWith("sudachi")) f.delete()
-                }
-            }
-            for (n in listOf("index.json", "liked.json", "streams.txt")) {
-                val old = File(files, n)
-                if (old.exists()) {
-                    runCatching { old.copyTo(File(cache, n), true) }
-                    old.delete()
-                }
-            }
-            File(cache, "http_cache").deleteRecursively() // OkHttp's cache, up to 0.1.39
-            File(cache, "ktor_cache").deleteRecursively() // Ktor's cache, up to 0.1.50
-            prefs.edit().remove("home.mixes").apply()
-        }
-        romanizer.settings = romanizeSettings()
-        romanizer.loadOverrides(indexThread.submit<List<Override>> { loadOverrides() })
-        romanizer.cache = Names
-        // Loaded after the first frame: new names arrive with network results well after it, and start-up already
-        // has enough disk reads.
-        Startup.later { Names.load(File(cache, "names.json")) }
-        backend.init()
         Startup.later {
+            indexThread.execute {
+                for (dir in listOf(files, cache)) {
+                    for (f in dir.listFiles().orEmpty()) {
+                        if (f.name.startsWith("sudachi")) f.delete()
+                    }
+                }
+                for (n in listOf("index.json", "liked.json", "streams.txt")) {
+                    val old = File(files, n)
+                    if (old.exists()) {
+                        runCatching { old.copyTo(File(cache, n), true) }
+                        old.delete()
+                    }
+                }
+                File(cache, "http_cache").deleteRecursively() // OkHttp's cache, up to 0.1.39
+                File(cache, "ktor_cache").deleteRecursively() // Ktor's cache, up to 0.1.50
+                prefs.edit().remove("home.mixes").apply()
+            }
+            Names.load(File(cache, "names.json"))
             indexThread.execute {
                 val saved = runCatching { json.decodeFromString<List<Song>>(File(cache, "index.json").readText()) }
                 index.addAll(saved.getOrDefault(emptyList()))
@@ -169,7 +172,7 @@ object Store {
 
     // The last copy of Home, the library tabs and pages is kept on disk and shown at once on the next start.
     // Pages are read, written and dropped on their own thread, in order, so a read never sees a dropped page.
-    private val pageThread = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val pageThread by lazy { java.util.concurrent.Executors.newSingleThreadExecutor() }
 
     private fun pageFile(key: String) = File(pages, key.replace(Regex("[^A-Za-z0-9_-]"), "_") + ".json")
 
@@ -360,7 +363,7 @@ object Store {
     // Ids of songs played past the scrobble point; "Seen before" shows only these. They are kept in [files], which
     // Android doesn't clear.
     private val played = HashSet<String>()
-    private val indexThread = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val indexThread by lazy { java.util.concurrent.Executors.newSingleThreadExecutor() }
 
     /**
      * Romanized names kept across starts: Home and the lists show the same titles start after start, and a start whose

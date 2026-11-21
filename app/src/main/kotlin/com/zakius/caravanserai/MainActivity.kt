@@ -1,117 +1,194 @@
 package com.zakius.caravanserai
 
+import android.app.Activity
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.widget.Toast
-import androidx.activity.ComponentActivity
-import androidx.activity.addCallback
-import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
-import androidx.compose.runtime.snapshotFlow
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import roma.core.LastFm
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewTreeObserver
 
-class MainActivity : ComponentActivity() {
-    override fun dispatchTouchEvent(e: android.view.MotionEvent): Boolean {
+/**
+ * Minimal android.app.Activity with zero AndroidX/Compose/Coroutines imports on its cold-start path.
+ * Frame 1 paints ColdStartHomeView directly into @android:id/content; MainComposeBridge attaches
+ * Compose and Lifecycle owners immediately after Frame 1 draws.
+ */
+class MainActivity : Activity() {
+    private var bridge: MainComposeBridge? = null
+    private var savedBundle: Bundle? = null
+    private var started = false
+    private var resumed = false
+    private var pendingResultCallback: ((Uri?) -> Unit)? = null
+    private var nextReqCode = 100
+
+    override fun dispatchTouchEvent(e: MotionEvent): Boolean {
         val action = e.actionMasked
-        Touch.down = action != android.view.MotionEvent.ACTION_UP && action != android.view.MotionEvent.ACTION_CANCEL
+        Touch.down = action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL
         Touch.last = e.eventTime
         // The GPU sleeps after about 80 ms without frames, and waking it costs several milliseconds. Drawing a frame as
-        // the finger goes down wakes it early, so the frame that answers the tap doesn't pay for it. Presses that draw
-        // nothing of their own, such as a list row, need this most.
-        if (action == android.view.MotionEvent.ACTION_DOWN) window.decorView.invalidate()
+        // the finger goes down wakes it early, so the frame that answers the tap doesn't pay for it.
+        if (action == MotionEvent.ACTION_DOWN) window.decorView.invalidate()
         return super.dispatchTouchEvent(e)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // The splash goes the moment the app's first frame is ready, skipping Android's fade-out of about 130 ms.
+        savedBundle = savedInstanceState
         if (Build.VERSION.SDK_INT >= 31) splashScreen.setOnExitAnimationListener { splash -> splash.remove() }
-        enableEdgeToEdge()
-        // Back on Home leaves the app in the background instead of closing it, as Android 12 and later do by default. The
-        // next start then finds the activity and its UI still there.
-        if (Build.VERSION.SDK_INT < 31) onBackPressedDispatcher.addCallback(this) { moveTaskToBack(true) }
-        // The media notification matters for playing, so the permission is asked for once the first start's questions
-        // are answered, before the first song: asked at the first tap on a song, it covered the player as it opened.
-        // It is asked only once, because asking at every start opens the system's permission activity over ours, even
-        // after the user refused for good.
-        val notify = android.Manifest.permission.POST_NOTIFICATIONS
-        val canAskToNotify = Build.VERSION.SDK_INT >= 33 && !Store.bool("notify.asked", false)
-        if (canAskToNotify && checkSelfPermission(notify) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            lifecycleScope.launch {
-                // Reading Store.version makes the flow re-check the setting whenever one changes.
-                snapshotFlow {
-                    Store.version
-                    Store.bool("setup.done", false)
-                }.first { done -> done }
-                Store.set("notify.asked", true)
-                requestPermissions(arrayOf(notify), 0)
-            }
-        }
-        // A re-created activity would send the already used token again.
-        if (savedInstanceState == null) handleLastFm(intent)
-        // Before the first frame, so Home's request and its disk copy are already on their way.
-        Home.start()
-        setContent { Theme { Root() } }
-        // Once the first frame is drawn, the start-up work that waited for it runs.
-        val decor = window.decorView
-        decor.viewTreeObserver.addOnDrawListener(object : android.view.ViewTreeObserver.OnDrawListener {
-            override fun onDraw() {
-                // A listener can't be removed from inside onDraw, so this waits for the next message.
-                decor.post {
-                    decor.viewTreeObserver.removeOnDrawListener(this)
-                    Startup.go()
+        // Android 15+ enforces edge-to-edge by default for targetSdk >= 35; only API < 35 need runtime setup.
+        if (Build.VERSION.SDK_INT < 35) {
+            @Suppress("DEPRECATION")
+            run {
+                window.statusBarColor = android.graphics.Color.TRANSPARENT
+                window.navigationBarColor = android.graphics.Color.TRANSPARENT
+                if (Build.VERSION.SDK_INT >= 30) {
+                    window.setDecorFitsSystemWindows(false)
+                    window.attributes.layoutInDisplayCutoutMode =
+                        android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                } else {
+                    window.decorView.systemUiVisibility =
+                        View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                }
+                if (Build.VERSION.SDK_INT >= 29) {
+                    window.isNavigationBarContrastEnforced = false
                 }
             }
-        })
+        }
+
+        val prefs = App.appPrefs
+        val useColdShell = !Startup.started &&
+            savedInstanceState == null &&
+            intent?.data == null &&
+            prefs.getBoolean("setup.done", false) &&
+            prefs.getInt("ui.tab", TAB_HOME) == TAB_HOME
+
+        val decor = window.decorView
+        if (useColdShell) {
+            val isYouTube = BuildConfig.SLUG == "dragoman"
+            val signedIn = isYouTube && prefs.getString("cookie", null)?.contains("SAPISID") == true
+            val hasQueue = ColdStartHomeView.hasSavedQueue(filesDir)
+            val coldView = ColdStartHomeView(this, prefs, isYouTube, signedIn, hasQueue)
+            setContentView(coldView)
+            decor.viewTreeObserver.addOnDrawListener(object : ViewTreeObserver.OnDrawListener {
+                override fun onDraw() {
+                    decor.post {
+                        decor.viewTreeObserver.removeOnDrawListener(this)
+                        if (isDestroyed) return@post
+                        App.ensureInitialized(applicationContext)
+                        Startup.go()
+                        val b = ensureBridge()
+                        b.checkNotifyPermission()
+                        Home.start()
+                        b.mountUnder(coldView)
+                    }
+                }
+            })
+        } else {
+            App.ensureInitialized(applicationContext)
+            if (savedInstanceState == null && intent?.data != null) {
+                MainComposeBridge.handleLastFm(this, intent)
+            }
+            val b = ensureBridge()
+            Startup.later {
+                b.checkNotifyPermission()
+                Home.start()
+            }
+            b.mountDirectly()
+            decor.viewTreeObserver.addOnDrawListener(object : ViewTreeObserver.OnDrawListener {
+                override fun onDraw() {
+                    decor.post {
+                        decor.viewTreeObserver.removeOnDrawListener(this)
+                        Startup.go()
+                    }
+                }
+            })
+        }
     }
 
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        handleLastFm(intent)
+    private fun ensureBridge(): MainComposeBridge {
+        bridge?.let { return it }
+        val b = MainComposeBridge(this, savedBundle)
+        savedBundle = null
+        b.syncState(started, resumed)
+        bridge = b
+        return b
     }
 
-    // The media session runs while the app is open, so the system's controls can reach it. The service starts in a post
-    // because starting it directly from onStart would create it and its media session before the app's first frame.
     override fun onStart() {
         super.onStart()
+        started = true
+        bridge?.onStart()
         // Back in the foreground, a Home older than 30 minutes loads again behind the one on screen.
-        Home.start()
-        window.decorView.post {
-            if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) PlaybackService.start(this)
+        if (Startup.started) Home.start()
+        Startup.later {
+            if (started) PlaybackService.start(this)
         }
     }
 
     override fun onResume() {
         super.onResume()
-        flavorResumed()
+        resumed = true
+        bridge?.onResume()
+        Startup.later { flavorResumed() }
         // This may show a dialog, so it waits until after the first frame.
-        window.decorView.post { Dictionary.ensure() }
+        window.decorView.post { Startup.later { Dictionary.ensure() } }
     }
 
-    // Last.fm's browser sign-in returns to roma://lastfm?token=...
-    private fun handleLastFm(intent: Intent?) {
-        val data = intent?.data ?: return
-        if (data.scheme != BuildConfig.SLUG || data.host != "lastfm") return
-        val token = data.getQueryParameter("token") ?: return
-        val fm = LastFm(Store.str("lastfm.key", ""), Store.str("lastfm.secret", ""))
-        CoroutineScope(Dispatchers.Main).launch {
-            val result = withContext(Dispatchers.IO) { runCatching { fm.session(token) } }
-            result.onSuccess { session ->
-                Store.set("lastfm.session", session)
-                Playback.flushScrobbles()
-                Toast.makeText(this@MainActivity, "Last.fm connected", Toast.LENGTH_SHORT).show()
-            }
-            result.onFailure { error ->
-                Toast.makeText(this@MainActivity, "Last.fm: ${error.message}", Toast.LENGTH_LONG).show()
-            }
-            Nav.tab = TAB_SETTINGS
+    override fun onPause() {
+        resumed = false
+        bridge?.onPause()
+        super.onPause()
+    }
+
+    override fun onStop() {
+        started = false
+        bridge?.onStop()
+        super.onStop()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        bridge?.onSaveInstanceState(outState)
+    }
+
+    override fun onDestroy() {
+        bridge?.destroy()
+        bridge = null
+        super.onDestroy()
+    }
+
+    @Deprecated("Handled for API < 33; API 33+ uses OnBackInvokedDispatcher")
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (bridge?.onBackPressed() == true) return
+        if (Build.VERSION.SDK_INT < 31) {
+            moveTaskToBack(true)
+        } else {
+            super.onBackPressed()
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        App.ensureInitialized(applicationContext)
+        MainComposeBridge.handleLastFm(this, intent)
+    }
+
+    /** Opens a system document picker (export/import JSON) without ComponentActivity's ActivityResultRegistry. */
+    @Suppress("DEPRECATION")
+    fun launchForResult(intent: Intent, onResult: (Uri?) -> Unit) {
+        val code = nextReqCode++
+        pendingResultCallback = onResult
+        startActivityForResult(intent, code)
+    }
+
+    @Deprecated("Used for document picker without ActivityResultRegistry")
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        val cb = pendingResultCallback ?: return
+        pendingResultCallback = null
+        cb(if (resultCode == RESULT_OK) data?.data else null)
     }
 }

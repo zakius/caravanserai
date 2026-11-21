@@ -36,11 +36,13 @@ object Update {
     private var busy = false
 
     fun init(app: Context) {
-        ContextCompat.registerReceiver(app, object : BroadcastReceiver() {
-            override fun onReceive(c: Context, i: Intent) = finished(c, i)
-        }, IntentFilter(ACTION), ContextCompat.RECEIVER_NOT_EXPORTED)
-        // A debug build is a separate package (.debug), which a release APK can't update.
-        if (!BuildConfig.DEBUG) Startup.later { thread(name = "update") { check() } }
+        Startup.later {
+            ContextCompat.registerReceiver(app, object : BroadcastReceiver() {
+                override fun onReceive(c: Context, i: Intent) = finished(c, i)
+            }, IntentFilter(ACTION), ContextCompat.RECEIVER_NOT_EXPORTED)
+            // A debug build is a separate package (.debug), which a release APK can't update.
+            if (!BuildConfig.DEBUG) thread(name = "update") { check() }
+        }
     }
 
     private fun check() {

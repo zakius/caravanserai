@@ -38,18 +38,25 @@ object Images {
     // ponytail: 6 downloads at a time, matching the usual 6 connections per host over HTTP/1.1. If scrolling lags,
     // a priority queue for the visible rows is the next step.
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    private val io = Dispatchers.IO.limitedParallelism(6)
-    private val scope = CoroutineScope(SupervisorJob() + io)
+    private val io by lazy { Dispatchers.IO.limitedParallelism(6) }
+    private val scope by lazy { CoroutineScope(SupervisorJob() + io) }
 
     /** [memoryBytes]: how much the decoded covers may take (see [picMemory]). */
     fun init(cache: File, memoryBytes: Long) {
         dir = File(cache, "img")
         memory.max = memoryBytes
-        scope.launch {
-            // Coil's cache, left behind by versions up to 0.1.39.
-            File(cache, "image_cache").deleteRecursively()
-            trim()
+        Startup.later {
+            scope.launch {
+                // Coil's cache, left behind by versions up to 0.1.39.
+                File(cache, "image_cache").deleteRecursively()
+                trim()
+            }
         }
+    }
+
+    /** Updates the cover cache ceiling once [picMemory] is read after the first frame. */
+    fun setMemory(memoryBytes: Long) {
+        memory.max = memoryBytes
     }
 
     /** Drops every cover, in memory and on disk. SubsonicSource.forget needs this because another server's covers can have the same names. */

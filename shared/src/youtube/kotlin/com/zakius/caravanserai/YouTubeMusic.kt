@@ -36,25 +36,37 @@ object YouTubeMusic : Source {
         private set
     val signedIn get() = cookie?.contains("SAPISID") == true
 
+    @Volatile private var configured = false
+
     override fun init() {
-        val prefs = Store.prefs
-        cookie = prefs.getString("cookie", null)
-        YouTube.cookie = cookie
-        // InnerTubeX sends the account cookies on browse and next calls (home, radio) only with this on. Without it,
-        // Home is the anonymous one and never has the personal mixes. Metrolist turns it on too.
-        YouTube.useLoginForBrowse = true
-        // The language is English, like the app. InnerTubeX would send the phone's language, and in Polish YouTube
-        // Music's Songs search leaves out the original "Youngblood" (5SOS) while English finds it first. The region
-        // stays the phone's.
-        val region = java.util.Locale.getDefault().country.ifEmpty { "US" }
-        YouTube.locale = com.metrolist.innertube.models.YouTubeLocale(gl = region, hl = "en")
-        prefs.getString("visitorData", null)?.let { YouTube.visitorData = it }
-        prefs.getString("dataSyncId", null)?.let { YouTube.dataSyncId = it }
-        Streams.refuseVisionOs = BuildConfig.REFUSE_VISIONOS
-        roma.core.InnerTubeXStreams.tokenProvider = platformPoTokens()
+        cookie = Store.prefs.getString("cookie", null)
+        Startup.later { ensureConfigured() }
+    }
+
+    private fun ensureConfigured() {
+        if (configured) return
+        synchronized(this) {
+            if (configured) return
+            val prefs = Store.prefs
+            YouTube.cookie = cookie
+            // InnerTubeX sends the account cookies on browse and next calls (home, radio) only with this on. Without it,
+            // Home is the anonymous one and never has the personal mixes. Metrolist turns it on too.
+            YouTube.useLoginForBrowse = true
+            // The language is English, like the app. InnerTubeX would send the phone's language, and in Polish YouTube
+            // Music's Songs search leaves out the original "Youngblood" (5SOS) while English finds it first. The region
+            // stays the phone's.
+            val region = java.util.Locale.getDefault().country.ifEmpty { "US" }
+            YouTube.locale = com.metrolist.innertube.models.YouTubeLocale(gl = region, hl = "en")
+            prefs.getString("visitorData", null)?.let { YouTube.visitorData = it }
+            prefs.getString("dataSyncId", null)?.let { YouTube.dataSyncId = it }
+            Streams.refuseVisionOs = BuildConfig.REFUSE_VISIONOS
+            roma.core.InnerTubeXStreams.tokenProvider = platformPoTokens()
+            configured = true
+        }
     }
 
     override fun start() {
+        ensureConfigured()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             Streams.keepIn(File(Store.cache, "streams.txt"))
             // The first stream lookup of a run sets up NewPipe and asks YouTube for visitor data. Doing it now means
@@ -91,6 +103,7 @@ object YouTubeMusic : Source {
     }
 
     override suspend fun home(from: String?): Pair<String?, List<Section>> {
+        ensureConfigured()
         ensureVisitorData()
         val p = YouTube.home(from).getOrThrow()
         return p.continuation to p.sections.map { sec ->
@@ -244,6 +257,7 @@ object YouTubeMusic : Source {
     }
 
     override fun streamUrl(id: String, full: Boolean): String {
+        ensureConfigured()
         // Without visitor data, YouTube refuses the direct path's client as a bot.
         kotlinx.coroutines.runBlocking { ensureVisitorData() }
         return Streams.audio(id, full = full).url
@@ -262,9 +276,9 @@ object YouTubeMusic : Source {
     override fun bigThumb(url: String) = url.replace(SIZE_WH, "=w$BIG_PX-h$BIG_PX").replace(SMALL_STILL, "/hqdefault.jpg")
     // Compiled once, because thumbAt runs for every row drawn while a list scrolls, and bigThumb for each song of a
     // 1,000-song playlist.
-    private val SIZE_WH = Regex("=w\\d+-h\\d+")
-    private val SIZE_S = Regex("=s\\d+")
-    private val SMALL_STILL = Regex("/(default|mqdefault)\\.jpg")
+    private val SIZE_WH by lazy { Regex("=w\\d+-h\\d+") }
+    private val SIZE_S by lazy { Regex("=s\\d+") }
+    private val SMALL_STILL by lazy { Regex("/(default|mqdefault)\\.jpg") }
 
     override val lyricsProviders = allLyricsProviders
     override val lyrics: LyricsProvider = YouTubeLyrics

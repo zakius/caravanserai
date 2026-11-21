@@ -1,17 +1,23 @@
-# Code ART compiles ahead of time: The app's own and the libraries its launch runs through. Compose and the other
-# androidx libraries bring their own rules. Sudachi is left out: it runs after launch.
-# tools/repack_apk.py embeds the merged profile so ART compiles it when the APK is installed.
-HSPLcom/zakius/caravanserai/**->**(**)**
-Lcom/zakius/caravanserai/**;
-HSPLroma/core/**->**(**)**
-Lroma/core/**;
-HSPLcom/metrolist/innertube/**->**(**)**
-Lcom/metrolist/innertube/**;
-HSPLcom/metrolist/innertubex/**->**(**)**
-Lcom/metrolist/innertubex/**;
-HSPLio/ktor/**->**(**)**
-Lio/ktor/**;
-HSPLkotlinx/serialization/**->**(**)**
-Lkotlinx/serialization/**;
-HSPLandroidx/media3/**->**(**)**
-Landroidx/media3/**;
+# Code ART compiles ahead of time. Startup classes (S) are strictly limited to the zero-Compose cold-start path
+# (StartupFactory, App, MainActivity, ColdStartHomeView, Startup) so the ART AppImage and startup DEX stay tiny;
+# Compose UI, Store, Playback and runtime paths keep HPL (AOT compiled for instant Frame 2 without bloating Frame 1).
+HSPLcom/zakius/caravanserai/StartupFactory**->**(**)**
+Lcom/zakius/caravanserai/StartupFactory**;
+HSPLcom/zakius/caravanserai/App**->**(**)**
+Lcom/zakius/caravanserai/App**;
+HSPLcom/zakius/caravanserai/MainActivity**->**(**)**
+Lcom/zakius/caravanserai/MainActivity**;
+HSPLcom/zakius/caravanserai/ColdStartHomeView**->**(**)**
+Lcom/zakius/caravanserai/ColdStartHomeView**;
+HSPLcom/zakius/caravanserai/Startup**->**(**)**
+Lcom/zakius/caravanserai/Startup**;
+HSPLorg/lsposed/hiddenapibypass/**->**(**)**
+Lorg/lsposed/hiddenapibypass/**;
+HSPLandroidx/core/graphics/PathParser**->**(**)**
+Landroidx/core/graphics/PathParser**;
+HPLcom/zakius/caravanserai/**->**(**)**
+HPLroma/core/**->**(**)**
+HPLcom/metrolist/innertube/**->**(**)**
+HPLcom/metrolist/innertubex/**->**(**)**
+HPLkotlinx/serialization/**->**(**)**
+HPLandroidx/media3/**->**(**)**

@@ -858,7 +858,17 @@ object Home {
 
     /** When a start shows Home first, this reads its copy on disk alongside the rest of start-up. */
     fun preload() {
-        val read = java.util.concurrent.FutureTask { Store.mixes to Store.readPage("home", ListSerializer(Section.serializer())) }
+        val read = java.util.concurrent.FutureTask {
+            val savedMixes = Store.mixes
+            decodeFirstPictures(savedMixes)
+            postMain {
+                if (!mixesRead) {
+                    if (mixes == null) showMixes(savedMixes)
+                    mixesRead = true
+                }
+            }
+            savedMixes to Store.readPage("home", ListSerializer(Section.serializer()))
+        }
         preloaded = read
         kotlin.concurrent.thread(name = "home") { read.run() }
     }
@@ -931,10 +941,7 @@ object Home {
             launch {
                 val (savedMixes, disk) = withContext(Dispatchers.IO) {
                     val pre = preloaded?.get()
-                    if (pre != null) {
-                        preloaded = null
-                        decodeFirstPictures(pre.first)
-                    }
+                    if (pre != null) preloaded = null
                     pre ?: (Store.mixes to Store.readPage("home", ListSerializer(Section.serializer())))
                 }
                 if (!mixesRead) {
@@ -1036,20 +1043,28 @@ object Home {
 
 @Composable
 fun HomeScreen() {
-    LaunchedEffect(Store.dataVersion) { Home.start() }
+    val dataVersion = Store.dataVersion
+    LaunchedEffect(dataVersion) { Startup.later { Home.start() } }
     // The first frame holds only the mixes, which are what Home is opened for. The shelves (YouTube's, which change
-    // from start to start) and their pictures come in the frame after.
-    var shelves by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { Startup.later { shelves = true } }
+    // from start to start) and their pictures come in the frame after. Rendering a plain Column on frame 1 avoids both
+    // BoxWithConstraints and LazyColumn subcompositions during cold start.
+    var shelves by remember { mutableStateOf(Startup.started) }
+    if (!shelves) {
+        LaunchedEffect(Unit) { Startup.later { shelves = true } }
+        Column(Modifier.fillMaxSize()) {
+            ScreenTitle("Home")
+            Header(if (backend.mixes) "Your mixes" else "Your library")
+            backend.HomeTiles(Home.mixes, Home.mixesRead)
+        }
+        return
+    }
     // The mixes take at least the first screen, so the shelves begin below it even when there are few mixes.
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
         val height = maxHeight
         // This sits out here, not in a row, because a row is composed only once it scrolls into view. The first cards
         // of every shelf come before the later cards of any.
-        if (shelves) {
-            val byPosition = Home.sections.flatMap { it.items.withIndex() }.sortedBy { it.index }
-            PrefetchCovers(byPosition.map { it.value.thumb }, 128.dp, near = 40)
-        }
+        val byPosition = Home.sections.flatMap { it.items.withIndex() }.sortedBy { it.index }
+        PrefetchCovers(byPosition.map { it.value.thumb }, 128.dp, near = 40)
         LazyColumn(Modifier.fillMaxSize(), Home.list, contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 16.dp)) {
             // A library's shelves don't change from start to start, so on a server they follow the tiles at once.
             item(key = "title") { ScreenTitle("Home") }
@@ -1060,7 +1075,6 @@ fun HomeScreen() {
                     backend.HomeTiles(Home.mixes, Home.mixesRead)
                 }
             }
-            if (!shelves) return@LazyColumn
             items(Home.sections) { sec ->
                 // Shelf titles are section labels like every other list's, in the same style.
                 val label = MaterialTheme.typography.titleSmall.copy(color = MaterialTheme.colorScheme.primary)
@@ -1902,6 +1916,7 @@ fun DictionaryPrompt() {
  */
 @Composable
 fun SetupScreen() {
+    LaunchedEffect(Unit) { Dictionary.checkInstalled() }
     Store.version
     if (!backend.setUp) {
         backend.Setup()

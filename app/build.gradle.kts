@@ -17,8 +17,8 @@ android {
     defaultConfig {
         minSdk = 26
         targetSdk = 36
-        versionCode = 68
-        versionName = "0.1.67"
+        versionCode = 69
+        versionName = "0.1.68"
         // `-Proma.dictBase=<url>` points a build at another folder holding the dictionary's zip.
         val dictBase = (findProperty("roma.dictBase") as String?) ?: "https://github.com/zakius/caravanserai/releases/download/dict-$dictVersion"
         buildConfigField("String", "DICT_URL", "\"$dictBase/roma-dict-$dictVersion.zip\"")
@@ -102,4 +102,44 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
     implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.2") // skips ASUS's FlipFont rebuild (App.kt)
+}
+
+// Libraries (Compose, Activity, Coroutines) contribute ~275 AppImage classes and ~2,400 S (startup) method rules that
+// our zero-Compose Frame 1 never touches. Stripping S and class-in-AppImage flags from non-cold-start classes keeps
+// full HPL AOT compilation for instant Frame 2 while cutting ART AppImage load time during OpenDexFilesFromOat.
+val coldStartPrefixes = listOf(
+    "Lcom/zakius/caravanserai/StartupFactory",
+    "Lcom/zakius/caravanserai/App",
+    "Lcom/zakius/caravanserai/MainActivity",
+    "Lcom/zakius/caravanserai/ColdStartHomeView",
+    "Lcom/zakius/caravanserai/Startup",
+    "Lcom/zakius/caravanserai/BuildConfig",
+    "Lorg/lsposed/hiddenapibypass/",
+    "Landroidx/core/graphics/PathParser",
+)
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("ReleaseArtProfile") }.configureEach {
+    doLast {
+        val prof = outputs.files.singleFile
+        if (!prof.isFile) return@doLast
+        val kept = ArrayList<String>()
+        for (raw in prof.readLines()) {
+            val line = raw.trim()
+            if (line.isEmpty() || line.startsWith("#")) continue
+            if (line.startsWith("L")) {
+                if (coldStartPrefixes.any { line.startsWith(it) }) kept.add(line)
+                continue
+            }
+            val lIdx = line.indexOf('L')
+            if (lIdx <= 0) continue
+            val flags = line.substring(0, lIdx)
+            val rest = line.substring(lIdx)
+            if (coldStartPrefixes.any { rest.startsWith(it) }) {
+                kept.add(line)
+            } else {
+                val stripped = flags.replace("S", "")
+                if (stripped.isNotEmpty()) kept.add(stripped + rest)
+            }
+        }
+        prof.writeText(kept.joinToString("\n") + "\n")
+    }
 }

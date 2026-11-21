@@ -49,7 +49,7 @@ class LyricsState(val songId: String, val lyrics: Lyrics?, val translations: Lis
 /** The one player. The service wraps it in a media session; the UI calls it directly (same process, main thread). */
 object Playback {
     lateinit var player: AudioPlayer
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val scope by lazy { CoroutineScope(SupervisorJob() + Dispatchers.Main) }
 
     /** Bumped on every player change; the UI reads it to redraw. */
     var tick by mutableIntStateOf(0)
@@ -86,11 +86,13 @@ object Playback {
                 checkLike(current()?.song)
             }
         }
-        // The saved queue and the current song's lyrics are read now, in parallel with the first frame, and restore()
-        // hands them to the player after it. Reading them only then would put them on screen two disk reads late.
-        val read = java.util.concurrent.FutureTask { readSaved() }
-        restoreRead = read
-        kotlin.concurrent.thread(name = "restore") { read.run() }
+        // When the player tab is the launch screen, read the saved queue and its art in parallel with the first frame;
+        // on other tabs defer the disk read until after the first frame so it doesn't compete for CPU or IO.
+        if (Store.prefs.getInt("ui.tab", TAB_HOME) == TAB_PLAYER) {
+            val read = java.util.concurrent.FutureTask { readSaved() }
+            restoreRead = read
+            kotlin.concurrent.thread(name = "restore") { read.run() }
+        }
         Startup.later { restore() }
         // Watching the network makes two system-service registrations, binder calls into a system_server that is busy
         // with the launch. Nothing before the first frame plays or needs them, and [online] starts true.
@@ -177,19 +179,21 @@ object Playback {
                 error = streamError?.message ?: e.cause?.message ?: message
             }
         }
-        scope.launch {
-            while (true) {
-                delay(500)
-                if (player.isPlaying) {
-                    clock++
-                    countPlayed()
-                    // Every 10 s, so a killed app loses at most that much.
-                    if (clock % 20 == 0) savePosition()
-                } else if (sleepAt != 0L) {
-                    // The seek bar's "Sleep in" count keeps going while paused.
-                    clock++
+        Startup.later {
+            scope.launch {
+                while (true) {
+                    delay(500)
+                    if (player.isPlaying) {
+                        clock++
+                        countPlayed()
+                        // Every 10 s, so a killed app loses at most that much.
+                        if (clock % 20 == 0) savePosition()
+                    } else if (sleepAt != 0L) {
+                        // The seek bar's "Sleep in" count keeps going while paused.
+                        clock++
+                    }
+                    checkSleep()
                 }
-                checkSleep()
             }
         }
     }
@@ -734,7 +738,7 @@ object Playback {
     private val queueFile get() = File(Store.files, "queue.json")
     private val positionFile get() = File(Store.files, "position")
     // One writer thread runs the saves in order, so a later save never lands before an earlier one.
-    private val saver = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val saver by lazy { java.util.concurrent.Executors.newSingleThreadExecutor() }
     private var saveQueued = false
 
     // A burst of queue changes (radio adding 20 songs) is written once, after it.
@@ -773,7 +777,7 @@ object Playback {
         tmp.renameTo(f)
     }
 
-    private lateinit var restoreRead: java.util.concurrent.FutureTask<Restored?>
+    private var restoreRead: java.util.concurrent.FutureTask<Restored?>? = null
 
     // Everything but handing the items to the player happens off the main thread, because building a few hundred
     // items reads settings per song. The romanized lyrics land in their memory cache, so the restored song shows them
@@ -806,7 +810,7 @@ object Playback {
         scope.launch {
             // The cache check waits until the audio cache has scanned its files, so it stays off the main thread too.
             val (r, onDisk) = withContext(Dispatchers.IO) {
-                val r = restoreRead.get()
+                val r = restoreRead?.get() ?: readSaved()
                 r to (r != null && player.fullyCached(r.saved.songs[r.index].id))
             }
             // A song picked while the file was read wins.

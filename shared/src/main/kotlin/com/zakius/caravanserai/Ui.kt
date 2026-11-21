@@ -67,7 +67,6 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.Role
@@ -211,7 +210,7 @@ fun Text(
 
 @Composable
 fun Icon(icon: ImageVector, contentDescription: String?, modifier: Modifier = Modifier, tint: Color = LocalContentColor.current) =
-    Icon(rememberVectorPainter(icon), contentDescription, modifier, tint)
+    Icon(androidx.compose.ui.graphics.vector.rememberVectorPainter(icon), contentDescription, modifier, tint)
 
 @Composable
 fun Icon(painter: Painter, contentDescription: String?, modifier: Modifier = Modifier, tint: Color = LocalContentColor.current) {
@@ -234,8 +233,8 @@ fun Surface(
 ) {
     val fg = contentColorFor(color)
     // Touches stop here, as on Material's Surface, so nothing behind it reacts.
-    val surfaceModifier = modifier
-        .clip(shape)
+    val clipped = if (shape == androidx.compose.ui.graphics.RectangleShape) modifier else modifier.clip(shape)
+    val surfaceModifier = clipped
         .background(color)
         .pointerInput(Unit) {}
     Box(surfaceModifier, propagateMinConstraints = true) {
