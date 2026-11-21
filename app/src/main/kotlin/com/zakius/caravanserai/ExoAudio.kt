@@ -32,11 +32,115 @@ import java.io.File
 /** A queue entry as ExoPlayer holds it: a media item tagged with its [Entry]. */
 typealias QueueItem = MediaItem
 
+/**
+ * Defers ExoPlayer and SimpleCache construction until after the first frame (Startup.later) or first real use,
+ * returning idle defaults before then so cold start never blocks on Media3, SQLite, or AudioManager IPC.
+ */
+class LazyExoAudio(private val c: Context) : AudioPlayer {
+    @Volatile private var real: ExoAudio? = null
+    private var pendingListener: AudioPlayer.Listener? = null
+    private var pendingVolume = 1f
+    private var pendingRepeat = AudioPlayer.REPEAT_MODE_OFF
+    private var pendingPauseAtEnd = false
+
+    fun ensure(): ExoAudio {
+        real?.let { return it }
+        synchronized(this) {
+            real?.let { return it }
+            val created = ExoAudio(c)
+            created.listener = pendingListener
+            if (pendingVolume != 1f) created.volume = pendingVolume
+            if (pendingRepeat != AudioPlayer.REPEAT_MODE_OFF) created.repeatMode = pendingRepeat
+            if (pendingPauseAtEnd) created.pauseAtEndOfMediaItems = true
+            real = created
+            return created
+        }
+    }
+
+    override var listener: AudioPlayer.Listener?
+        get() = real?.listener ?: pendingListener
+        set(v) {
+            pendingListener = v
+            real?.listener = v
+        }
+
+    override fun item(e: Entry): MediaItem = buildMediaItem(e)
+    override fun entryAt(index: Int) = real?.entryAt(index)
+    override val currentEntry get() = real?.currentEntry
+    override val mediaItemCount get() = real?.mediaItemCount ?: 0
+    override val currentMediaItemIndex get() = real?.currentMediaItemIndex ?: -1
+    override val nextMediaItemIndex get() = real?.nextMediaItemIndex ?: -1
+    override fun hasNextMediaItem() = real?.hasNextMediaItem() ?: false
+    override fun hasPreviousMediaItem() = real?.hasPreviousMediaItem() ?: false
+    override fun seekToNextMediaItem() = ensure().seekToNextMediaItem()
+    override fun setMediaItems(items: List<MediaItem>, start: Int, positionMs: Long) = ensure().setMediaItems(items, start, positionMs)
+    override fun addMediaItem(index: Int, item: MediaItem) = ensure().addMediaItem(index, item)
+    override fun addMediaItems(items: List<MediaItem>) = ensure().addMediaItems(items)
+    override fun removeMediaItem(index: Int) = ensure().removeMediaItem(index)
+    override fun replaceMediaItems(from: Int, to: Int, items: List<MediaItem>) = ensure().replaceMediaItems(from, to, items)
+    override fun seekTo(index: Int, positionMs: Long) = ensure().seekTo(index, positionMs)
+    override fun seekTo(positionMs: Long) = ensure().seekTo(positionMs)
+    override val isPlaying get() = real?.isPlaying ?: false
+    override val playWhenReady get() = real?.playWhenReady ?: false
+    override val playbackState get() = real?.playbackState ?: AudioPlayer.STATE_IDLE
+    override val playerError get() = real?.playerError
+    override val currentPosition get() = real?.currentPosition ?: 0L
+    override val duration get() = real?.duration ?: C.TIME_UNSET
+    override val speed get() = real?.speed ?: 1f
+    override var volume: Float
+        get() = real?.volume ?: pendingVolume
+        set(v) {
+            pendingVolume = v
+            real?.volume = v
+        }
+    override var repeatMode: Int
+        get() = real?.repeatMode ?: pendingRepeat
+        set(v) {
+            pendingRepeat = v
+            real?.repeatMode = v
+        }
+    override var pauseAtEndOfMediaItems: Boolean
+        get() = real?.pauseAtEndOfMediaItems ?: pendingPauseAtEnd
+        set(v) {
+            pendingPauseAtEnd = v
+            real?.pauseAtEndOfMediaItems = v
+        }
+    override fun prepare() = ensure().prepare()
+    override fun play() = ensure().play()
+    override fun pause() { real?.pause() }
+    override fun togglePlay() = ensure().togglePlay()
+    override val showPlayButton get() = real?.showPlayButton ?: true
+    override fun precache(id: String, bytes: Long) = ensure().precache(id, bytes)
+    override fun fullyCached(id: String) = ensure().fullyCached(id)
+    override fun clearCache() = ensure().clearCache()
+}
+
+private fun buildMediaItem(e: Entry): MediaItem {
+    val s = e.song
+    return MediaItem.Builder()
+        .setMediaId(s.id)
+        .setUri("roma://${s.id}")
+        .setCustomCacheKey(s.id)
+        .setTag(e)
+        .setMediaMetadata(
+            MediaMetadata.Builder()
+                .setTitle(Store.shown(s.title))
+                .setArtist(artistLine(s))
+                .setAlbumTitle(s.album?.name?.let(Store::shown))
+                .setArtworkUri(s.thumb?.let { Uri.parse(bigThumb(it)) })
+                .build(),
+        )
+        .build()
+}
+
 /** Playback's player on Android: Media3 ExoPlayer, audio only, over a 1 GB disk cache. */
 class ExoAudio(c: Context) : AudioPlayer {
     val exo: ExoPlayer
     private val cache: SimpleCache
     private val cached: CacheDataSource.Factory
+    // Resumes the song when the headphones that paused it come back (Headphones). Declared before init so
+    // Startup.later { watchHeadphones() } can run synchronously when ExoAudio is created after the first frame.
+    private val headphones = Headphones { exo.play() }
 
     init {
         val cacheBytes = 1024L * 1024 * 1024
@@ -81,6 +185,7 @@ class ExoAudio(c: Context) : AudioPlayer {
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
         exo = ExoPlayer.Builder(c, audio, mediaSource, FirstAudioTrack, AheadLoadControl(load), NoBandwidthMeter, NoAnalytics)
+            .setLooper(android.os.Looper.getMainLooper())
             .setAudioAttributes(attributes, true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
@@ -115,23 +220,7 @@ class ExoAudio(c: Context) : AudioPlayer {
 
     override var listener: AudioPlayer.Listener? = null
 
-    override fun item(e: Entry): MediaItem {
-        val s = e.song
-        return MediaItem.Builder()
-            .setMediaId(s.id)
-            .setUri("roma://${s.id}")
-            .setCustomCacheKey(s.id)
-            .setTag(e)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(Store.shown(s.title))
-                    .setArtist(artistLine(s))
-                    .setAlbumTitle(s.album?.name?.let(Store::shown))
-                    .setArtworkUri(s.thumb?.let { Uri.parse(bigThumb(it)) })
-                    .build(),
-            )
-            .build()
-    }
+    override fun item(e: Entry): MediaItem = buildMediaItem(e)
 
     override fun entryAt(index: Int) = exo.getMediaItemAt(index).localConfiguration?.tag as? Entry
     override val currentEntry get() = exo.currentMediaItem?.localConfiguration?.tag as? Entry
@@ -185,9 +274,6 @@ class ExoAudio(c: Context) : AudioPlayer {
     }
 
     override fun clearCache() = cache.keys.forEach(cache::removeResource)
-
-    // Resumes the song when the headphones that paused it come back (Headphones).
-    private val headphones = Headphones { exo.play() }
 
     private fun watchHeadphones() {
         exo.addListener(object : Player.Listener {

@@ -320,7 +320,10 @@ fun Root() {
     Playback.tick
     val loaded = Playback.player.mediaItemCount > 0 || Playback.pending != null || Playback.restoring
     androidx.compose.runtime.LaunchedEffect(tab, Nav.playerView) {
-        Store.prefs.edit().putInt("ui.tab", tab).putString("ui.playerView", Nav.playerView).apply()
+        val prefs = Store.prefs
+        if (prefs.getInt("ui.tab", TAB_HOME) != tab || prefs.getString("ui.playerView", null) != Nav.playerView) {
+            prefs.edit().putInt("ui.tab", tab).putString("ui.playerView", Nav.playerView).apply()
+        }
     }
     val saved = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     // Tabs stay composed once visited, so switching back only lays out and draws instead of rebuilding a screen such

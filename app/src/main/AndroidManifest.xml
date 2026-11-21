@@ -19,6 +19,9 @@
 
     <application
         android:name=".App"
+        android:appComponentFactory="com.zakius.caravanserai.StartupFactory"
+        tools:replace="android:appComponentFactory"
+        tools:targetApi="28"
         android:allowBackup="true"
         android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -54,11 +57,9 @@
                 <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
-        <!-- Without emoji2's start-up step: it looks up a downloadable emoji font (package manager calls) before the app's
-             code runs, then lays text out again when it arrives. The system font's emoji are used instead. -->
-        <provider android:name="androidx.startup.InitializationProvider" android:authorities="${applicationId}.androidx-startup" tools:node="merge">
-            <meta-data android:name="androidx.emoji2.text.EmojiCompatInitializer" tools:node="remove" />
-        </provider>
+        <!-- Nothing in the app needs androidx.startup before the first frame (emoji2's font lookup, ProcessLifecycle,
+             ProfileInstaller); removing the provider avoids a ContentProvider + PackageManager IPC before App.onCreate. -->
+        <provider android:name="androidx.startup.InitializationProvider" android:authorities="${applicationId}.androidx-startup" tools:node="remove" />
         <!-- A headset's or car's Play button when the app isn't running: it starts the service, which resumes. -->
         <receiver android:name=".MediaButtons" android:exported="true">
             <intent-filter>

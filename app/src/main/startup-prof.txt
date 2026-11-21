@@ -1,0 +1,11 @@
+Lcom/zakius/caravanserai/StartupFactory;
+Lcom/zakius/caravanserai/StartupFactory$Companion;
+Lcom/zakius/caravanserai/App;
+Lcom/zakius/caravanserai/App$Companion;
+Lcom/zakius/caravanserai/MainActivity;
+Lcom/zakius/caravanserai/ColdStartHomeView;
+Lcom/zakius/caravanserai/ColdStartHomeView$Companion;
+Lcom/zakius/caravanserai/Startup;
+Lcom/zakius/caravanserai/BuildConfig;
+Lorg/lsposed/hiddenapibypass/HiddenApiBypass;
+Landroidx/core/graphics/PathParser;

@@ -163,7 +163,7 @@ fun meteredOrSaving(): Boolean {
 fun systemColorScheme(dark: Boolean): ColorScheme? {
     if (Build.VERSION.SDK_INT < 31) return null
     val c = LocalContext.current
-    return if (dark) dynamicDarkColorScheme(c) else dynamicLightColorScheme(c)
+    return remember(dark) { if (dark) dynamicDarkColorScheme(c) else dynamicLightColorScheme(c) }
 }
 
 // The system's tonal palettes (Android 12+), by tone: _0 is tone 100, _500 tone 50, _1000 tone 0. Tones between two
@@ -402,26 +402,38 @@ fun screenSizeDp(): androidx.compose.ui.unit.IntSize {
  */
 @Composable
 fun rememberSaveFile(name: String, bytes: () -> ByteArray): () -> Unit {
-    val createJson = androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")
-    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(createJson) { uri ->
-        uri ?: return@rememberLauncherForActivityResult
-        runCatching { appContext.contentResolver.openOutputStream(uri)!!.use { o -> o.write(bytes()) } }
-            .onFailure { error -> toast("Couldn't export: ${error.message}", long = true) }
+    val activity = LocalContext.current as? MainActivity
+    val latestBytes by rememberUpdatedState(bytes)
+    return {
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("application/json")
+            .putExtra(Intent.EXTRA_TITLE, name)
+        activity?.launchForResult(intent) { uri ->
+            uri ?: return@launchForResult
+            runCatching { appContext.contentResolver.openOutputStream(uri)!!.use { o -> o.write(latestBytes()) } }
+                .onFailure { error -> toast("Couldn't export: ${error.message}", long = true) }
+        }
     }
-    return { launcher.launch(name) }
 }
 
 /** Returns a function that opens the system's file picker to choose a file. [text] gets the file's text. */
 @Composable
 fun rememberOpenFile(text: (String) -> Unit): () -> Unit {
-    val openDocument = androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
-    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(openDocument) { uri ->
-        uri ?: return@rememberLauncherForActivityResult
-        runCatching { appContext.contentResolver.openInputStream(uri)!!.use { input -> input.readBytes().decodeToString() } }
-            .onSuccess(text)
-            .onFailure { error -> toast("Couldn't read the file: ${error.message}", long = true) }
+    val activity = LocalContext.current as? MainActivity
+    val latestText by rememberUpdatedState(text)
+    return {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("*/*")
+            .putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/json", "*/*"))
+        activity?.launchForResult(intent) { uri ->
+            uri ?: return@launchForResult
+            runCatching { appContext.contentResolver.openInputStream(uri)!!.use { input -> input.readBytes().decodeToString() } }
+                .onSuccess(latestText)
+                .onFailure { error -> toast("Couldn't read the file: ${error.message}", long = true) }
+        }
     }
-    return { launcher.launch(arrayOf("application/json", "*/*")) }
 }
 
 /** Opens Last.fm's browser sign-in, which returns to roma://lastfm?token=… (MainActivity.handleLastFm). */

@@ -32,7 +32,7 @@ object Dictionary {
     private val dir get() = File(Store.files, "dict")
     private val file get() = File(dir, "system_core-${BuildConfig.DICT_VERSION}.dic")
 
-    var installed by mutableStateOf(file.exists())
+    var installed by mutableStateOf(false)
         private set
     /** What the install is doing, or why it stopped; null when nothing happened yet. */
     var status by mutableStateOf<String?>(null)
@@ -51,6 +51,11 @@ object Dictionary {
             channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size())
         }
         return buffer.order(ByteOrder.LITTLE_ENDIAN)
+    }
+
+    /** Updates [installed] from disk, for the first-start screen before [ensure] runs. */
+    fun checkInstalled() {
+        installed = file.exists()
     }
 
     /** Called at start. When Japanese is romanized but the dictionary is missing, the app offers it once per run. */
