@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -51,12 +52,97 @@ object Playback {
     lateinit var player: AudioPlayer
     private val scope by lazy { CoroutineScope(SupervisorJob() + Dispatchers.Main) }
 
-    /** Bumped on every player change; the UI reads it to redraw. */
+    /** Bumped on every player change; LyricsView and legacy callers use it. Granular states below prevent unrelated recompositions. */
     var tick by mutableIntStateOf(0)
         private set
-    /** Bumped twice a second while playing. Only the seek bar reads it, so the clock doesn't redraw the whole player. */
+    /** Non-allocating wakeup signal for LyricsView's karaoke loop on seek, play/pause, transition or pending change. */
+    val playbackSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    /** Granular reactive UI states, updated only when their own value changes so play/pause never recomposes Root, SongView, QueueView, or PageScreen. */
+    var hasQueue by mutableStateOf(true)
+        private set
+    var shownSong by mutableStateOf<Song?>(null)
+        private set
+    var shownIndexState by mutableIntStateOf(-1)
+        private set
+    var currentEntryState by mutableStateOf<Entry?>(null)
+        private set
+    var currentIndexState by mutableIntStateOf(-1)
+        private set
+    var queueEntries by mutableStateOf<List<Entry>>(emptyList())
+        private set
+    var showPlayButton by mutableStateOf(true)
+        private set
+    var repeatModeState by mutableIntStateOf(AudioPlayer.REPEAT_MODE_OFF)
+        private set
+    var shuffledState by mutableStateOf(false)
+        private set
+    var hasNextState by mutableStateOf(false)
+        private set
+    var durationMsState by mutableLongStateOf(0L)
+        private set
+    var waitingForNetworkState by mutableStateOf(false)
+        private set
+    /** Song IDs whose full audio is in the cache, updated off the main thread so QueueView never blocks on SimpleCache. */
+    var cachedSongIds by mutableStateOf<Set<String>>(emptySet())
+        private set
+    // Song IDs whose first 32 KB (or full audio) are already confirmed in cache this run, so skipTo skips pending/IO hop.
+    private val precachedIds: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    /** Bumped twice a second while playing. Only the seek bar (and active sleep chip) reads it. */
     var clock by mutableIntStateOf(0)
         private set
+
+    private fun syncUiState(listChanged: Boolean = false) {
+        val count = player.mediaItemCount
+        val curIdx = player.currentMediaItemIndex
+        val curEntry = if (opening != null) null else player.currentEntry
+        val shown = pending ?: player.currentEntry?.song
+        val sIdx = when {
+            opening != null -> -1
+            pending == null -> curIdx
+            else -> pendingIndex
+        }
+        hasQueue = count > 0 || pending != null || restoring
+        shownSong = shown
+        shownIndexState = sIdx
+        currentEntryState = curEntry
+        currentIndexState = curIdx
+        showPlayButton = player.showPlayButton
+        repeatModeState = player.repeatMode
+        shuffledState = shuffleOrder != null
+        hasNextState = neighbour(sIdx, 1) >= 0
+        durationMsState = if (opening != null) {
+            0L
+        } else {
+            pending?.let { it.durationSec * 1000L }
+                ?: player.duration.takeIf { it > 0 }
+                ?: player.currentEntry?.song?.durationSec?.let { it * 1000L }
+                ?: 0L
+        }
+        waitingForNetworkState = !online && !player.isPlaying && (player.playWhenReady || pending != null)
+        if (listChanged || (count > 0 && queueEntries.size != count)) {
+            val fresh = entries()
+            queueEntries = fresh
+            refreshCachedIds(fresh)
+        }
+        playbackSignal.tryEmit(Unit)
+    }
+
+    private var cachedRefreshJob: Job? = null
+    private fun refreshCachedIds(list: List<Entry>) {
+        cachedRefreshJob?.cancel()
+        val ids = list.map { it.song.id }.distinct()
+        if (ids.isEmpty()) {
+            cachedSongIds = emptySet()
+            return
+        }
+        cachedRefreshJob = scope.launch {
+            val cached = withContext(Dispatchers.IO) {
+                ids.filterTo(HashSet()) { id -> runCatching { player.fullyCached(id) }.getOrDefault(false) }
+            }
+            precachedIds.addAll(cached)
+            cachedSongIds = cached
+        }
+    }
     var lyrics by mutableStateOf<LyricsState?>(null)
         private set
     var error by mutableStateOf<String?>(null)
@@ -105,12 +191,14 @@ object Playback {
                     if (song != null && song.id == lyricsUnfinished) postMain { loadLyrics(song) }
                 }
                 online = up
+                syncUiState()
             }
         }
         Startup.later { backend.start() }
         player.listener = object : AudioPlayer.Listener {
             override fun onEvents(listChanged: Boolean, transition: Boolean, repeatChanged: Boolean, playingChanged: Boolean, discontinuity: Boolean) {
                 tick++
+                syncUiState(listChanged = listChanged)
                 playerChanged?.invoke()
                 if (listChanged || transition || repeatChanged) saveQueue()
                 if (playingChanged || discontinuity) savePosition()
@@ -206,6 +294,9 @@ object Playback {
     // The work is wasted only if the song is skipped.
     private fun prefetchNext() {
         prefetchQueueCovers()
+        // Also warm the previous song's cover so swiping right in SongView peeks immediately.
+        val prevIdx = neighbour(player.currentMediaItemIndex, -1)
+        if (prevIdx >= 0) player.entryAt(prevIdx)?.song?.thumb?.let { Images.prefetch(bigThumb(it), BIG_PX) }
         val i = player.nextMediaItemIndex
         if (i < 0) return
         val next = player.entryAt(i)?.song ?: return
@@ -315,35 +406,61 @@ object Playback {
         if (songs.isEmpty()) return
         Store.remember(songs)
         val song = songs[start]
+        song.thumb?.let { Images.prefetch(bigThumb(it), BIG_PX) }
         pendingJob?.cancel()
         opening = null
+        loadLyrics(song, network = false)
+        // If the song's first bytes are already cached and the queue is small, switch straight away with zero ducking or coroutine hop.
+        if (song.id in precachedIds && songs.size <= 8) {
+            pending = null
+            pendingIndex = -1
+            duck(false)
+            switchTo(songs, start, mix, mixNext, songs.map { player.item(Entry(it, "queued")) })
+            return
+        }
         pending = song
         pendingIndex = -1
+        syncUiState()
         duck(true)
-        loadLyrics(song, network = false)
         pendingJob = scope.launch {
-            // On failure the player's own error handling takes over.
-            withTimeoutOrNull(8_000) { precacheAsync(song.id).await() }
+            // Build MediaItems off the main thread in parallel with precaching so big playlists never jank the UI thread.
+            val itemsJob = async(Dispatchers.Default) { songs.map { player.item(Entry(it, "queued")) } }
+            if (song.id !in precachedIds) {
+                withTimeoutOrNull(8_000) { precacheAsync(song.id).await() }
+            }
+            val built = itemsJob.await()
             pending = null
             duck(false)
-            switchTo(songs, start, mix, mixNext)
+            switchTo(songs, start, mix, mixNext, built)
         }
     }
 
     /** Next, Previous and queue taps: the current song keeps playing until the target's first bytes are cached. */
     fun skipTo(index: Int) {
         val song = player.entryAt(index)?.song ?: return
+        song.thumb?.let { Images.prefetch(bigThumb(it), BIG_PX) }
         pendingJob?.cancel()
         opening = null
+        loadLyrics(song, network = false)
+        // Fast path: already precached (e.g. via prefetchNext or prepare), so seek immediately with zero ducking or IO hop.
+        if (song.id in precachedIds) {
+            pending = null
+            pendingIndex = -1
+            duck(false)
+            if (index < player.mediaItemCount) player.seekTo(index, 0)
+            syncUiState()
+            return
+        }
         pending = song
         pendingIndex = index
+        syncUiState()
         duck(true)
-        loadLyrics(song, network = false)
         pendingJob = scope.launch {
             withTimeoutOrNull(8_000) { precacheAsync(song.id).await() }
             pending = null
             duck(false)
             if (index < player.mediaItemCount) player.seekTo(index, 0)
+            syncUiState()
         }
     }
 
@@ -402,18 +519,30 @@ object Playback {
         if (ids.isEmpty()) return
         aheadJob = scope.launch {
             precacheAsync(ids[0]).await()
-            withContext(Dispatchers.IO) {
+            val newlyCached = withContext(Dispatchers.IO) {
+                val done = ArrayList<String>()
                 for (id in ids) {
-                    if (player.fullyCached(id)) continue
-                    runCatching { player.precache(id, -1) }
+                    if (player.fullyCached(id)) {
+                        done.add(id)
+                        continue
+                    }
+                    if (runCatching { player.precache(id, -1) }.isSuccess) done.add(id)
                 }
+                done
+            }
+            if (newlyCached.isNotEmpty()) {
+                precachedIds.addAll(newlyCached)
+                cachedSongIds = cachedSongIds + newlyCached
             }
         }
     }
 
     // Resolves the stream URL and caches the first 32 KB: the container header plus about 1.5 s of audio at YouTube's
     // bitrates, more than the 0.5 s the player needs to start. Waiting for more only delays the switch on slow networks.
-    private fun precache(id: String) = player.precache(id, 32 * 1024L)
+    private fun precache(id: String) {
+        player.precache(id, 32 * 1024L)
+        precachedIds.add(id)
+    }
 
     // Running precaches by video ID, touched on the main thread only. A tap joins the lookup its touch-down started,
     // and Next joins the next-song prefetch, instead of resolving and downloading the same song twice at once.
@@ -478,7 +607,7 @@ object Playback {
     private const val QUEUE_COVERS = 30
     private const val GUESSES_PER_HOUR = 60
 
-    private fun switchTo(songs: List<Song>, start: Int, mix: String?, mixNext: String?) {
+    private fun switchTo(songs: List<Song>, start: Int, mix: String?, mixNext: String?, builtItems: List<QueueItem>) {
         mixId = mix
         mixContinuation = mixNext
         // Otherwise the old queue's top-up would add its songs to this one.
@@ -488,9 +617,10 @@ object Playback {
         radioContinuation = null
         related = null
         shuffleOrder = null
-        player.setMediaItems(songs.map { player.item(Entry(it, "queued")) }, start, 0)
+        player.setMediaItems(builtItems, start, 0)
         player.prepare()
         player.play()
+        syncUiState(listChanged = true)
     }
 
     fun playNext(s: Song) = insertQueued(s, player.currentMediaItemIndex + 1)
@@ -600,11 +730,23 @@ object Playback {
         related = rel
         radioContinuation = continuation
         Store.remember(added)
-        player.addMediaItems(added.map { player.item(Entry(it, "radio")) })
+        val built = withContext(Dispatchers.Default) { added.map { player.item(Entry(it, "radio")) } }
+        if (radioSeed !== seed) return
+        player.addMediaItems(built)
     }
 
     private var mixId: String? = null
     private var mixContinuation: String? = null
+    private var mixPrefetch: Pair<String, Deferred<SongPage?>>? = null
+
+    /** Starts fetching a mix's first page on finger-down so tapping its tile joins the in-flight request. */
+    fun prefetchMix(id: String) {
+        if (thrifty()) return
+        val existing = mixPrefetch
+        if (existing != null && existing.first == id && existing.second.isActive) return
+        val source = backend
+        mixPrefetch = id to scope.async(Dispatchers.IO) { runCatching { source.playlist(id) }.getOrNull() }
+    }
 
     /**
      * Plays a personal mix or another generated playlist (RD…) as a playlist: its songs go into "You queued", not radio,
@@ -620,10 +762,13 @@ object Playback {
         pendingJob?.cancel()
         pending = null
         opening = title to thumb
+        syncUiState()
         duck(true)
+        val prefetchedMix = mixPrefetch?.takeIf { it.first == id }?.second
+        mixPrefetch = null
         pendingJob = scope.launch {
             val source = backend
-            val page = withContext(Dispatchers.IO) { source.playlist(id) }
+            val page = prefetchedMix?.await() ?: withContext(Dispatchers.IO) { source.playlist(id) }
             // Liked music plays as liked. The mix filters (versions, bans) are for what YouTube picks.
             val songs = withContext(Dispatchers.IO) {
                 val all = page?.songs.orEmpty()
@@ -631,6 +776,7 @@ object Playback {
             }
             if (page == null || songs.isEmpty()) {
                 opening = null
+                syncUiState()
                 duck(false)
                 error = "Couldn't load this playlist."
                 return@launch
@@ -665,7 +811,9 @@ object Playback {
                 return@launch
             }
             Store.remember(added)
-            player.addMediaItems(added.map { player.item(Entry(it, "queued")) })
+            val built = withContext(Dispatchers.Default) { added.map { player.item(Entry(it, "queued")) } }
+            if (mixId != id) return@launch
+            player.addMediaItems(built)
         }
     }
 
@@ -827,9 +975,13 @@ object Playback {
                 restoringNow = false
                 // A song fully on disk is prepared now; any other is prepared by Play, which reads what's cached
                 // before asking the network, so opening the app to browse costs no data.
-                if (onDisk) player.prepare()
+                if (onDisk) {
+                    precachedIds.add(saved.songs[r.index].id)
+                    player.prepare()
+                }
             }
             restoring = false
+            syncUiState(listChanged = true)
             if (player.mediaItemCount == 0 && pending == null && Nav.tab == TAB_PLAYER) Nav.tab = TAB_HOME
             restoreWaiters.forEach { it() }
             restoreWaiters.clear()
@@ -890,10 +1042,12 @@ object Playback {
         }
         if (queued.isEmpty()) {
             tick++
+            syncUiState()
             return
         }
         player.replaceMediaItems(cur + 1, end, newOrder.map { player.item(it) })
         tick++
+        syncUiState(listChanged = true)
     }
 
     /** Never: ban the current song and skip it. The bar offers Undo for 5 seconds. */
@@ -995,15 +1149,16 @@ object Playback {
         romanizeJob?.cancel()
         romanizeJob = scope.launch {
             val before = entries()
-            val again = withContext(Dispatchers.Default) {
-                before.map { e -> Entry(Store.romanizer.again(e.song), e.section) }
+            val built = withContext(Dispatchers.Default) {
+                before.map { e -> player.item(Entry(Store.romanizer.again(e.song), e.section)) }
             }
             // Radio may have added songs meanwhile; any other change to the queue means starting over.
             val now = entries()
             val changed = now.size < before.size || before.indices.any { i -> now[i] !== before[i] }
             if (changed) return@launch romanizationChanged()
-            player.replaceMediaItems(0, before.size, again.map { player.item(it) })
+            player.replaceMediaItems(0, before.size, built)
             tick++
+            syncUiState(listChanged = true)
         }
         current()?.let { loadLyrics(it.song) }
     }

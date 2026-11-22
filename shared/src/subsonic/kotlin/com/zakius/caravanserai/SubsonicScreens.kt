@@ -119,6 +119,12 @@ internal fun LibraryTiles(mixes: List<Item>) {
     fun Tile(title: String, id: String, picture: @Composable () -> Unit) = Column(
         Modifier
             .width(side)
+            .pointerInput(id) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    Playback.prefetchMix(id)
+                }
+            }
             .clickable {
                 Playback.playMix(id, title = title)
                 Nav.tab = TAB_PLAYER
@@ -173,6 +179,12 @@ private fun ShortTile(title: String, id: String, modifier: Modifier, icon: @Comp
             .heightIn(min = 56.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.secondaryContainer)
+            .pointerInput(id) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    Playback.prefetchMix(id)
+                }
+            }
             .clickable {
                 Playback.playMix(id, title = title)
                 Nav.tab = TAB_PLAYER

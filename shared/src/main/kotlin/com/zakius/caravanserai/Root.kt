@@ -1,47 +1,76 @@
 package com.zakius.caravanserai
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.layout.layout
-import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.SaveableStateHolder
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.padding
-import androidx.compose.ui.zIndex
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.FocusProperties
+import androidx.compose.ui.focus.FocusPropertiesModifierNode
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
+import androidx.compose.ui.node.LayoutModifierNode
+import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.node.SemanticsModifierNode
+import androidx.compose.ui.node.invalidatePlacement
+import androidx.compose.ui.node.invalidateSemantics
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsPropertyReceiver
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.CoroutineScope
+import androidx.compose.ui.zIndex
 import kotlinx.coroutines.Dispatchers
-import androidx.compose.runtime.snapshotFlow
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.roundToInt
 
 /** A page opened from a list: an album, playlist or artist, a settings category, or the sign-in page. */
@@ -54,23 +83,33 @@ const val TAB_PLAYER = 3
 const val TAB_SETTINGS = 4
 
 /** Navigation state, shared so any screen can open a page or switch tabs. The tab and the player's view (song,
- *  lyrics, queue) survive a restart; Root saves them. */
+ *  lyrics, queue) survive a restart and are persisted straight from their setters (so switching player views never
+ *  recomposes Root). */
 object Nav {
     private var shownTab by mutableStateOf(Store.prefs.getInt("ui.tab", TAB_HOME))
     var tab: Int
         get() = shownTab
         set(v) {
             // Showing the player shows the player itself, not a page opened from it.
-            if (v == TAB_PLAYER) stacks[TAB_PLAYER].clear()
+            if (v == TAB_PLAYER && stacks[TAB_PLAYER].isNotEmpty()) stacks[TAB_PLAYER].clear()
             if (v != shownTab) {
                 before = shownTab
                 shownTab = v
+                Store.prefs.edit().putInt("ui.tab", v).apply()
             }
         }
     /** The tab shown before this one. Back and a swipe down on the player return there. */
     var before = TAB_HOME
         private set
-    var playerView by mutableStateOf(Store.prefs.getString("ui.playerView", null) ?: "song")
+    private var shownPlayerView by mutableStateOf(Store.prefs.getString("ui.playerView", null) ?: "song")
+    var playerView: String
+        get() = shownPlayerView
+        set(v) {
+            if (v != shownPlayerView) {
+                shownPlayerView = v
+                Store.prefs.edit().putString("ui.playerView", v).apply()
+            }
+        }
     val stacks = List(5) { mutableStateListOf<Page>() }
 
     /** Opens [p] on the shown tab's stack. A page opened from the player stays on the Player tab, so Back returns there. */
@@ -85,7 +124,7 @@ object Nav {
     fun select(t: Int) {
         // Home tapped on Home also goes back to its top.
         if (t == tab && t == TAB_HOME && stacks[t].isEmpty()) Home.list.requestScrollToItem(0)
-        if (t == tab) stacks[t].clear()
+        if (t == tab && stacks[t].isNotEmpty()) stacks[t].clear()
         tab = t
     }
 
@@ -132,34 +171,47 @@ object Touch {
     }
 }
 
+// Sentinel 0 means "grey artwork, keep the default accent".
+private val artColorCache = ConcurrentHashMap<String, Int>()
+
 @Composable
 fun Theme(content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
-    // The system's colours (Android 12+, from the wallpaper), or else the app's own accent on the base scheme.
-    var scheme = systemColorScheme(dark)
-        ?: accentScheme(if (dark) darkColorScheme() else lightColorScheme(), backend.brandColor, dark)
-    // Two options, both off by default. True black saves power, because OLED pixels that are off draw none. Artwork
-    // colours make the accent follow the playing song's art, at the cost of one 24 px decode per song.
-    if (dark && Store.bool("ui.trueBlack", false)) {
-        val black = androidx.compose.ui.graphics.Color.Black
-        scheme = scheme.copy(
-            background = black,
-            surface = black,
-            surfaceContainer = black,
-            surfaceContainerLowest = black,
-        )
-    }
-    if (Store.bool("ui.artColors", false)) {
-        Playback.tick
-        val thumb = Playback.shown()?.thumb
-        var seed by androidx.compose.runtime.remember { mutableStateOf<Int?>(null) }
-        androidx.compose.runtime.LaunchedEffect(thumb) {
-            seed = withContext(Dispatchers.IO) {
-                if (thumb != null) artColor(thumb) else null
+    val system = systemColorScheme(dark)
+    val trueBlack = dark && Store.bool("ui.trueBlack", false)
+    val useArt = Store.bool("ui.artColors", false)
+    var artSeed by remember { mutableStateOf<Int?>(null) }
+    if (useArt) {
+        val thumb = Playback.shownSong?.thumb
+        LaunchedEffect(thumb) {
+            if (thumb == null) {
+                artSeed = null
+            } else {
+                val cached = artColorCache[thumb]
+                if (cached != null) {
+                    artSeed = if (cached == 0) null else cached
+                } else {
+                    val computed = withContext(Dispatchers.IO) { artColor(thumb) }
+                    artColorCache[thumb] = computed ?: 0
+                    artSeed = computed
+                }
             }
         }
-        val artSeed = seed
-        if (artSeed != null) scheme = accentScheme(scheme, artSeed, dark)
+    } else {
+        artSeed = null
+    }
+    val scheme = remember(dark, system, trueBlack, artSeed) {
+        var s = system ?: accentScheme(if (dark) darkColorScheme() else lightColorScheme(), backend.brandColor, dark)
+        if (trueBlack) {
+            s = s.copy(
+                background = Color.Black,
+                surface = Color.Black,
+                surfaceContainer = Color.Black,
+                surfaceContainerLowest = Color.Black,
+            )
+        }
+        if (artSeed != null) s = accentScheme(s, artSeed!!, dark)
+        s
     }
     MaterialTheme(colorScheme = scheme) {
         Surface(Modifier.fillMaxSize(), content = content)
@@ -281,16 +333,56 @@ private fun accentScheme(s: ColorScheme, seed: Int, dark: Boolean): ColorScheme 
  * the player keeps its visited views. It is a compositionLocalOf rather than a static one, so a change recomposes only
  * the screens that read it instead of both tabs' whole trees on every switch.
  */
-val LocalTabShown = androidx.compose.runtime.compositionLocalOf { true }
+val LocalTabShown = compositionLocalOf { true }
 
-// The content is composed and measured at the size it would be shown at, but takes no space and is never placed, so
-// it is not drawn or touched and has no semantics for accessibility. Measuring it matters: a lazy list then has its
-// rows composed and laid out, so showing it later costs only placing and drawing.
-fun Modifier.hidden() = clearAndSetSemantics {}.layout { m, c ->
-    if (c.hasBoundedWidth && c.hasBoundedHeight) {
-        m.measure(androidx.compose.ui.unit.Constraints.fixed(c.maxWidth, c.maxHeight))
+// Keeps a screen composed, measured, and placed inside its own hardware RenderNode layer, so switching tabs, views,
+// or pages flips only layer translation and z-order (invalidatePlacement, never re-measuring or re-recording
+// DisplayLists). When hidden, the layer sits past the parent's clipToBounds (0 GPU pixels drawn, 0 hit-test hits)
+// and clears descendant semantics and focus in place without tearing down modifier nodes.
+private class DeckVisibilityElement(val shown: Boolean) : ModifierNodeElement<DeckVisibilityNode>() {
+    override fun create() = DeckVisibilityNode(shown)
+    override fun update(node: DeckVisibilityNode) {
+        if (node.shown != shown) {
+            node.shown = shown
+            node.invalidatePlacement()
+            node.invalidateSemantics()
+        }
     }
-    layout(c.minWidth, c.minHeight) {}
+    override fun equals(other: Any?) = other is DeckVisibilityElement && other.shown == shown
+    override fun hashCode() = shown.hashCode()
+}
+
+private class DeckVisibilityNode(var shown: Boolean) :
+    Modifier.Node(), LayoutModifierNode, SemanticsModifierNode, FocusPropertiesModifierNode {
+
+    override val shouldClearDescendantSemantics: Boolean get() = !shown
+    override fun SemanticsPropertyReceiver.applySemantics() {}
+
+    override fun applyFocusProperties(focusProperties: FocusProperties) {
+        focusProperties.canFocus = shown
+        focusProperties.onEnter = { if (!shown) cancelFocusChange() }
+    }
+
+    override fun MeasureScope.measure(measurable: Measurable, constraints: Constraints): MeasureResult {
+        val p = measurable.measure(constraints)
+        return layout(p.width, p.height) {
+            val offscreen = (maxOf(p.width, 4096) + 64).toFloat()
+            p.placeWithLayer(0, 0, zIndex = if (shown) 1f else 0f) {
+                translationX = if (shown) 0f else offscreen
+            }
+        }
+    }
+}
+
+/**
+ * One layer inside a clipped deck (tabs, stacked pages, player views, library sub-tabs). Must be placed inside a
+ * container with [clipToBounds].
+ */
+@Composable
+fun DeckLayer(shown: Boolean, content: @Composable () -> Unit) {
+    Box(Modifier.fillMaxSize().then(DeckVisibilityElement(shown))) {
+        content()
+    }
 }
 
 /**
@@ -298,76 +390,91 @@ fun Modifier.hidden() = clearAndSetSemantics {}.layout { m, c ->
  * built hidden before they're first opened, so opening one costs no more than returning to it.
  */
 suspend fun <T> buildAhead(visited: MutableList<T>, ahead: List<T>) {
+    kotlinx.coroutines.delay(250)
     for (v in ahead) {
-        kotlinx.coroutines.delay(500)
         Touch.awaitIdle()
-        if (v !in visited) visited += v
+        if (v !in visited) {
+            visited += v
+            kotlinx.coroutines.delay(120)
+        }
     }
 }
 
 @Composable
 fun Root() {
-    val tab = Nav.tab
-    val stack = Nav.stacks[tab]
-    // Picking a song jumps to the player, so leaving it returns to the list it was picked from.
-    BackHandler(enabled = stack.isNotEmpty() || tab != TAB_HOME) { Nav.back() }
+    RootBackHandler()
     if (!Store.bool("setup.done", false)) {
         Box(Modifier.fillMaxSize().safeDrawingPadding()) { SetupScreen() }
         return
     }
     DictionaryPrompt()
-    // Read so the Player tab's dimming redraws when the player changes.
-    Playback.tick
-    val loaded = Playback.player.mediaItemCount > 0 || Playback.pending != null || Playback.restoring
-    androidx.compose.runtime.LaunchedEffect(tab, Nav.playerView) {
-        val prefs = Store.prefs
-        if (prefs.getInt("ui.tab", TAB_HOME) != tab || prefs.getString("ui.playerView", null) != Nav.playerView) {
-            prefs.edit().putInt("ui.tab", tab).putString("ui.playerView", Nav.playerView).apply()
-        }
-    }
-    val saved = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
-    // Tabs stay composed once visited, so switching back only lays out and draws instead of rebuilding a screen such
-    // as Home on the main thread. Most tabs are built ahead (buildAhead). The pages under a tab's top page stay
-    // composed too, so Back shows the one below as it was. A hidden screen isn't drawn, touched or read by
-    // accessibility services, and it checks LocalTabShown to pause its own work and Back handling.
-    val visited = androidx.compose.runtime.remember { mutableStateListOf(tab) }
-    if (tab !in visited) visited += tab
-    // Library isn't built ahead: building it loads the library from the network.
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        buildAhead(visited, listOf(TAB_PLAYER, TAB_HOME, TAB_SEARCH, TAB_SETTINGS))
+    val saved = rememberSaveableStateHolder()
+    // Tabs stay composed once visited, placed in their own hardware RenderNode layers so switching only flips layer
+    // translation/zIndex. All 5 tabs are built ahead (Library reads only its disk cache while hidden).
+    val visited = remember { mutableStateListOf(Nav.tab) }
+    LaunchedEffect(Unit) {
+        buildAhead(visited, listOf(TAB_PLAYER, TAB_HOME, TAB_LIBRARY, TAB_SEARCH, TAB_SETTINGS))
     }
     // The nav bar's background runs under the system's gesture strip; its items stay above it. The keyboard, when up,
     // covers the nav bar, and the screen above ends at the keyboard.
     val sides = WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
     Column(Modifier.fillMaxSize().windowInsetsPadding(sides).imePadding()) {
-        Box(Modifier.weight(1f)) {
+        Box(Modifier.weight(1f).clipToBounds()) {
             WhyNote()
-            for (t in visited) androidx.compose.runtime.key(t) {
-                Box(if (t == tab) Modifier.fillMaxSize() else Modifier.hidden()) {
-                    val tabStack = Nav.stacks[t]
-                    for (level in 0..tabStack.size) {
-                        val page = tabStack.getOrNull(level - 1)
-                        androidx.compose.runtime.key(level, page) {
-                            val top = level == tabStack.size
-                            Box(if (top) Modifier.fillMaxSize() else Modifier.hidden()) {
-                                androidx.compose.runtime.CompositionLocalProvider(LocalTabShown provides (t == tab && top)) {
-                                    // Each tab and page keeps its saved state (scroll position, search text) while another
-                                    // one is shown, so going back lands where it was. ponytail: the states of closed pages
-                                    // stay until the app ends, which is acceptable because they are small.
-                                    val stateKey = if (page != null) "$t/$level/${page.kind}/${page.id}" else "$t"
-                                    saved.SaveableStateProvider(stateKey) {
-                                        when {
-                                            page != null -> Column(Modifier.fillMaxSize()) {
-                                                PageBar(pageTitle(page))
-                                                Box(Modifier.weight(1f)) { PageScreen(page) }
-                                            }
-                                            t == TAB_HOME -> HomeScreen()
-                                            t == TAB_SEARCH -> SearchScreen()
-                                            t == TAB_LIBRARY -> LibraryScreen()
-                                            t == TAB_PLAYER -> PlayerScreen()
-                                            else -> SettingsScreen()
-                                        }
+            TabDeck(visited, saved)
+        }
+        // The tabs keep a fixed order with Player in the middle, dimmed until something is loaded. The bar is compact
+        // (48 dp), with an icon and a small label but no pill, so the player's controls get the height.
+        FixedRowsFont {
+            NavBar(onPressTab = { t -> if (t !in visited) visited += t })
+        }
+    }
+}
+
+@Composable
+private fun RootBackHandler() {
+    val tab = Nav.tab
+    val hasStack = Nav.stacks[tab].isNotEmpty()
+    // Picking a song jumps to the player, so leaving it returns to the list it was picked from.
+    BackHandler(enabled = hasStack || tab != TAB_HOME) { Nav.back() }
+}
+
+@Composable
+private fun TabDeck(visited: MutableList<Int>, saved: SaveableStateHolder) {
+    val activeTab = Nav.tab
+    if (activeTab !in visited) visited += activeTab
+    for (t in visited) key(t) {
+        TabHost(t, t == activeTab, saved)
+    }
+}
+
+@Composable
+private fun TabHost(t: Int, isCurrentTab: Boolean, saved: SaveableStateHolder) {
+    DeckLayer(isCurrentTab) {
+        Box(Modifier.fillMaxSize().clipToBounds()) {
+            val tabStack = Nav.stacks[t]
+            val stackSize = tabStack.size
+            for (level in 0..stackSize) {
+                val page = tabStack.getOrNull(level - 1)
+                key(level, page) {
+                    val top = level == stackSize
+                    DeckLayer(top) {
+                        CompositionLocalProvider(LocalTabShown provides (isCurrentTab && top)) {
+                            // Each tab and page keeps its saved state (scroll position, search text) while another
+                            // one is shown, so going back lands where it was. ponytail: the states of closed pages
+                            // stay until the app ends, which is acceptable because they are small.
+                            val stateKey = if (page != null) "$t/$level/${page.kind}/${page.id}" else "$t"
+                            saved.SaveableStateProvider(stateKey) {
+                                when {
+                                    page != null -> Column(Modifier.fillMaxSize()) {
+                                        PageBar(pageTitle(page))
+                                        Box(Modifier.weight(1f)) { PageScreen(page) }
                                     }
+                                    t == TAB_HOME -> HomeScreen()
+                                    t == TAB_SEARCH -> SearchScreen()
+                                    t == TAB_LIBRARY -> LibraryScreen()
+                                    t == TAB_PLAYER -> PlayerScreen()
+                                    else -> SettingsScreen()
                                 }
                             }
                         }
@@ -375,45 +482,52 @@ fun Root() {
                 }
             }
         }
-        // The tabs keep a fixed order with Player in the middle, dimmed until something is loaded. The bar is compact
-        // (48 dp), with an icon and a small label but no pill, so the player's controls get the height.
-        FixedRowsFont { NavBar(tab, loaded) }
     }
 }
 
 /** [Why]'s note: a pill at the top of the screen, over the content and clear of every control below. */
 @Composable
-private fun androidx.compose.foundation.layout.BoxScope.WhyNote() {
+private fun BoxScope.WhyNote() {
     val t = Why.text ?: return
     Text(
         t,
         Modifier
-            .align(androidx.compose.ui.Alignment.TopCenter)
-            .zIndex(1f)
+            .align(Alignment.TopCenter)
+            .zIndex(2f)
             .padding(top = 8.dp, start = 16.dp, end = 16.dp)
-            .background(MaterialTheme.colorScheme.inverseSurface, androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.inverseSurface, RoundedCornerShape(16.dp))
             .padding(horizontal = 16.dp, vertical = 10.dp),
         color = MaterialTheme.colorScheme.inverseOnSurface,
         style = MaterialTheme.typography.bodyMedium,
-        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        textAlign = TextAlign.Center,
     )
 }
 
 @Composable
-private fun NavBar(tab: Int, loaded: Boolean) {
+private fun NavBar(onPressTab: (Int) -> Unit) {
+    val tab = Nav.tab
+    val loaded = Playback.hasQueue
     val barModifier = Modifier
         .fillMaxWidth()
         .background(MaterialTheme.colorScheme.surfaceContainer)
         .navigationBarsPadding()
         .height(48.dp)
-    androidx.compose.foundation.layout.Row(barModifier) {
-        NavItem("Home", Icons.Default.Home, tab == TAB_HOME, true) { Nav.select(TAB_HOME) }
-        NavItem("Search", Icons.Default.Search, tab == TAB_SEARCH, true) { Nav.select(TAB_SEARCH) }
-        NavItem("Player", PlayerTabIcon, tab == TAB_PLAYER, loaded, whyOff = "Nothing playing yet. Pick a song in Home, Search or Library.") {
+    Row(barModifier) {
+        NavItem("Home", Icons.Default.Home, tab == TAB_HOME, true, onPress = { onPressTab(TAB_HOME) }) { Nav.select(TAB_HOME) }
+        NavItem("Search", Icons.Default.Search, tab == TAB_SEARCH, true, onPress = { onPressTab(TAB_SEARCH) }) { Nav.select(TAB_SEARCH) }
+        NavItem(
+            "Player", PlayerTabIcon, tab == TAB_PLAYER, loaded,
+            whyOff = "Nothing playing yet. Pick a song in Home, Search or Library.",
+            onPress = { if (loaded) onPressTab(TAB_PLAYER) },
+        ) {
             Nav.tab = TAB_PLAYER
         }
-        NavItem("Library", LibraryIcon, tab == TAB_LIBRARY, true) { Nav.select(TAB_LIBRARY) }
-        NavItem("Settings", Icons.Default.Settings, tab == TAB_SETTINGS, true, dot = Update.available != null) {
+        NavItem("Library", LibraryIcon, tab == TAB_LIBRARY, true, onPress = { onPressTab(TAB_LIBRARY) }) { Nav.select(TAB_LIBRARY) }
+        NavItem(
+            "Settings", Icons.Default.Settings, tab == TAB_SETTINGS, true,
+            dot = Update.available != null,
+            onPress = { onPressTab(TAB_SETTINGS) },
+        ) {
             Nav.select(TAB_SETTINGS)
         }
     }
@@ -425,47 +539,54 @@ private fun NavBar(tab: Int, loaded: Boolean) {
  */
 @Composable
 fun FixedRowsFont(content: @Composable () -> Unit) {
-    val d = androidx.compose.ui.platform.LocalDensity.current
+    val d = LocalDensity.current
     if (d.fontScale <= 1.3f) return content()
-    val capped = androidx.compose.ui.unit.Density(d.density, 1.3f)
-    androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides capped, content = content)
+    val capped = Density(d.density, 1.3f)
+    CompositionLocalProvider(LocalDensity provides capped, content = content)
 }
 
 @Composable
-private fun androidx.compose.foundation.layout.RowScope.NavItem(
+private fun RowScope.NavItem(
     label: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     selected: Boolean,
     enabled: Boolean,
     dot: Boolean = false,
     whyOff: String? = null,
+    onPress: () -> Unit = {},
     onClick: () -> Unit,
 ) {
     val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-    androidx.compose.foundation.layout.Column(
+    Column(
         Modifier
             .weight(1f)
             .fillMaxHeight()
+            .pointerInput(label) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    onPress()
+                }
+            }
             .selectable(
                 selected = selected,
                 enabled = enabled || whyOff != null,
-                role = androidx.compose.ui.semantics.Role.Tab,
+                role = Role.Tab,
                 // A dimmed tab with [whyOff] says why it is off.
                 onClick = if (enabled) onClick else ({ Why.say(whyOff!!) }),
             )
             .dim(if (enabled) 1f else 0.35f),
-        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
-        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
-        androidx.compose.foundation.layout.Box {
+        Box {
             Icon(icon, null, Modifier.size(22.dp), tint = color)
             // Something waits there, such as an update. It gets a plain dot: no count, nothing that moves.
             if (dot) {
                 val dotModifier = Modifier
-                    .align(androidx.compose.ui.Alignment.TopEnd)
+                    .align(Alignment.TopEnd)
                     .size(6.dp)
-                    .background(MaterialTheme.colorScheme.primary, androidx.compose.foundation.shape.CircleShape)
-                androidx.compose.foundation.layout.Box(dotModifier)
+                    .background(MaterialTheme.colorScheme.primary, CircleShape)
+                Box(dotModifier)
             }
         }
         Text(label, fontSize = 10.sp, lineHeight = 12.sp, color = color, maxLines = 1)

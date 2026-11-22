@@ -8,6 +8,8 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -22,11 +24,15 @@ import roma.core.SubsonicClient
 import roma.core.SubsonicIds
 import roma.core.SubsonicIndex
 import roma.core.SubsonicLyrics
+import roma.core.foldSearch
 import roma.core.item
 import roma.core.LrcLib
 import roma.core.matchDistance
+import roma.core.matchFolded
+import roma.core.prepareQuery
 import roma.core.song
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 /** The Subsonic app's one source. */
 val backend: Source = SubsonicSource
@@ -92,6 +98,8 @@ object SubsonicSource : Source {
     /** The synced library with every name romanized, in the order the server listed it. */
     class Library(val index: SubsonicIndex, val songs: List<Song>, val albums: List<Item>, val artists: List<Item>, val romanizedFor: Int) {
         private val subById = index.songs.associateBy { SubsonicIds.encode(it.id) }
+        val subAlbumById = index.albums.associateBy { SubsonicIds.encode(it.id) }
+        val subArtistById = index.artists.associateBy { SubsonicIds.encode(it.id) }
         val byId = songs.associateBy { it.id }
         private fun ordered(list: List<Song>) = list.sortedWith(
             compareBy(
@@ -112,9 +120,48 @@ object SubsonicSource : Source {
         }
         val albumById = albums.associateBy { it.id }
         val artistById = artists.associateBy { it.id }
+        val artistAlbums: Map<String, List<Item>> by lazy {
+            val out = HashMap<String, MutableList<Item>>()
+            for (album in index.albums) {
+                val aid = album.artistId?.let(SubsonicIds::encode) ?: continue
+                val item = albumById[SubsonicIds.encode(album.id)] ?: continue
+                out.getOrPut(aid) { ArrayList() }.add(item)
+            }
+            out
+        }
+        val sortedAlbums: List<Item> by lazy { albums.sortedBy { it.title.latin.lowercase() } }
+        val sortedArtists: List<Item> by lazy { artists.sortedBy { it.title.latin.lowercase() } }
+        // Pre-folded search strings built lazily on first search, so keystrokes never re-run Unicode normalization.
+        val foldedSongs: Array<Array<String>> by lazy {
+            Array(songs.size) { i ->
+                val s = songs[i]
+                arrayOf(
+                    foldSearch(s.title.original),
+                    foldSearch(s.title.latin),
+                    foldSearch(s.artistOriginal),
+                    foldSearch(s.artistLatin),
+                    foldSearch(s.artistLatin + s.title.latin),
+                    foldSearch(s.album?.name?.original ?: ""),
+                    foldSearch(s.album?.name?.latin ?: ""),
+                )
+            }
+        }
+        val foldedAlbums: Array<Array<String>> by lazy { foldItems(albums) }
+        val foldedArtists: Array<Array<String>> by lazy { foldItems(artists) }
         /** The server sends ReplayGain. */
         val hasGain = index.songs.any { it.gain != null }
         fun sub(id: String) = subById[id]
+
+        private fun foldItems(items: List<Item>) = Array(items.size) { i ->
+            val it = items[i]
+            arrayOf(
+                foldSearch(it.title.original),
+                foldSearch(it.title.latin),
+                foldSearch(it.subtitle.original),
+                foldSearch(it.subtitle.latin),
+                foldSearch(it.subtitle.latin + it.title.latin),
+            )
+        }
     }
 
     @Serializable
@@ -239,6 +286,8 @@ object SubsonicSource : Source {
      */
     fun forget() {
         library = null
+        savedCache.clear()
+        shareUrlCache.clear()
         Images.clear()
         plays.clear()
         scope.launch {
@@ -267,27 +316,32 @@ object SubsonicSource : Source {
         return tiles.size
     }
 
-    override suspend fun home(from: String?): Pair<String?, List<Section>> {
+    override suspend fun home(from: String?): Pair<String?, List<Section>> = coroutineScope {
         val l = lib()
         val r = Store.romanizer
-        runCatching { refreshMixes() }
         fun shelf(title: String, items: List<Item>) = Section(roma.core.Text(title, title), items)
-        // Play counts live on the server. Offline, those shelves are left out and the library's own ones stay.
+        // Play counts and mixes live on the server; fetch all three concurrently instead of serially.
         fun server(type: String): List<Item> = runCatching {
             need().albumList(type).map { album -> l.albumById[SubsonicIds.encode(album.id)] ?: r.item(album) }
         }.getOrDefault(emptyList())
+        val mixesJob = async(Dispatchers.IO) { runCatching { refreshMixes() } }
+        val recentJob = async(Dispatchers.IO) { server("recent") }
+        val frequentJob = async(Dispatchers.IO) { server("frequent") }
         val newest = l.index.albums
             .sortedByDescending { it.created ?: "" }
             .take(20)
             .mapNotNull { album -> l.albumById[SubsonicIds.encode(album.id)] }
+        val recent = recentJob.await()
+        val frequent = frequentJob.await()
+        mixesJob.await()
         val shelves = listOf(
             shelf("Recently added", newest),
-            shelf("Recently played", server("recent")),
-            shelf("Most played", server("frequent")),
+            shelf("Recently played", recent),
+            shelf("Most played", frequent),
             shelf("Albums at random", l.albums.shuffled().take(20)),
             shelf("Artists", l.artists.shuffled().take(20)),
         ).filter { it.items.isNotEmpty() }
-        return null to shelves
+        null to shelves
     }
     override val mixes = false
     @Composable override fun HomeTiles(mixes: List<Item>?, read: Boolean) = LibraryTiles(mixTiles ?: mixes.orEmpty())
@@ -327,32 +381,28 @@ object SubsonicSource : Source {
 
     private suspend fun searchLocal(query: String, filter: Int): Found {
         val l = lib()
-        fun <T> best(list: List<T>, texts: (T) -> List<String>): List<T> {
-            val scored = list.mapNotNull { x ->
-                val distance = matchDistance(texts(x), query)
-                if (distance == null) null else x to distance
+        val prepared = prepareQuery(query) ?: return Found(emptyList())
+        fun <T> bestFolded(list: List<T>, folded: Array<Array<String>>): List<T> {
+            val scored = ArrayList<Pair<T, Int>>()
+            for (i in list.indices) {
+                val distance = matchFolded(folded[i], prepared) ?: continue
+                scored.add(list[i] to distance)
             }
             return scored.sortedBy { it.second }.take(100).map { it.first }
         }
         fun Item.texts() = listOf(title.original, title.latin, subtitle.original, subtitle.latin, subtitle.latin + title.latin)
         val items = when (filter) {
             0 -> {
-                val songs = best(l.songs) { song ->
-                    listOf(
-                        song.title.original,
-                        song.title.latin,
-                        song.artistOriginal,
-                        song.artistLatin,
-                        song.artistLatin + song.title.latin,
-                        song.album?.name?.original ?: "",
-                        song.album?.name?.latin ?: "",
-                    )
-                }
+                val songs = bestFolded(l.songs, l.foldedSongs)
                 songs.map { song -> Item("song", song.id, song.title, song.artistText, song.thumb, song) }
             }
-            1 -> best(l.albums) { it.texts() }
-            2 -> best(l.artists) { it.texts() }
-            else -> best(playlists()) { it.texts() }
+            1 -> bestFolded(l.albums, l.foldedAlbums)
+            2 -> bestFolded(l.artists, l.foldedArtists)
+            else -> playlists()
+                .mapNotNull { x -> matchDistance(x.texts(), query)?.let { x to it } }
+                .sortedBy { it.second }
+                .take(100)
+                .map { it.first }
         }
         return Found(items)
     }
@@ -372,8 +422,8 @@ object SubsonicSource : Source {
     override suspend fun library(tab: Int, partial: suspend (List<Item>) -> Unit): List<Item> {
         val l = lib()
         return when (libraryTabs[tab]) {
-            "Albums" -> l.albums.sortedBy { it.title.latin.lowercase() }
-            "Artists" -> l.artists.sortedBy { it.title.latin.lowercase() }
+            "Albums" -> l.sortedAlbums
+            "Artists" -> l.sortedArtists
             "Playlists" -> playlists()
             else -> starred(l)
         }
@@ -403,6 +453,7 @@ object SubsonicSource : Source {
                 // An album the synced lists don't hold (one seen in search or radio) comes from the server.
                 if (l.albumSongs[p.id].isNullOrEmpty()) {
                     val (a, subs) = need().album(SubsonicIds.decode(p.id))
+                    cacheSaved(p, a.starred, a.wanted, a.wantedError)
                     val songs = subs.map { l.byId[SubsonicIds.encode(it.id)] ?: r.song(it) }
                     val item = r.item(a)
                     val year = if (a.year > 0) a.year.toString() else null
@@ -410,7 +461,8 @@ object SubsonicSource : Source {
                     return Detail(item.title, subtitle, item.thumb ?: songs.firstOrNull()?.thumb, songs, emptyList())
                 }
                 val a = l.albumById[p.id]
-                val sub = l.index.albums.firstOrNull { SubsonicIds.encode(it.id) == p.id }
+                val sub = l.subAlbumById[p.id]
+                if (sub != null) cacheSaved(p, sub.starred, sub.wanted, sub.wantedError)
                 val songs = l.albumSongs[p.id].orEmpty()
                 val title = a?.title ?: songs.firstOrNull()?.album?.name ?: roma.core.Text("", "")
                 val year = sub?.year
@@ -425,15 +477,15 @@ object SubsonicSource : Source {
                 val songs = subs.map { l.byId[SubsonicIds.encode(it.id)] ?: r.song(it) }
                 Detail(r.text(pl.name, served = pl.nameLatin), pl.owner, songs.firstOrNull()?.thumb, songs, emptyList())
             }
-            else -> {
+            else -> coroutineScope {
                 fun count(n: Int, what: String) = "$n $what" + if (n == 1) "" else "s"
                 // The library's own page comes first, at once. Then comes the server's page, which may hold more
                 // releases and top songs. Offline, the library's page stays.
                 val a = l.artistById[p.id]
+                val subArtist = l.subArtistById[p.id]
+                if (subArtist != null) cacheSaved(p, subArtist.starred, subArtist.wanted, subArtist.wantedError)
                 val songs = l.artistSongs[p.id].orEmpty()
-                val albums = l.index.albums
-                    .filter { album -> album.artistId?.let(SubsonicIds::encode) == p.id }
-                    .mapNotNull { album -> l.albumById[SubsonicIds.encode(album.id)] }
+                val albums = l.artistAlbums[p.id].orEmpty()
                 val name = a?.title ?: songs.firstOrNull()?.artists?.firstOrNull()?.name
                 val local = if (name == null) {
                     null
@@ -443,10 +495,19 @@ object SubsonicSource : Source {
                     Detail(name, subtitle, a?.thumb ?: albums.firstOrNull()?.thumb, songs, albums)
                 }
                 if (local != null) partial(local)
+                // If the artist's original name is already known from the local index, fetch artist and topSongs in parallel.
+                val knownName = subArtist?.name ?: name?.original
+                val topJob = if (knownName != null) {
+                    async(Dispatchers.IO) { runCatching { need().topSongs(knownName) }.getOrDefault(emptyList()) }
+                } else {
+                    null
+                }
                 val server = runCatching { need().artist(SubsonicIds.decode(p.id)) }.getOrElse { error ->
-                    if (local != null) return local else throw error
+                    topJob?.cancel()
+                    if (local != null) return@coroutineScope local else throw error
                 }
                 val (sa, subs) = server
+                cacheSaved(p, sa.starred, sa.wanted, sa.wantedError)
                 // A release the library doesn't hold is labelled with its type and year, such as "Single · 2021".
                 val all = subs.map { s ->
                     val known = l.albumById[SubsonicIds.encode(s.id)]
@@ -459,7 +520,12 @@ object SubsonicSource : Source {
                         if (label.isEmpty()) i else Item(i.kind, i.id, i.title, roma.core.Text(label, label), i.thumb)
                     }
                 }
-                val topSubs = runCatching { need().topSongs(sa.name) }.getOrDefault(emptyList())
+                val topSubs = if (topJob != null && sa.name == knownName) {
+                    topJob.await()
+                } else {
+                    topJob?.cancel()
+                    runCatching { need().topSongs(sa.name) }.getOrDefault(emptyList())
+                }
                 val top = topSubs.map { sub -> l.byId[SubsonicIds.encode(sub.id)] ?: r.song(sub) }
                 val allSongs = songs + top.filter { t -> songs.none { it.id == t.id } }
                 Detail(
@@ -521,8 +587,33 @@ object SubsonicSource : Source {
     override fun liked(id: String) = runCatching { need().song(SubsonicIds.decode(id)).starred }.getOrNull()
 
     // A starred album or artist is in the library. A server that then fetches what's missing (extension oasis) says
-    // how that goes.
-    override fun saved(p: Page) = runCatching {
+    // how that goes. Cached from detail() and saved() so PageButtons avoids a duplicate getAlbum/getArtist round trip.
+    private val savedCache = ConcurrentHashMap<String, Pair<InLibrary, Long>>()
+    private val shareUrlCache = ConcurrentHashMap<String, String>()
+    private const val SAVED_TTL_MS = 60_000L
+
+    private fun toInLibrary(starred: Boolean, wanted: String?, why: String?): InLibrary {
+        val state = when (wanted) {
+            "wanted" -> "On its way to the server"
+            "downloading" -> "Downloading to the server"
+            "failed" -> "The server couldn't find it"
+            else -> null
+        }
+        val note = if (state == null) null else listOfNotNull(state, why).joinToString(": ")
+        return InLibrary(starred, note)
+    }
+
+    private fun cacheSaved(p: Page, starred: Boolean, wanted: String?, why: String?) {
+        savedCache["${p.kind}:${p.id}"] = toInLibrary(starred, wanted, why) to System.currentTimeMillis()
+    }
+
+    override fun peekSaved(p: Page): InLibrary? {
+        if (p.kind !in setOf("album", "artist")) return null
+        val entry = savedCache["${p.kind}:${p.id}"] ?: return null
+        return if (System.currentTimeMillis() - entry.second < SAVED_TTL_MS) entry.first else null
+    }
+
+    override fun saved(p: Page): InLibrary? = runCatching {
         val id = SubsonicIds.decode(p.id)
         val (starred, wanted, why) = when (p.kind) {
             "album" -> {
@@ -535,19 +626,16 @@ object SubsonicSource : Source {
             }
             else -> return null
         }
-        val state = when (wanted) {
-            "wanted" -> "On its way to the server"
-            "downloading" -> "Downloading to the server"
-            "failed" -> "The server couldn't find it"
-            else -> null
-        }
-        val note = if (state == null) null else listOfNotNull(state, why).joinToString(": ")
-        InLibrary(starred, note)
+        val result = toInLibrary(starred, wanted, why)
+        savedCache["${p.kind}:${p.id}"] = result to System.currentTimeMillis()
+        result
     }.getOrNull()
 
     override fun save(p: Page, on: Boolean): Boolean {
         val param = if (p.kind == "album") "albumId" else "artistId"
-        return runCatching { need().star(SubsonicIds.decode(p.id), on, param) }.isSuccess
+        val ok = runCatching { need().star(SubsonicIds.decode(p.id), on, param) }.isSuccess
+        if (ok) savedCache.remove("${p.kind}:${p.id}")
+        return ok
     }
 
     override fun streamUrl(id: String, full: Boolean) = need().streamUrl(SubsonicIds.decode(id))
@@ -591,8 +679,12 @@ object SubsonicSource : Source {
     override val lyricsProviders = listOf<LyricsProvider>(LrcLib)
     override val lyricsRule = "The server's lyrics are the reference, when it has any: word timing that matches them wins, then their own timing, then matching line timing, then their plain text."
     override val hasComments = false
-    // The server's link for the song (extension shareUrl), shared as is.
-    override fun shareUrl(s: Song) = runCatching { need().song(SubsonicIds.decode(s.id)).shareUrl }.getOrNull()
+    // The server's link for the song (extension shareUrl), shared as is. Checked in index/cache first so SongMenu enables Share on Frame 1.
+    override fun peekShareUrl(s: Song): String? = library?.sub(s.id)?.shareUrl ?: shareUrlCache[s.id]
+    override fun shareUrl(s: Song): String? {
+        peekShareUrl(s)?.let { return it }
+        return runCatching { need().song(SubsonicIds.decode(s.id)).shareUrl }.getOrNull()?.also { shareUrlCache[s.id] = it }
+    }
     override val canShare get() = library?.index?.supports(SubsonicClient.SHARE_URL) == true
 
     // docs/subsonic.md describes how scrobbling works.

@@ -51,8 +51,10 @@ import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -61,8 +63,9 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalDensity
@@ -75,7 +78,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
@@ -110,7 +115,7 @@ fun Name(t: roma.core.Text, mode: String, style: TextStyle = MaterialTheme.typog
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     val mod = if (center) Modifier.fillMaxWidth() else Modifier
     // The style's 1.5 line height parts a wrapped title's lines wider than the title from the artist line under it.
-    val wrapping = style.copy(lineHeight = style.fontSize * 1.25f)
+    val wrapping = remember(style) { style.copy(lineHeight = style.fontSize * 1.25f) }
     when {
         t.isLatin || Store.reads(t.original) -> Text(t.original, mod, style = wrapping, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
         mode == "romanized" -> Text(t.latin, mod, style = wrapping, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
@@ -130,7 +135,7 @@ fun Name(t: roma.core.Text, mode: String, style: TextStyle = MaterialTheme.typog
         }
         else -> Column(mod) {
             Text(t.latin, Modifier.fillMaxWidth(), style = wrapping, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
-            Text(t.original, Modifier.fillMaxWidth(), style = small.copy(color = style.color), textAlign = align, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(t.original, Modifier.fillMaxWidth(), style = small, color = style.color, textAlign = align, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -209,7 +214,7 @@ fun SongRow(
 fun ItemRow(item: Item, onClick: () -> Unit) {
     val rowModifier = Modifier
         .fillMaxWidth()
-        .lookUpOnPress(item.playable)
+        .prefetchOnPress(item)
         .clickable(onClick = onClick)
         .padding(horizontal = 16.dp, vertical = 6.dp)
     Row(rowModifier, verticalAlignment = Alignment.CenterVertically) {
@@ -237,7 +242,7 @@ internal fun Card(item: Item, onClick: () -> Unit) {
     val grow = LocalDensity.current.fontScale.coerceIn(1f, 1.6f)
     val cardModifier = Modifier
         .width(140.dp * grow)
-        .lookUpOnPress(item.playable)
+        .prefetchOnPress(item)
         .clickable(onClick = onClick)
         .padding(6.dp)
     Column(cardModifier) {
@@ -261,11 +266,24 @@ internal fun Card(item: Item, onClick: () -> Unit) {
 /** The song a tap on this card or row plays, or null when the tap opens a page. */
 private val Item.playable get() = if (kind == "song") song else null
 
-/** Starts the song's stream lookup when a finger lands on its row, so it is under way before the tap is recognized. */
+/** Starts the song's stream lookup and large art decode when a finger lands on its row, ~80-120 ms before release. */
 private fun Modifier.lookUpOnPress(s: Song?) = if (s == null) this else pointerInput(s.id) {
     awaitEachGesture {
         awaitFirstDown(requireUnconsumed = false)
         Playback.touched(s)
+        s.thumb?.let { Images.prefetch(bigThumb(it), BIG_PX) }
+    }
+}
+
+/** Starts either song stream/art prefetch or page disk+network+header prefetch on finger-down. */
+private fun Modifier.prefetchOnPress(item: Item): Modifier {
+    val s = item.playable
+    if (s != null) return lookUpOnPress(s)
+    return pointerInput(item.kind, item.id) {
+        awaitEachGesture {
+            awaitFirstDown(requireUnconsumed = false)
+            PageCache.prefetchDetail(Page(item.kind, item.id), thumb = item.thumb)
+        }
     }
 }
 
@@ -287,7 +305,10 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
     val inQueue = queueIndex != null && queueIndex != Playback.player.currentMediaItemIndex
     val liked = s.id in Playback.liked
     LaunchedEffect(s.id) { Playback.checkLike(s) }
-    val link by produceState<String?>(null, s.id) { value = withContext(Dispatchers.IO) { backend.shareUrl(s) } }
+    val initialLink = remember(s.id) { backend.peekShareUrl(s) }
+    val link by produceState(initialLink, s.id) {
+        if (value == null) value = withContext(Dispatchers.IO) { backend.shareUrl(s) }
+    }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     // It opens fully at once, because half open, the bans at the bottom would need a drag first. It closes while the
     // correction dialog is open, so the dialog has no sheet behind it.
@@ -609,25 +630,93 @@ internal fun Choice(label: String, selected: Boolean, enabled: Boolean = true, m
 private val onEdge = Modifier.offset(x = (-12).dp)
 
 /** A loaded page, when it was fetched, and with which [Store.dataVersion]. */
-private class Kept(val value: Any, val at: Long, val dataVersion: Int)
+internal class Kept(val value: Any, val at: Long, val dataVersion: Int)
 
-// The last results by key, so going back to a page or a tab shows it at once, with its scroll position (see Root).
-// The map is in access order, so the least recently used page goes first. ponytail: 20 entries are enough for a few
-// tabs' back stacks, and the disk keeps pages beyond that.
-private val loaded = object : LinkedHashMap<String, Kept>(32, 0.75f, true) {
-    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Kept>) = size > 20
+/**
+ * Thread-safe LRU cache and deduplicated speculative prefetcher for pages and library tabs.
+ *
+ * Pressing down on an album, artist, playlist or library tab warms the disk copy into memory immediately (free, even
+ * offline or on mobile data) and, when not thrifty, starts the network fetch so [Loader] joins the in-flight request
+ * with an ~80-120 ms head start instead of showing a spinner or sending a duplicate request.
+ */
+internal object PageCache {
+    private const val MAX_PAGES = 64
+    private const val TTL_MS = 10 * 60_000L
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val map = object : LinkedHashMap<String, Kept>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Kept>) = size > MAX_PAGES
+    }
+    private val inFlight = ConcurrentHashMap<String, Deferred<Any>>()
+
+    @Synchronized fun get(key: String): Kept? = map[key]
+
+    @Synchronized fun put(key: String, value: Any, dataVersion: Int, at: Long = System.currentTimeMillis()) {
+        map[key] = Kept(value, at, dataVersion)
+    }
+
+    /** Loads a cached page from disk into memory without touching the network. */
+    fun <T : Any> warmDisk(key: String, serializer: KSerializer<T>) {
+        if (get(key) != null) return
+        val dv = Store.dataVersion
+        scope.launch {
+            if (get(key) != null) return@launch
+            val disk = Store.readPage(key, serializer) ?: return@launch
+            // at = 0 so Loader still refreshes from the network once shown.
+            synchronized(this@PageCache) {
+                if (map[key] == null) map[key] = Kept(disk, 0L, dv)
+            }
+        }
+    }
+
+    /** Starts disk warm + speculative network fetch + header art prefetch for an album, artist, or playlist page. */
+    fun prefetchDetail(p: Page, thumb: String? = null) {
+        if (p.kind !in setOf("album", "artist", "playlist")) return
+        val key = "${p.kind}:${p.id}"
+        // Prefetch the 96 dp header cover right away.
+        if (thumb != null) {
+            val px = (96 * screenDensity()).roundToInt()
+            thumbAt(thumb, px)?.let { Images.prefetch(it, px) }
+        }
+        val dv = Store.dataVersion
+        val kept = get(key)
+        val fresh = kept != null && kept.dataVersion == dv && System.currentTimeMillis() - kept.at < TTL_MS
+        if (fresh) return
+        if (kept == null) warmDisk(key, Detail.serializer())
+        if (Playback.thrifty()) return
+        inFlight.computeIfAbsent(key) {
+            scope.async {
+                try {
+                    val d = backend.detail(p) {}
+                    if (Store.dataVersion == dv) {
+                        put(key, d, dv)
+                        Store.writePage(key, d, Detail.serializer())
+                    }
+                    d
+                } finally {
+                    inFlight.remove(key)
+                }
+            }
+        }
+    }
+
+    /** Joins an existing speculative fetch for [key], or runs [load] directly. */
+    @Suppress("UNCHECKED_CAST")
+    suspend fun <T : Any> awaitOrLoad(key: String, load: suspend (partial: suspend (T) -> Unit) -> T, partial: suspend (T) -> Unit): T {
+        val pending = inFlight[key]
+        if (pending != null) {
+            val awaited = runCatching { pending.await() as T }.getOrNull()
+            if (awaited != null) return awaited
+        }
+        return load(partial)
+    }
 }
 
 /**
  * Loads a page and shows [loading] (a spinner), the error, or the content.
  *
- * A page loaded before shows at once: from memory, else (with [disk]) from the copy kept across starts. It loads
- * again behind it unless it was fetched in the last 10 minutes with today's [Store.dataVersion], and a failed load
- * keeps the older copy on screen. [rows] lists what each item of the page's LazyColumn ([list]) shows, by index;
- * with it, the new copy takes over only while the items on screen are the same in both, so nothing moves under the
- * finger. Until then it waits for the user to scroll, and the next visit shows it. [load] may hand over its first
- * pages through `partial` while it fetches the rest (they only add rows at the bottom); they show when nothing else
- * is shown yet.
+ * A page loaded before shows at once: from memory, else (with [disk]) from the copy kept across starts (even while
+ * hidden during buildAhead, so the tab opens with its cached rows already laid out). Network refreshes wait until the
+ * screen is actually shown (unless already started on press-down), so building a tab ahead never hits the network.
  */
 @Composable
 private fun <T : Any> Loader(
@@ -641,21 +730,38 @@ private fun <T : Any> Loader(
     content: @Composable (T) -> Unit,
 ) {
     @Suppress("UNCHECKED_CAST")
-    var shown by remember(key) { mutableStateOf(loaded[key]?.value as T?) }
+    var shown by remember(key) { mutableStateOf(PageCache.get(key)?.value as T?) }
     var failed by remember(key) { mutableStateOf<String?>(null) }
     var attempt by remember(key) { mutableIntStateOf(0) }
+    val tabShown = LocalTabShown.current
+    val latestTabShown by androidx.compose.runtime.rememberUpdatedState(tabShown)
     LaunchedEffect(key, attempt, Store.dataVersion) {
         failed = null
-        val kept = loaded[key]
+        val dv = Store.dataVersion
+        val kept = PageCache.get(key)
         val keptIsRecent = kept != null &&
-            kept.dataVersion == Store.dataVersion &&
+            kept.dataVersion == dv &&
             System.currentTimeMillis() - kept.at < 10 * 60_000
+        if (shown == null && kept != null) {
+            @Suppress("UNCHECKED_CAST")
+            shown = kept.value as T
+        }
         if (attempt == 0 && keptIsRecent) return@LaunchedEffect
-        if (shown == null && disk != null) shown = withContext(Dispatchers.IO) { Store.readPage(key, disk) }
+        if (shown == null && disk != null) {
+            val fromDisk = withContext(Dispatchers.IO) { Store.readPage(key, disk) }
+            if (fromDisk != null) {
+                shown = fromDisk
+                PageCache.put(key, fromDisk, dv, at = 0L)
+            }
+        }
+        // While hidden (buildAhead), stop after loading the disk copy so we never spend network calls until opened.
+        if (!latestTabShown) {
+            snapshotFlow { latestTabShown }.first { it }
+        }
         var partial = false
         val result = withContext(Dispatchers.IO) {
             runCatching {
-                load { p ->
+                PageCache.awaitOrLoad(key, load) { p ->
                     withContext(Dispatchers.Main) {
                         if (shown == null || partial) {
                             shown = p
@@ -669,7 +775,7 @@ private fun <T : Any> Loader(
             if (shown == null || partial) failed = plainError(error)
             return@LaunchedEffect
         }
-        loaded[key] = Kept(fresh, System.currentTimeMillis(), Store.dataVersion)
+        PageCache.put(key, fresh, dv)
         if (disk != null) Store.writePage(key, fresh, disk)
         val old = shown
         if (old != null && !partial && rows != null && list != null) {
@@ -1063,8 +1169,11 @@ fun HomeScreen() {
         val height = maxHeight
         // This sits out here, not in a row, because a row is composed only once it scrolls into view. The first cards
         // of every shelf come before the later cards of any.
-        val byPosition = Home.sections.flatMap { it.items.withIndex() }.sortedBy { it.index }
-        PrefetchCovers(byPosition.map { it.value.thumb }, 128.dp, near = 40)
+        val sections = Home.sections
+        val thumbUrls = remember(sections) {
+            sections.flatMap { it.items.withIndex() }.sortedBy { it.index }.map { it.value.thumb }
+        }
+        PrefetchCovers(thumbUrls, 128.dp, near = 40)
         LazyColumn(Modifier.fillMaxSize(), Home.list, contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 16.dp)) {
             // A library's shelves don't change from start to start, so on a server they follow the tiles at once.
             item(key = "title") { ScreenTitle("Home") }
@@ -1075,15 +1184,18 @@ fun HomeScreen() {
                     backend.HomeTiles(Home.mixes, Home.mixesRead)
                 }
             }
-            items(Home.sections) { sec ->
+            itemsIndexed(sections, key = { idx, sec -> "${sec.title.original}#$idx" }, contentType = { _, _ -> "shelf" }) { _, sec ->
                 // Shelf titles are section labels like every other list's, in the same style.
-                val label = MaterialTheme.typography.titleSmall.copy(color = MaterialTheme.colorScheme.primary)
+                val primary = MaterialTheme.colorScheme.primary
+                val label = remember(primary) { MaterialTheme.typography.titleSmall.copy(color = primary) }
                 Box(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp)) {
                     Name(sec.title, Store.listMode, label)
                 }
                 // The cards' own 6 dp and this 10 dp put the first picture at 16 dp, under the shelf's title.
                 LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp)) {
-                    items(sec.items) { item -> Card(item) { openItem(item) } }
+                    itemsIndexed(sec.items, key = { idx, item -> "${item.kind}:${item.id}#$idx" }) { _, item ->
+                        Card(item) { openItem(item) }
+                    }
                 }
             }
             item(key = "end") {
@@ -1252,9 +1364,10 @@ fun SearchScreen() {
                     }
                 },
             ) { found ->
-                val songThumbs = local.map { it.thumb } + found.items.filter { it.song != null }.map { it.thumb }
+                val songThumbs = remember(local, found) { local.map { it.thumb } + found.items.filter { it.song != null }.map { it.thumb } }
+                val otherThumbs = remember(found) { found.items.filter { it.song == null }.map { it.thumb } }
                 PrefetchCovers(songThumbs, 48.dp)
-                PrefetchCovers(found.items.filter { it.song == null }.map { it.thumb }, 48.dp)
+                PrefetchCovers(otherThumbs, 48.dp)
                 LaunchedEffect(found) {
                     val topFound = listOfNotNull(found.items.firstOrNull()?.playable)
                     val likely = (local.take(1) + topFound).distinctBy { it.id }
@@ -1266,7 +1379,7 @@ fun SearchScreen() {
                     // so the action stays readable on one line.
                     val corrected = found.corrected
                     if (corrected != null) {
-                        item {
+                        item(key = "corrected") {
                             val rowModifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
@@ -1302,13 +1415,17 @@ fun SearchScreen() {
                         }
                     }
                     if (found.items.isEmpty() && !found.searching) {
-                        item {
+                        item(key = "empty") {
                             Box(Modifier.fillParentMaxSize()) {
                                 Centered("No results for “$submitted”. Check the spelling, or try another filter above.")
                             }
                         }
                     }
-                    items(found.items) { item ->
+                    itemsIndexed(
+                        found.items,
+                        key = { idx, item -> "${item.kind}:${item.id}#$idx" },
+                        contentType = { _, item -> if (item.song != null) 0 else 1 },
+                    ) { _, item ->
                         val s = item.song
                         if (s != null) {
                             SongRow(s, onMenu = { menuFor = s }) { openItem(item) }
@@ -1346,6 +1463,16 @@ fun LibraryScreen() {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val tabs = source.libraryTabs
     var menuFor by remember { mutableStateOf<Song?>(null) }
+    val visited = remember { mutableStateListOf(tab) }
+    if (tab !in visited) visited += tab
+    val parentShown = LocalTabShown.current
+    // Warm the other library tabs' disk copies when Library is opened so switching sub-tabs shows cached lists at once.
+    LaunchedEffect(parentShown) {
+        if (!parentShown) return@LaunchedEffect
+        for (i in tabs.indices) {
+            if (i != tab) PageCache.warmDisk("library:${source.libraryKey(i)}", ListSerializer(Item.serializer()))
+        }
+    }
     Column(Modifier.fillMaxSize()) {
         ScreenTitle("Library")
         // A fixed row, like the nav bar: its labels follow the font only up to 1.3×, so four still fit.
@@ -1356,29 +1483,43 @@ fun LibraryScreen() {
                 }
             }
         }
-        val list = key(tab) { rememberLazyListState() }
-        Loader(
-            "library:${source.libraryKey(tab)}",
-            { partial -> source.library(tab, partial) },
-            list,
-            { items -> items.map { it.id } },
-            ListSerializer(Item.serializer()),
-        ) { items ->
-            PrefetchCovers(items.map { it.thumb }, 48.dp, list)
-            if (items.isEmpty()) Centered(source.libraryEmpty(tab))
-            Box {
-                LazyColumn(Modifier.fillMaxSize(), list) {
-                    // A song (in Starred) is a song row, with its length and ⋮ menu, as songs are everywhere else.
-                    items(items) { item ->
-                        val s = item.song
-                        if (s != null) {
-                            SongRow(s, onMenu = { menuFor = s }) { openItem(item) }
-                        } else {
-                            ItemRow(item) { openItem(item) }
+        Box(Modifier.weight(1f).clipToBounds()) {
+            for (t in visited) key(t) {
+                val active = t == tab
+                DeckLayer(active) {
+                    androidx.compose.runtime.CompositionLocalProvider(LocalTabShown provides (parentShown && active)) {
+                        val list = rememberLazyListState()
+                        Loader(
+                            "library:${source.libraryKey(t)}",
+                            { partial -> source.library(t, partial) },
+                            list,
+                            { items -> items.map { it.id } },
+                            ListSerializer(Item.serializer()),
+                        ) { items ->
+                            val thumbs = remember(items) { items.map { it.thumb } }
+                            PrefetchCovers(thumbs, 48.dp, list)
+                            if (items.isEmpty()) Centered(source.libraryEmpty(t))
+                            Box {
+                                LazyColumn(Modifier.fillMaxSize(), list) {
+                                    // A song (in Starred) is a song row, with its length and ⋮ menu, as songs are everywhere else.
+                                    itemsIndexed(
+                                        items,
+                                        key = { idx, item -> "${item.kind}:${item.id}#$idx" },
+                                        contentType = { _, item -> if (item.song != null) 0 else 1 },
+                                    ) { _, item ->
+                                        val s = item.song
+                                        if (s != null) {
+                                            SongRow(s, onMenu = { menuFor = s }) { openItem(item) }
+                                        } else {
+                                            ItemRow(item) { openItem(item) }
+                                        }
+                                    }
+                                }
+                                FastScroll(list)
+                            }
                         }
                     }
                 }
-                FastScroll(list)
             }
         }
     }
@@ -1404,24 +1545,48 @@ fun PageScreen(p: Page) {
         LaunchedEffect(d.songs.firstOrNull()?.id, shown) {
             if (shown) Playback.prepare(d.songs.take(1))
         }
-        PrefetchCovers(d.songs.map { it.thumb }, 48.dp, list)
         val album = p.kind == "album"
         val artistPage = p.kind == "artist"
-        Playback.tick
-        val playingId = Playback.shown()?.id
-        PrefetchCovers(d.items.map { it.thumb }, 48.dp)
+        val playingId = Playback.shownSong?.id
+        // Album rows show track numbers instead of covers, so skip prefetching 48 dp song covers there.
+        if (!album) {
+            val songThumbs = remember(d) { d.songs.map { it.thumb } }
+            PrefetchCovers(songThumbs, 48.dp, list)
+        }
+        if (d.items.isNotEmpty()) {
+            val itemThumbs = remember(d) { d.items.map { it.thumb } }
+            PrefetchCovers(itemThumbs, 48.dp)
+        }
+        val pageArtist = remember(d, album, artistPage) {
+            when {
+                album -> d.songs.groupingBy { it.artistLatin }.eachCount().maxByOrNull { it.value }?.key
+                artistPage -> d.title.latin
+                else -> null
+            }
+        }
+        val multiDisc = remember(d) { d.discs.toSet().size > 1 }
+        val subtitle = remember(d, artistPage) {
+            listOf(d.subtitle, if (!artistPage) totalLength(d.songs) else "")
+                .filter { it.isNotBlank() }
+                .joinToString(" · ")
+        }
+        val density = LocalDensity.current
+        val headerPlaceholder = remember(d.thumb, density) {
+            listOf(48.dp, 128.dp).firstNotNullOfOrNull { sz ->
+                val px = with(density) { sz.roundToPx() }
+                val u = thumbAt(d.thumb, px)
+                if (u == null) null else Images.peek(u, px)
+            }
+        }
         Box {
             LazyColumn(Modifier.fillMaxSize(), list) {
-                item {
+                item(key = "header") {
                     Row(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         val shape = if (p.kind == "artist") CircleShape else RoundedCornerShape(6.dp)
-                        Thumb(shownThumb(d.thumb, 96.dp), 96.dp, Modifier.size(96.dp).clip(shape))
+                        Thumb(shownThumb(d.thumb, 96.dp), 96.dp, Modifier.size(96.dp).clip(shape), placeholder = headerPlaceholder)
                         Spacer(Modifier.width(16.dp))
                         Column(Modifier.weight(1f)) {
                             Name(d.title, Store.listMode, MaterialTheme.typography.titleLarge)
-                            val subtitle = listOf(d.subtitle, if (!artistPage) totalLength(d.songs) else "")
-                                .filter { it.isNotBlank() }
-                                .joinToString(" · ")
                             if (subtitle.isNotEmpty()) {
                                 Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
@@ -1430,17 +1595,10 @@ fun PageScreen(p: Page) {
                     }
                 }
                 // An artist's page heads its songs as well as its releases.
-                if (d.songs.isNotEmpty() && d.items.isNotEmpty()) item { Header("Songs") }
-                // An album's own artist is said once, in the header, and an artist page's is its title; a track by
-                // someone else names them.
-                val pageArtist = when {
-                    album -> d.songs.groupingBy { it.artistLatin }.eachCount().maxByOrNull { it.value }?.key
-                    artistPage -> d.title.latin
-                    else -> null
-                }
-                itemsIndexed(d.songs) { i, s ->
+                if (d.songs.isNotEmpty() && d.items.isNotEmpty()) item(key = "songs-hdr") { Header("Songs") }
+                itemsIndexed(d.songs, key = { i, s -> "s:${s.id}#$i" }, contentType = { _, _ -> 0 }) { i, s ->
                     val disc = d.discs.getOrNull(i)
-                    if (disc != null && disc != d.discs.getOrNull(i - 1) && d.discs.toSet().size > 1) Header("Disc $disc")
+                    if (multiDisc && disc != null && disc != d.discs.getOrNull(i - 1)) Header("Disc $disc")
                     SongRow(
                         s,
                         highlight = s.id == playingId,
@@ -1454,8 +1612,10 @@ fun PageScreen(p: Page) {
                 }
                 if (d.items.isNotEmpty()) {
                     val allAlbums = d.items.all { it.kind == "album" }
-                    item { Header(if (allAlbums) "Albums" else "Albums and more") }
-                    items(d.items) { item -> ItemRow(item) { openItem(item) } }
+                    item(key = "items-hdr") { Header(if (allAlbums) "Albums" else "Albums and more") }
+                    itemsIndexed(d.items, key = { i, item -> "i:${item.kind}:${item.id}#$i" }, contentType = { _, _ -> 1 }) { _, item ->
+                        ItemRow(item) { openItem(item) }
+                    }
                 }
             }
             FastScroll(list)
@@ -1473,8 +1633,10 @@ fun PageScreen(p: Page) {
 private fun PageButtons(p: Page, d: Detail) {
     val scope = rememberCoroutineScope()
     val source = backend
-    var state by remember(p) { mutableStateOf<InLibrary?>(null) }
-    LaunchedEffect(p) { state = withContext(Dispatchers.IO) { source.saved(p) } }
+    var state by remember(p) { mutableStateOf(source.peekSaved(p)) }
+    LaunchedEffect(p) {
+        if (state == null) state = withContext(Dispatchers.IO) { source.saved(p) }
+    }
     // The first button's text starts where the title above it does.
     val padding = androidx.compose.foundation.layout.PaddingValues(start = 0.dp, end = 16.dp, top = 8.dp, bottom = 8.dp)
     Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1778,9 +1940,7 @@ private fun LyricsSettings() = LazyColumn(Modifier.fillMaxSize()) {
     }
     item { Text(backend.lyricsRule, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
     item {
-        // Read because the song can start or end while this page is open.
-        Playback.tick
-        val playing = Playback.current()?.song != null
+        val playing = Playback.currentEntryState != null
         Row1("Search lyrics again for this song", "After changing the providers", enabled = playing) {
             Playback.refetchLyrics()
         }
@@ -2079,51 +2239,65 @@ fun plainError(t: Throwable): String {
  */
 @Composable
 fun androidx.compose.foundation.layout.BoxScope.FastScroll(list: LazyListState) {
-    val info = list.layoutInfo
-    val visible = info.visibleItemsInfo.size
-    val total = info.totalItemsCount
-    if (total <= visible * 3 || visible == 0) return
+    val longList by remember(list) {
+        derivedStateOf {
+            val info = list.layoutInfo
+            val v = info.visibleItemsInfo.size
+            v > 0 && info.totalItemsCount > v * 3
+        }
+    }
+    if (!longList) return
+    val tabShown = LocalTabShown.current
     var dragging by remember { mutableStateOf(false) }
     var shown by remember { mutableStateOf(false) }
-    LaunchedEffect(list.isScrollInProgress, dragging) {
-        if (list.isScrollInProgress || dragging) {
+    LaunchedEffect(list.isScrollInProgress, dragging, tabShown) {
+        if (!tabShown) {
+            shown = false
+        } else if (list.isScrollInProgress || dragging) {
             shown = true
         } else {
             kotlinx.coroutines.delay(1500)
             shown = false
         }
     }
-    val alpha by androidx.compose.animation.core.animateFloatAsState(if (shown) 1f else 0f, label = "fastScroll")
-    if (alpha == 0f) return
+    val alphaState = androidx.compose.animation.core.animateFloatAsState(if (shown) 1f else 0f, label = "fastScroll")
+    if (!shown && alphaState.value == 0f) return
     val scope = rememberCoroutineScope()
     var height by remember { mutableIntStateOf(1) }
     val thumb = with(LocalDensity.current) { 56.dp.toPx() }
-    val fraction = list.firstVisibleItemIndex.toFloat() / (total - visible).coerceAtLeast(1)
     Box(
         Modifier
             .align(Alignment.TopEnd)
             .fillMaxHeight()
             .width(32.dp)
             .onSizeChanged { newSize -> height = newSize.height }
-            .pointerInput(total) {
+            .pointerInput(list) {
                 detectVerticalDragGestures(
                     onDragStart = { dragging = true },
                     onDragEnd = { dragging = false },
                     onDragCancel = { dragging = false },
                 ) { change, _ ->
                     change.consume()
-                    val f = ((change.position.y - thumb / 2) / (height - thumb)).coerceIn(0f, 1f)
-                    scope.launch { list.scrollToItem((f * (total - visible)).toInt()) }
+                    val info = list.layoutInfo
+                    val span = (info.totalItemsCount - info.visibleItemsInfo.size).coerceAtLeast(1)
+                    val f = ((change.position.y - thumb / 2) / (height - thumb).coerceAtLeast(1f)).coerceIn(0f, 1f)
+                    scope.launch { list.scrollToItem((f * span).toInt()) }
                 }
             }
-            .dim(alpha),
+            .graphicsLayer {
+                alpha = alphaState.value
+                compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
+            },
     ) {
         Box(
             Modifier
                 .align(Alignment.TopEnd)
                 .padding(end = 4.dp)
                 .offset {
-                    val y = fraction.coerceIn(0f, 1f) * (height - thumb)
+                    val info = list.layoutInfo
+                    val span = (info.totalItemsCount - info.visibleItemsInfo.size).coerceAtLeast(1)
+                    val fraction = (list.firstVisibleItemIndex.toFloat() / span).coerceIn(0f, 1f)
+                    val y = fraction * (height - thumb).coerceAtLeast(0f)
                     androidx.compose.ui.unit.IntOffset(0, y.toInt())
                 }
                 .size(width = 8.dp, height = 56.dp)

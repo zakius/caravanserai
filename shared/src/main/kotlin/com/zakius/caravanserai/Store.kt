@@ -1,7 +1,9 @@
 package com.zakius.caravanserai
 
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
@@ -16,8 +18,14 @@ import roma.core.RomanizeSettings
 import roma.core.Romanizer
 import roma.core.Song
 import roma.core.again
-import roma.core.matchDistance
+import roma.core.foldSearch
+import roma.core.matchFolded
+import roma.core.prepareQuery
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
+import kotlin.concurrent.write
 
 /** Work the first frame doesn't need waits until it is drawn, so it doesn't compete with it for the CPU or the main thread. */
 object Startup {
@@ -66,7 +74,9 @@ object Store {
     // of the heap. While it is missing, or while the user reads Japanese as written (nothing would show the romaji
     // then), Japanese gets kana only and the dictionary isn't loaded. Built lazily so start-up before the first frame
     // doesn't load Romanizer, read overrides, or spawn indexThread.
+    @Volatile private var romanizerReady = false
     val romanizer: Romanizer by lazy {
+        romanizerReady = true
         Romanizer(icu) {
             try {
                 check("ja" !in readScripts) { "Japanese is read as written" }
@@ -86,8 +96,63 @@ object Store {
             }
         }.apply {
             settings = romanizeSettings()
+            computePieces = needsPieces()
             loadOverrides(indexThread.submit<List<Override>> { loadOverrides() })
             cache = Names
+        }
+    }
+
+    private fun needsPieces() = listMode == "ruby" || playerMode == "ruby"
+
+    // Per-key reactive caches so changing an unrelated setting only recomposes composables reading that key,
+    // and hot readers (listMode, playerMode, readScripts, banned) never acquire SharedPreferences locks or allocate.
+    private val strStates = ConcurrentHashMap<String, MutableState<String?>>()
+    private val boolStates = ConcurrentHashMap<String, MutableState<Boolean?>>()
+    private var readScriptsState by mutableStateOf<Set<String>>(emptySet())
+    private var placeState by mutableStateOf("below")
+    private var listModeState by mutableStateOf("both")
+    private var playerModeState by mutableStateOf("both")
+    private var lyricsRubyState by mutableStateOf(false)
+    private var bannedListState by mutableStateOf<List<Banned>>(emptyList())
+    @Volatile private var cachedBans: Bans = Bans(emptySet(), emptySet())
+
+    private fun refreshDerivedSettings() {
+        val rawRead = prefs.getString(READ_KEY, "") ?: ""
+        readScriptsState = if (rawRead.isEmpty()) emptySet() else rawRead.split(',').filter { it.isNotEmpty() }.toSet()
+        val hasPerSurfaceKey = prefs.contains("display.list") || prefs.contains("display.player") || prefs.contains("lyrics.layout")
+        val p = prefs.getString(PLACE_KEY, null) ?: if (hasPerSurfaceKey) "custom" else "below"
+        placeState = p
+        listModeState = when (p) {
+            "below" -> "both"
+            "above" -> "ruby"
+            else -> prefs.getString("display.list", "both") ?: "both"
+        }
+        playerModeState = when (p) {
+            "below" -> "both"
+            "above" -> "ruby"
+            else -> prefs.getString("display.player", "both") ?: "both"
+        }
+        lyricsRubyState = when (p) {
+            "below" -> false
+            "above" -> true
+            else -> (prefs.getString("lyrics.layout", "lines") ?: "lines") == "ruby"
+        }
+        val rawBans = prefs.getString("bans", null)
+        val parsed = if (rawBans.isNullOrEmpty() || rawBans == "[]") {
+            emptyList()
+        } else {
+            runCatching { json.decodeFromString<List<Banned>>(rawBans) }.getOrDefault(emptyList())
+        }
+        bannedListState = parsed
+        cachedBans = if (parsed.isEmpty()) {
+            Bans(emptySet(), emptySet())
+        } else {
+            val songs = HashSet<String>()
+            val artists = HashSet<String>()
+            for (b in parsed) {
+                if (b.kind == "artist") artists.add(b.id) else songs.add(b.id)
+            }
+            Bans(songs, artists)
         }
     }
 
@@ -96,6 +161,9 @@ object Store {
         this.files = files
         this.cache = cache
         pages = File(cache, "pages")
+        strStates.clear()
+        boolStates.clear()
+        refreshDerivedSettings()
         backend.init()
         // Cleans up after older versions, off the main thread and before the index and the liked songs are read from
         // the cache folder. Up to 0.1.26 these files sat in filesDir and the mixes in prefs. They are copied, not
@@ -128,19 +196,21 @@ object Store {
         }
     }
 
-    // Reading [version] subscribes the calling composable, so it redraws when set() changes a setting.
-    // SharedPreferences alone isn't observable, and skipped composables such as Switch1 and Options would miss the change.
+    // Per-key state subscribes the calling composable only to [key], not every setting in the app.
     fun str(key: String, def: String): String {
-        version
-        return prefs.getString(key, def) ?: def
+        val state = strStates.computeIfAbsent(key) { mutableStateOf(prefs.getString(it, null)) }
+        return state.value ?: def
     }
 
     fun bool(key: String, def: Boolean): Boolean {
-        version
-        return prefs.getBoolean(key, def)
+        val state = boolStates.computeIfAbsent(key) {
+            mutableStateOf(if (prefs.contains(it)) prefs.getBoolean(it, false) else null)
+        }
+        return state.value ?: def
     }
 
     fun set(key: String, value: Any?) {
+        val hadPieces = needsPieces()
         prefs.edit().apply {
             when (value) {
                 null -> remove(key)
@@ -148,8 +218,20 @@ object Store {
                 else -> putString(key, value.toString())
             }
         }.apply()
-        if (key.startsWith("rom.")) {
-            romanizer.settings = romanizeSettings()
+        strStates[key]?.value = when (value) {
+            null -> null
+            is Boolean -> null
+            else -> value.toString()
+        }
+        boolStates[key]?.value = value as? Boolean
+        if (key == READ_KEY || key == PLACE_KEY || key == "display.list" || key == "display.player" || key == "lyrics.layout" || key == "bans") {
+            refreshDerivedSettings()
+        }
+        val nowPieces = needsPieces()
+        if (romanizerReady) romanizer.computePieces = nowPieces
+        val gainedPieces = !hadPieces && nowPieces
+        if (key.startsWith("rom.") || gainedPieces) {
+            if (key.startsWith("rom.")) romanizer.settings = romanizeSettings()
             Playback.romanizationChanged()
         }
         if (key == READ_KEY) {
@@ -158,7 +240,7 @@ object Store {
             // Japanese read as written doesn't load the dictionary, so Japanese romanized again must load it.
             romanizer.retryDictionary()
         }
-        if (backend.changes(key) or key.startsWith("rom.")) dataChanged()
+        if (backend.changes(key) || key.startsWith("rom.") || gainedPieces) dataChanged()
         // A source that asks for lyrics by what they show (backend.lyricsVariant) loads the song's again.
         if (key.startsWith("lyrics.layer.")) Playback.current()?.let { Playback.loadLyrics(it.song) }
         version++
@@ -171,28 +253,49 @@ object Store {
         set(v) { runCatching { File(cache, "mixes.json").writeText(json.encodeToString(v)) } }
 
     // The last copy of Home, the library tabs and pages is kept on disk and shown at once on the next start.
-    // Pages are read, written and dropped on their own thread, in order, so a read never sees a dropped page.
-    private val pageThread by lazy { java.util.concurrent.Executors.newSingleThreadExecutor() }
+    // Reads run concurrently on the caller's IO thread (never blocked behind a big home.json write), while writes
+    // coalesce per key on a writer thread and rename atomically into place. dataChanged takes the write lock so a
+    // read never sees a dropped page.
+    private val pageLock = ReentrantReadWriteLock()
+    private val pageWriter by lazy { java.util.concurrent.Executors.newSingleThreadExecutor() }
+    private val pendingPageWrites = ConcurrentHashMap<String, () -> String>()
+    private val SAFE_PAGE_KEY = Regex("[^A-Za-z0-9_-]")
 
-    private fun pageFile(key: String) = File(pages, key.replace(Regex("[^A-Za-z0-9_-]"), "_") + ".json")
+    private fun pageFile(key: String) = File(pages, key.replace(SAFE_PAGE_KEY, "_") + ".json")
 
     /** Blocking: call it off the main thread. */
-    fun <T> readPage(key: String, serializer: KSerializer<T>): T? {
-        val task = pageThread.submit<T?> {
-            runCatching { json.decodeFromString(serializer, pageFile(key).readText()) }.getOrNull()
-        }
-        return task.get()
+    fun <T> readPage(key: String, serializer: KSerializer<T>): T? = pageLock.read {
+        runCatching { json.decodeFromString(serializer, pageFile(key).readText()) }.getOrNull()
     }
 
-    fun <T> writePage(key: String, value: T, serializer: KSerializer<T>) = pageThread.execute {
-        pages.mkdirs()
-        // A failed write, such as on a full disk, only loses the copy.
-        runCatching { pageFile(key).writeText(json.encodeToString(serializer, value)) }
+    fun <T> writePage(key: String, value: T, serializer: KSerializer<T>) {
+        // Replaces any queued write for the same key, so Home's 10-page mix scan doesn't serialize and write 10 times.
+        val first = pendingPageWrites.put(key) { json.encodeToString(serializer, value) } == null
+        if (!first) return
+        pageWriter.execute {
+            val encode = pendingPageWrites.remove(key) ?: return@execute
+            val encoded = runCatching { encode() }.getOrNull() ?: return@execute
+            pageLock.read {
+                pages.mkdirs()
+                val target = pageFile(key)
+                val tmp = File(target.path + ".tmp")
+                // A failed write, such as on a full disk, only loses the copy.
+                runCatching {
+                    tmp.writeText(encoded)
+                    if (!tmp.renameTo(target)) target.writeText(encoded)
+                }
+            }
+        }
     }
 
     /** What pages hold changed (account, romanization): the disk copies go, and open pages load again. */
     fun dataChanged() {
-        pageThread.execute { pages.listFiles()?.forEach { it.delete() } }
+        pendingPageWrites.clear()
+        pageWriter.execute {
+            pageLock.write {
+                pages.listFiles()?.forEach { it.delete() }
+            }
+        }
         dataVersion++
     }
 
@@ -260,7 +363,7 @@ object Store {
     }
 
     /** Scripts the user reads ("ja", "zh", "ko", "cyrillic", "greek", "other"): text only in those shows as written. */
-    val readScripts: Set<String> get() = str(READ_KEY, "").split(',').filter { it.isNotEmpty() }.toSet()
+    val readScripts: Set<String> get() = readScriptsState
 
     fun reads(original: String, siblings: List<String> = emptyList()): Boolean {
         val read = readScripts
@@ -287,37 +390,18 @@ object Store {
      * Where romanization goes on every surface: "below", "above" (ruby) or "custom" (the per-surface keys). The default
      * is custom for someone who set a per-surface key before this setting existed, so they keep their choice.
      */
-    val place: String
-        get() {
-            val hasPerSurfaceKey = listOf("display.list", "display.player", "lyrics.layout").any(prefs::contains)
-            return str(PLACE_KEY, if (hasPerSurfaceKey) "custom" else "below")
-        }
+    val place: String get() = placeState
 
     /** "romanized", "both", "ruby" or "original". */
-    val listMode get() = mode("display.list")
-    val playerMode get() = mode("display.player")
-    val lyricsRuby get() = when (place) {
-        "below" -> false
-        "above" -> true
-        else -> str("lyrics.layout", "lines") == "ruby"
-    }
-
-    private fun mode(key: String) = when (place) {
-        "below" -> "both"
-        "above" -> "ruby"
-        else -> str(key, "both")
-    }
+    val listMode: String get() = listModeState
+    val playerMode: String get() = playerModeState
+    val lyricsRuby: Boolean get() = lyricsRubyState
 
     var banned: List<Banned>
-        get() = runCatching { json.decodeFromString<List<Banned>>(str("bans", "[]")) }.getOrDefault(emptyList())
+        get() = bannedListState
         set(v) = set("bans", json.encodeToString(v))
 
-    fun bans(): Bans {
-        val all = banned
-        val songs = all.filter { it.kind == "song" }.map { it.id }.toSet()
-        val artists = all.filter { it.kind == "artist" }.map { it.id }.toSet()
-        return Bans(songs, artists)
-    }
+    fun bans(): Bans = cachedBans
 
     fun ban(kind: String, id: String, name: String) {
         banned = banned.filterNot { it.kind == kind && it.id == id } + Banned(kind, id, name)
@@ -430,6 +514,7 @@ object Store {
         if (songs.isEmpty()) return
         indexThread.execute {
             val ids = songs.map { it.id }.toSet()
+            for (id in ids) foldedCache.remove(id)
             index.removeAll { it.id in ids }
             index.addAll(0, songs)
             while (index.size > INDEX_SIZE) index.removeAt(index.size - 1)
@@ -453,15 +538,30 @@ object Store {
         }
     }
 
+    private val foldedCache = HashMap<String, Array<String>>()
+
+    private fun foldedOf(s: Song): Array<String> = foldedCache.getOrPut(s.id) {
+        arrayOf(
+            foldSearch(s.title.original),
+            foldSearch(s.title.latin),
+            foldSearch(s.artistOriginal),
+            foldSearch(s.artistLatin),
+            foldSearch(s.artistLatin + s.title.latin),
+        )
+    }
+
     /**
      * Blocking: call it off the main thread. The stored Latin forms date from when each song was seen, so the hits are
      * romanized again to follow today's rules.
      */
     fun searchLocal(q: String): List<Song> {
+        val prepared = prepareQuery(q) ?: return emptyList()
         val task = indexThread.submit<List<Song>> {
-            val hits = index.mapNotNull { s ->
-                val distance = if (s.id in played) matchDistance(s, q) else null
-                if (distance == null) null else s to distance
+            val hits = ArrayList<Pair<Song, Int>>()
+            for (s in index) {
+                if (s.id !in played) continue
+                val distance = matchFolded(foldedOf(s), prepared) ?: continue
+                hits.add(s to distance)
             }
             hits.sortedBy { it.second }.take(20).map { it.first }
         }

@@ -110,6 +110,9 @@ private class ShownComment(val c: roma.core.Comment, val text: String, val latin
     var translated = false
 }
 
+private val MULTI_BLANK = Regex("\n\\s*\n\\s*\n+")
+private val commentScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main)
+
 /** Comments loaded a page at a time: the song's, or one comment's replies. */
 private class CommentList(var next: (() -> roma.core.CommentPage)?, val songId: String? = null) {
     val items = androidx.compose.runtime.mutableStateListOf<ShownComment>()
@@ -131,7 +134,7 @@ private class CommentList(var next: (() -> roma.core.CommentPage)?, val songId: 
                     // A reply starting with an @mention has a zero-width space first.
                     val trimmed = htmlToText(c.text).trim { ch -> ch.isWhitespace() || ch == '\u200B' }
                     // Keep at most one blank line in a row.
-                    val text = trimmed.replace(Regex("\n\\s*\n\\s*\n+"), "\n\n")
+                    val text = trimmed.replace(MULTI_BLANK, "\n\n")
                     val latin = if (!Romanizer.hasNonLatin(text) || Store.reads(text)) {
                         null
                     } else {
@@ -153,40 +156,44 @@ private class CommentList(var next: (() -> roma.core.CommentPage)?, val songId: 
     }
 }
 
-/** The playing song's comments, kept while it plays so switching views doesn't load them again. */
-private var songComments: CommentList? = null
+/** Recent songs' comments kept in an LRU cache (last 5 songs) so skipping back/forward or switching views is instant. */
+private val commentCache = object : LinkedHashMap<String, CommentList>(8, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CommentList>) = size > 5
+}
+
+private fun commentsFor(songId: String): CommentList =
+    commentCache.getOrPut(songId) { CommentList({ roma.core.Comments.of(songId) }, songId) }
+
+/** Starts fetching page 1 of comments on finger-down of the Comments button so release joins the in-flight request. */
+internal fun prefetchSongComments(songId: String) {
+    if (Playback.thrifty()) return
+    val state = commentsFor(songId)
+    if (state.items.isEmpty() && !state.loading && !state.disabled && state.next != null) {
+        commentScope.launch { state.load() }
+    }
+}
 
 @Composable
 internal fun CommentsView() {
-    // Reading tick redraws this view when the restored queue arrives after the first frame.
-    Playback.tick
-    val songId = Playback.shown()?.id
+    val songId = Playback.shownSong?.id
     if (songId == null) {
         if (!Playback.restoring) Centered("Nothing playing.")
         return
     }
-    val state = remember(songId) {
-        val kept = songComments
-        if (kept != null && kept.songId == songId) {
-            kept
-        } else {
-            val created = CommentList({ roma.core.Comments.of(songId) }, songId)
-            songComments = created
-            created
-        }
-    }
+    val state = remember(songId) { commentsFor(songId) }
     val list = androidx.compose.foundation.lazy.rememberLazyListState()
-    // The first page loads at once, and the next when the list nears its end.
+    // The first page loads when shown (or already started via prefetchSongComments on press-down), and the next when
+    // the list nears its end.
     val nearEnd by remember {
         derivedStateOf {
             val lastVisible = list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
             lastVisible >= list.layoutInfo.totalItemsCount - 5
         }
     }
-    // When hidden, the list stays measured but doesn't page on.
+    // When hidden (buildAhead), stay composed without touching the network until opened.
     val shown = LocalTabShown.current
     LaunchedEffect(state, nearEnd, state.error, state.items.size, shown) {
-        if (state.error == null && (state.items.isEmpty() || nearEnd && shown)) state.load()
+        if (shown && state.error == null && (state.items.isEmpty() || nearEnd)) state.load()
     }
     val scope = rememberCoroutineScope()
     when {
@@ -195,13 +202,14 @@ internal fun CommentsView() {
             Failed("Couldn't load the comments.", state.error!!) { scope.launch { state.load() } }
         }
         state.items.isEmpty() && state.loading -> return Loading("Loading comments…")
+        state.items.isEmpty() && !shown -> return Box(Modifier.fillMaxSize())
         state.items.isEmpty() -> return Centered("No comments yet.")
     }
     // A strip at the top holds the Translate and sleep chips, as in the lyrics. The comments scroll under the strip,
     // not under the chips.
     Box {
         LazyColumn(Modifier.fillMaxSize().padding(top = CHIP_STRIP), list) {
-            items(state.items.size) { i ->
+            items(state.items.size, key = { i -> i }) { i ->
                 val s = state.items[i]
                 val r = s.replies
                 val toggleReplies: () -> Unit = {
@@ -299,7 +307,7 @@ private fun CommentRow(s: ShownComment, list: CommentList, avatar: androidx.comp
                 if (c.ago.isNotEmpty()) Text(" · ${c.ago}", style = type.labelMedium, color = muted, maxLines = 1)
             }
             Spacer(Modifier.height(2.dp))
-            var folds by remember { mutableStateOf(false) }
+            var folds by remember(s) { mutableStateOf(false) }
             val lines = if (s.unfolded) Int.MAX_VALUE else 6
             val foldToggle = if (folds) {
                 Modifier.clickable(onClickLabel = if (s.unfolded) "Show less" else "Read more") { s.unfolded = !s.unfolded }

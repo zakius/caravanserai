@@ -132,10 +132,17 @@ internal fun MixTiles(mixes: List<Item>?, read: Boolean) {
     val shown = minOf(fit - 1, list.size)
     val textStyle = MaterialTheme.typography.bodySmall
     @Composable
-    fun Tile(title: String, locked: Boolean, onClick: () -> Unit, picture: @Composable () -> Unit) = Column(
+    fun Tile(title: String, mixId: String, locked: Boolean, onClick: () -> Unit, picture: @Composable () -> Unit) = Column(
         Modifier
             .width(side)
             .dim(if (locked) 0.35f else 1f)
+            .pointerInput(mixId, locked) {
+                if (locked) return@pointerInput
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    Playback.prefetchMix(mixId)
+                }
+            }
             .clickable(enabled = !locked, onClick = onClick),
     ) {
         picture()
@@ -152,6 +159,7 @@ internal fun MixTiles(mixes: List<Item>?, read: Boolean) {
                 if (m == null) {
                     Tile(
                         "Liked music",
+                        "LM",
                         false,
                         {
                             Playback.playMix("LM", title = "Liked music")
@@ -169,7 +177,7 @@ internal fun MixTiles(mixes: List<Item>?, read: Boolean) {
                         }
                     }
                 } else {
-                    Tile(Store.shown(m.title), m.id in Home.updating, { play(m) }) {
+                    Tile(Store.shown(m.title), m.id, m.id in Home.updating, { play(m) }) {
                         Thumb(shownThumb(m.thumb, side), side, Modifier.size(side).clip(RoundedCornerShape(8.dp)))
                     }
                 }

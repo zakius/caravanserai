@@ -167,8 +167,14 @@ interface Source {
     val hasComments: Boolean
     /** The player's comments view, for [hasComments] sources. */
     @Composable fun Comments() {}
+    /** Starts fetching comments for [songId] early (e.g. on finger-down on the Comments button). */
+    fun prefetchComments(songId: String) {}
+    /** Cached share URL if already known without IO, so the song menu enables Share on Frame 1. */
+    fun peekShareUrl(s: Song): String? = null
     /** Blocking. A link to the song for Share, or null when there's none. */
     fun shareUrl(s: Song): String?
+    /** Cached library state for [p] if already known without IO, so PageButtons shows it on Frame 1. */
+    fun peekSaved(p: Page): InLibrary? = null
     /** Songs have links to share, so the song menu has Share. */
     val canShare: Boolean
 

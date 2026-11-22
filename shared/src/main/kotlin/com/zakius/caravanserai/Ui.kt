@@ -97,24 +97,22 @@ import kotlin.math.roundToInt
 // Material's opacity for disabled controls.
 private const val DISABLED_ALPHA = 0.38f
 
-class ColorScheme(
+@androidx.compose.runtime.Immutable
+data class ColorScheme(
     val primary: Color, val onPrimary: Color, val inversePrimary: Color,
     val secondaryContainer: Color, val onSecondaryContainer: Color,
     val background: Color, val surface: Color, val onSurface: Color, val onSurfaceVariant: Color,
     val surfaceContainer: Color, val surfaceContainerLowest: Color, val surfaceContainerHigh: Color,
     val inverseSurface: Color, val inverseOnSurface: Color,
     val outline: Color, val outlineVariant: Color, val error: Color,
-) {
-    fun copy(
-        primary: Color = this.primary, onPrimary: Color = this.onPrimary, inversePrimary: Color = this.inversePrimary,
-        secondaryContainer: Color = this.secondaryContainer, onSecondaryContainer: Color = this.onSecondaryContainer,
-        background: Color = this.background, surface: Color = this.surface,
-        surfaceContainer: Color = this.surfaceContainer, surfaceContainerLowest: Color = this.surfaceContainerLowest,
-    ) = ColorScheme(
-        primary, onPrimary, inversePrimary, secondaryContainer, onSecondaryContainer, background, surface, onSurface, onSurfaceVariant,
-        surfaceContainer, surfaceContainerLowest, surfaceContainerHigh, inverseSurface, inverseOnSurface, outline, outlineVariant, error,
-    )
-}
+)
+
+private val PillShape = RoundedCornerShape(50)
+private val ChipShape = RoundedCornerShape(8.dp)
+private val DialogShape = RoundedCornerShape(28.dp)
+private val SheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+private val HandleShape = RoundedCornerShape(2.dp)
+private val TabIndicatorShape = RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp)
 
 private fun c(argb: Long) = Color(argb)
 
@@ -129,6 +127,7 @@ fun darkColorScheme() = ColorScheme(
     c(0xFF211F26), c(0xFF0F0D13), c(0xFF2B2930), c(0xFFE6E0E9), c(0xFF322F35), c(0xFF938F99), c(0xFF49454F), c(0xFFF2B8B5),
 )
 
+@androidx.compose.runtime.Immutable
 class Typography {
     private fun s(size: Int, line: Int, spacing: Float, weight: FontWeight = FontWeight.Normal) =
         TextStyle(fontSize = size.sp, lineHeight = line.sp, letterSpacing = spacing.sp, fontWeight = weight)
@@ -185,15 +184,24 @@ fun Text(
     style: TextStyle = LocalTextStyle.current,
     minLines: Int = 1,
 ) {
-    val merged = style.merge(
-        TextStyle(
-            color = color.takeOrElse { style.color.takeOrElse { LocalContentColor.current } },
+    val resolvedColor = color.takeOrElse { style.color.takeOrElse { LocalContentColor.current } }
+    val merged = if (
+        resolvedColor == style.color &&
+        fontSize == TextUnit.Unspecified &&
+        fontWeight == null &&
+        textAlign == null &&
+        lineHeight == TextUnit.Unspecified
+    ) {
+        style
+    } else {
+        style.merge(
+            color = resolvedColor,
             fontSize = fontSize,
             fontWeight = fontWeight,
             textAlign = textAlign ?: TextAlign.Unspecified,
             lineHeight = lineHeight,
-        ),
-    )
+        )
+    }
     BasicText(text, modifier, merged, onTextLayout, overflow, maxLines = maxLines, minLines = minLines)
 }
 
@@ -205,7 +213,8 @@ fun Text(
     style: TextStyle = LocalTextStyle.current,
 ) {
     val color = style.color.takeOrElse { LocalContentColor.current }
-    BasicText(text, modifier, style.merge(TextStyle(color = color)), onTextLayout)
+    val merged = if (color == style.color) style else style.merge(color = color)
+    BasicText(text, modifier, merged, onTextLayout)
 }
 
 @Composable
@@ -260,7 +269,7 @@ private fun ButtonBase(
     Row(
         modifier
             .defaultMinSize(minHeight = 40.dp)
-            .clip(RoundedCornerShape(50))
+            .clip(PillShape)
             .background(fill)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(padding),
@@ -315,9 +324,9 @@ fun Switch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier: Mo
             .then(toggle)
             .size(52.dp, 32.dp)
             .alpha(if (enabled) 1f else DISABLED_ALPHA)
-            .clip(RoundedCornerShape(50))
+            .clip(PillShape)
             .background(if (checked) s.primary else s.surfaceContainerHigh)
-            .border(2.dp, if (checked) s.primary else s.outline, RoundedCornerShape(50)),
+            .border(2.dp, if (checked) s.primary else s.outline, PillShape),
     ) {
         Box(
             Modifier
@@ -338,18 +347,18 @@ fun Checkbox(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier: 
     } else {
         Modifier
     }
+    val checkPath = remember { androidx.compose.ui.graphics.Path() }
     Box(modifier.then(toggle).padding(11.dp).size(18.dp)) {
         Canvas(Modifier.fillMaxSize()) {
             val r = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx())
             if (checked) {
                 drawRoundRect(s.primary, cornerRadius = r)
                 val w = size.width
-                val path = androidx.compose.ui.graphics.Path().apply {
-                    moveTo(w * 0.2f, w * 0.52f)
-                    lineTo(w * 0.42f, w * 0.72f)
-                    lineTo(w * 0.8f, w * 0.3f)
-                }
-                drawPath(path, s.onPrimary, style = Stroke(2.dp.toPx(), cap = StrokeCap.Square))
+                checkPath.reset()
+                checkPath.moveTo(w * 0.2f, w * 0.52f)
+                checkPath.lineTo(w * 0.42f, w * 0.72f)
+                checkPath.lineTo(w * 0.8f, w * 0.3f)
+                drawPath(checkPath, s.onPrimary, style = Stroke(2.dp.toPx(), cap = StrokeCap.Square))
             } else {
                 val inset = 1.dp.toPx()
                 val boxSize = androidx.compose.ui.geometry.Size(size.width - 2.dp.toPx(), size.height - 2.dp.toPx())
@@ -475,7 +484,7 @@ fun RowScope.Tab(selected: Boolean, onClick: () -> Unit, text: @Composable () ->
                 .align(Alignment.BottomCenter)
                 .width(48.dp)
                 .height(3.dp)
-                .clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
+                .clip(TabIndicatorShape)
                 .background(s.primary)
             Box(indicator)
         }
@@ -485,12 +494,11 @@ fun RowScope.Tab(selected: Boolean, onClick: () -> Unit, text: @Composable () ->
 @Composable
 fun FilterChip(selected: Boolean, onClick: () -> Unit, label: @Composable () -> Unit) {
     val s = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(8.dp)
     Box(
         Modifier
             .heightIn(min = 32.dp)
-            .clip(shape)
-            .then(if (selected) Modifier.background(s.secondaryContainer) else Modifier.border(1.dp, s.outlineVariant, shape))
+            .clip(ChipShape)
+            .then(if (selected) Modifier.background(s.secondaryContainer) else Modifier.border(1.dp, s.outlineVariant, ChipShape))
             .selectable(selected, role = Role.Checkbox, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center,
@@ -505,6 +513,11 @@ fun FilterChip(selected: Boolean, onClick: () -> Unit, label: @Composable () -> 
 
 @Composable
 fun CircularProgressIndicator() {
+    // Hidden tabs and views stay composed: never run an infinite 60-120 fps animation while offscreen.
+    if (!LocalTabShown.current) {
+        Box(Modifier.size(40.dp))
+        return
+    }
     val color = MaterialTheme.colorScheme.primary
     val spin by rememberInfiniteTransition().animateFloat(0f, 360f, infiniteRepeatable(tween(1100, easing = LinearEasing)))
     Canvas(Modifier.size(40.dp).semantics { progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate }) {
@@ -536,7 +549,7 @@ fun AlertDialog(
     Dialog(onDismissRequest = onDismissRequest) {
         Surface(
             Modifier.widthIn(min = 280.dp, max = 560.dp),
-            shape = RoundedCornerShape(28.dp),
+            shape = DialogShape,
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
         ) {
             Column(Modifier.padding(24.dp)) {
@@ -599,7 +612,7 @@ fun ModalBottomSheet(onDismissRequest: () -> Unit, sheetState: SheetState, conte
                             drag = (drag + dy).coerceAtLeast(0f)
                         }
                     },
-                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                shape = SheetShape,
                 color = MaterialTheme.colorScheme.surfaceContainer,
             ) {
                 Column(Modifier.navigationBarsPadding().verticalScroll(rememberScrollState())) {
@@ -607,7 +620,7 @@ fun ModalBottomSheet(onDismissRequest: () -> Unit, sheetState: SheetState, conte
                         .padding(vertical = 22.dp)
                         .align(Alignment.CenterHorizontally)
                         .size(32.dp, 4.dp)
-                        .clip(RoundedCornerShape(2.dp))
+                        .clip(HandleShape)
                         .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
                     Box(handle)
                     content()
