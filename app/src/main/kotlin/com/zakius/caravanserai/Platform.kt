@@ -242,14 +242,13 @@ fun OutlinedTextField(
 ) {
     val s = MaterialTheme.colorScheme
     var focused by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(4.dp)
+    val shape = remember { RoundedCornerShape(4.dp) }
     val change by rememberUpdatedState(onValueChange)
     val search by rememberUpdatedState(onSearch)
     var edit by remember { mutableStateOf<EditText?>(null) }
-    // The EditText is created only once the field is first on screen. One created in a tab that is built while
-    // hidden (buildAhead) stays blank, with no hint or caret, the first time the tab is shown.
-    val shown = remember { BooleanArray(1) }
-    if (LocalTabShown.current) shown[0] = true
+    val tabShown = LocalTabShown.current
+    // Cache last applied theme colors so keystrokes never allocate a GradientDrawable or retint handles.
+    val lastColors = remember { IntArray(3) }
     Column(
         modifier
             .defaultMinSize(minWidth = 280.dp, minHeight = 56.dp)
@@ -280,7 +279,9 @@ fun OutlinedTextField(
             )
         }
         val style = MaterialTheme.typography.bodyLarge
-        if (shown[0]) AndroidView(
+        // Pre-created while the tab is built ahead (DeckLayer places hidden tabs at full size), kept INVISIBLE and
+        // unfocusable until shown so the first switch to Search pays zero View inflation/layout cost.
+        AndroidView(
             factory = { c ->
                 EditText(c).apply {
                     background = null
@@ -342,29 +343,51 @@ fun OutlinedTextField(
                             v.context.getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(v.windowToken, 0)
                         }
                     }
+                    visibility = if (tabShown) View.VISIBLE else View.INVISIBLE
+                    isFocusable = tabShown
+                    isFocusableInTouchMode = tabShown
                     edit = this
-                    if (autoFocus) post { requestFocus() }
+                    if (autoFocus && tabShown) post { requestFocus() }
                 }
             },
             Modifier.fillMaxWidth(),
             update = { e ->
+                val wantVis = if (tabShown) View.VISIBLE else View.INVISIBLE
+                if (e.visibility != wantVis) {
+                    e.visibility = wantVis
+                    e.isFocusable = tabShown
+                    e.isFocusableInTouchMode = tabShown
+                    if (tabShown) e.invalidate()
+                }
                 if (e.text.toString() != value) {
                     e.setText(value)
                     e.setSelection(value.length)
                 }
-                e.setTextColor(s.onSurface.toArgb())
-                // The placeholder is fainter than typed text, and under a label it shows only while the field has
-                // focus, so an empty field never looks filled in.
-                e.setHintTextColor(s.onSurfaceVariant.copy(alpha = 0.6f).toArgb())
-                e.hint = if (label == null || focused) placeholder else null
-                e.highlightColor = s.primary.copy(alpha = 0.4f).toArgb()
-                if (Build.VERSION.SDK_INT >= 29) {
-                    e.textCursorDrawable = android.graphics.drawable.GradientDrawable().apply {
-                        setColor(s.primary.toArgb())
-                        setSize((2 * e.resources.displayMetrics.density).toInt(), 0)
+                val fg = s.onSurface.toArgb()
+                val hintFg = s.onSurfaceVariant.copy(alpha = 0.6f).toArgb()
+                val primary = s.primary.toArgb()
+                if (lastColors[0] != fg) {
+                    lastColors[0] = fg
+                    e.setTextColor(fg)
+                }
+                if (lastColors[1] != hintFg) {
+                    lastColors[1] = hintFg
+                    e.setHintTextColor(hintFg)
+                }
+                val wantHint = if (label == null || focused) placeholder else null
+                if (e.hint != wantHint) e.hint = wantHint
+                if (lastColors[2] != primary) {
+                    lastColors[2] = primary
+                    e.highlightColor = s.primary.copy(alpha = 0.4f).toArgb()
+                    if (Build.VERSION.SDK_INT >= 29) {
+                        e.textCursorDrawable = android.graphics.drawable.GradientDrawable().apply {
+                            setColor(primary)
+                            setSize((2 * e.resources.displayMetrics.density).toInt(), 0)
+                        }
+                        e.textSelectHandle?.setTint(primary)
+                        e.textSelectHandleLeft?.setTint(primary)
+                        e.textSelectHandleRight?.setTint(primary)
                     }
-                    val handles = listOf(e.textSelectHandle, e.textSelectHandleLeft, e.textSelectHandleRight)
-                    handles.forEach { handle -> handle?.setTint(s.primary.toArgb()) }
                 }
             },
         )

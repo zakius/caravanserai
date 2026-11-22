@@ -1,6 +1,7 @@
 package roma.core
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 @Serializable
 class Named(val id: String?, val name: Text)
@@ -19,10 +20,40 @@ class Song(
     /** Why radio picked it, if known ("same artist"). */
     val reason: String? = null,
 ) {
-    val artistLatin get() = artists.joinToString(", ") { it.name.latin }
-    val artistOriginal get() = artists.joinToString(", ") { it.name.original }
-    val artistText get() = Text.join(artists.map { it.name }, ", ")
-    val firstArtistId get() = artists.firstOrNull { it.id != null }?.id
+    @Transient private var cachedArtistLatin: String? = null
+    @Transient private var cachedArtistOriginal: String? = null
+    @Transient private var cachedArtistText: Text? = null
+    @Transient private var cachedFirstArtistId: String? = null
+    @Transient private var firstArtistIdChecked: Boolean = false
+
+    val artistLatin: String
+        get() = cachedArtistLatin ?: when (artists.size) {
+            0 -> ""
+            1 -> artists[0].name.latin
+            else -> artists.joinToString(", ") { it.name.latin }
+        }.also { cachedArtistLatin = it }
+
+    val artistOriginal: String
+        get() = cachedArtistOriginal ?: when (artists.size) {
+            0 -> ""
+            1 -> artists[0].name.original
+            else -> artists.joinToString(", ") { it.name.original }
+        }.also { cachedArtistOriginal = it }
+
+    val artistText: Text
+        get() = cachedArtistText ?: when (artists.size) {
+            1 -> artists[0].name
+            else -> Text.join(artists.map { it.name }, ", ")
+        }.also { cachedArtistText = it }
+
+    val firstArtistId: String?
+        get() {
+            if (!firstArtistIdChecked) {
+                cachedFirstArtistId = artists.firstOrNull { it.id != null }?.id
+                firstArtistIdChecked = true
+            }
+            return cachedFirstArtistId
+        }
 
     fun withReason(r: String?) = Song(id, title, artists, album, durationSec, thumb, video, r)
 }
@@ -48,6 +79,23 @@ fun Romanizer.again(s: Song): Song {
 }
 
 /**
+ * A folded search query and its typo budget, built once per search instead of once per song.
+ * Small typos pass: one in a query of 5 or more letters, two from 9.
+ */
+class PreparedQuery(val q: String, val allowed: Int)
+
+fun prepareQuery(query: String): PreparedQuery? {
+    val q = foldSearch(query)
+    if (q.isEmpty()) return null
+    val allowed = when {
+        q.length >= 9 -> 2
+        q.length >= 5 -> 1
+        else -> 0
+    }
+    return PreparedQuery(q, allowed)
+}
+
+/**
  * Local search: the query matches the original or the Latin form, ignoring case, accents (ō = o) and spaces.
  * Small typos pass: one in a query of 5 or more letters, two from 9. Returns how many typos it took, or null.
  */
@@ -56,36 +104,78 @@ fun matchDistance(song: Song, query: String): Int? =
 
 /** [matchDistance] against any names: the query matches one of [texts]. */
 fun matchDistance(texts: List<String>, query: String): Int? {
-    val q = fold(query)
-    if (q.isEmpty()) return null
-    val allowed = when {
-        q.length >= 9 -> 2
-        q.length >= 5 -> 1
-        else -> 0
+    val p = prepareQuery(query) ?: return null
+    var best = p.allowed + 1
+    for (t in texts) {
+        val d = substringDistance(p.q, foldSearch(t), best - 1)
+        if (d < best) {
+            best = d
+            if (best == 0) return 0
+        }
     }
-    val best = texts.minOf { substringDistance(q, fold(it)) }
-    return if (best <= allowed) best else null
+    return if (best <= p.allowed) best else null
+}
+
+/** [matchDistance] against already-folded strings ([foldSearch]), for searching an index repeatedly. */
+fun matchFolded(foldedTexts: Array<String>, query: PreparedQuery): Int? {
+    var best = query.allowed + 1
+    for (t in foldedTexts) {
+        val d = substringDistance(query.q, t, best - 1)
+        if (d < best) {
+            best = d
+            if (best == 0) return 0
+        }
+    }
+    return if (best <= query.allowed) best else null
 }
 
 fun matches(song: Song, query: String) = matchDistance(song, query) != null
 
-// Fewest edits that turn q into some substring of text (Sellers' algorithm).
-private fun substringDistance(q: String, text: String): Int {
+// Fewest edits that turn q into some substring of text (Sellers' algorithm), bounded by [limit].
+// Returns a value > [limit] as soon as no substring can match within [limit].
+private fun substringDistance(q: String, text: String, limit: Int): Int {
+    if (limit < 0) return 1
+    if (text.contains(q)) return 0
+    if (limit == 0) return 1
+    val m = q.length
+    val n = text.length
+    if (n == 0) return m
     // Row 0 is all zeros: with q empty, any start in text costs nothing.
-    var prev = IntArray(text.length + 1)
-    for (i in 1..q.length) {
-        val row = IntArray(text.length + 1)
-        row[0] = i
-        for (j in 1..text.length) {
-            val substitution = prev[j - 1] + if (q[i - 1] == text[j - 1]) 0 else 1
-            row[j] = minOf(substitution, prev[j] + 1, row[j - 1] + 1)
+    var prev = IntArray(n + 1)
+    var curr = IntArray(n + 1)
+    for (i in 1..m) {
+        val qc = q[i - 1]
+        curr[0] = i
+        var rowMin = i
+        for (j in 1..n) {
+            val sub = prev[j - 1] + if (qc == text[j - 1]) 0 else 1
+            val del = prev[j] + 1
+            val ins = curr[j - 1] + 1
+            val v = if (sub <= del) (if (sub <= ins) sub else ins) else (if (del <= ins) del else ins)
+            curr[j] = v
+            if (v < rowMin) rowMin = v
         }
-        prev = row
+        if (rowMin > limit) return limit + 1
+        val tmp = prev
+        prev = curr
+        curr = tmp
     }
-    return prev.min()
+    var min = prev[0]
+    for (j in 1..n) if (prev[j] < min) min = prev[j]
+    return min
 }
 
-private fun fold(s: String) = Romanizer.stripMarks(s).lowercase().replace(Regex("[\\s'’-]+"), "")
+fun foldSearch(s: String): String {
+    if (s.isEmpty()) return ""
+    val stripped = Romanizer.stripMarks(s)
+    val sb = StringBuilder(stripped.length)
+    for (i in 0 until stripped.length) {
+        val c = stripped[i]
+        if (c == '\'' || c == '\u2019' || c == '-' || c.isWhitespace()) continue
+        sb.append(c.lowercaseChar())
+    }
+    return sb.toString()
+}
 
 /** A card on home, search, library or artist pages: a song, album, playlist or artist. */
 @Serializable

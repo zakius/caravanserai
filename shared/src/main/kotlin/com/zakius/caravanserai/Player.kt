@@ -9,6 +9,9 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.takeOrElse
@@ -93,259 +96,326 @@ import roma.core.Lyrics
 import roma.core.attachTranslation
 import roma.core.pickTranslation
 
+/** Holds the seek-bar drag preview position so scrubbing only recomposes SeekBar and SeekPreviewOverlay. */
+private class SeekPreviewState {
+    var ms by mutableLongStateOf(-1L)
+}
+
 /**
- * The player. Only the area above the bottom block changes (song, lyrics, queue). The bottom block has fixed
+ * The player. Only the area above the bottom block changes (song, lyrics, queue, comments). The bottom block has fixed
  * heights and fixed slots, so no control ever moves; an unavailable control is dimmed in place.
+ *
+ * State reads are split across child composables so toggling play/pause, scrubbing, or switching views never recomposes
+ * unrelated parts of the player.
  */
 @Composable
 fun PlayerScreen() {
-    Playback.tick
-    var view by Nav::playerView
-    // Back closes the lyrics or queue view first, then leaves the player as usual.
-    BackHandler(enabled = view != "song" && LocalTabShown.current) { view = "song" }
+    PlayerBackHandler()
     var menuOpen by remember { mutableStateOf(false) }
     var sleepOpen by remember { mutableStateOf(false) }
-    // Where a seek-bar drag would land, -1 when there's no drag: the upper area shows the lyric line there.
-    var seekPreview by remember { mutableLongStateOf(-1L) }
-    val haptic = LocalHapticFeedback.current
-    // While a mix loads, the song still playing is on its way out: its controls are dimmed.
-    val entry = if (Playback.opening != null) null else Playback.current()
-    val p = Playback.player
-    val loadedLyrics = Playback.lyrics
-    val lyricsState = if (loadedLyrics != null && loadedLyrics.songId == Playback.shown()?.id) loadedLyrics else null
-    val lyrics = lyricsState?.lyrics
-    val hasLyrics = lyrics != null && lyrics.lines.isNotEmpty() && Playback.opening == null
-    if (view == "lyrics" && !hasLyrics && lyrics != null) view = "song"
-    val visitedViews = remember { androidx.compose.runtime.mutableStateListOf(view) }
-    if (view !in visitedViews) visitedViews += view
-    // The comments view isn't built ahead, because building it loads the comments from the network.
-    LaunchedEffect(Unit) { buildAhead(visitedViews, listOf("song", "queue", "lyrics")) }
-    val tabShown = LocalTabShown.current
-
-    val upper: @Composable (Modifier) -> Unit = { modifier ->
-        Box(modifier) {
-            // Each view stays composed once opened, as tabs do, so going back to it only lays out and draws. Building
-            // the queue again costs about 10 ms of the main thread on a phone.
-            for (v in visitedViews) {
-                androidx.compose.runtime.key(v) {
-                    val viewModifier = if (v == view && Playback.opening == null) Modifier.fillMaxSize() else Modifier.hidden()
-                    Box(viewModifier) {
-                        androidx.compose.runtime.CompositionLocalProvider(LocalTabShown provides (tabShown && v == view)) {
-                            when (v) {
-                                "lyrics" -> {
-                                    LyricsBackdrop(Playback.shown()?.thumb)
-                                    if (lyricsState != null && lyrics != null) {
-                                        LyricsView(lyricsState, lyrics, Playback.shown()?.id)
-                                    } else {
-                                        Loading("Looking for lyrics…")
-                                    }
-                                }
-                                "queue" -> QueueView()
-                                "comments" -> backend.Comments()
-                                else -> SongView()
-                            }
-                        }
-                    }
-                }
-            }
-            val opening = Playback.opening
-            if (opening != null) OpeningPage(opening.first, opening.second)
-            val lastBan = Playback.lastBan
-            if (lastBan != null) {
-                val song = lastBan.first
-                Surface(
-                    Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(8.dp)
-                        .fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.inverseSurface,
-                ) {
-                    Row(Modifier.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "Banned · ${song.title.latin}",
-                            Modifier.weight(1f),
-                            color = MaterialTheme.colorScheme.inverseOnSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        TextButton(onClick = { Playback.undoBan() }) {
-                            Text("Undo", color = MaterialTheme.colorScheme.inversePrimary)
-                        }
-                    }
-                }
-            }
-            // Top left, clear of Translate on the right even with a large font; the lists start below the chips.
-            SleepChip(Modifier.align(Alignment.TopStart)) { sleepOpen = true }
-            val line = if (seekPreview >= 0 && lyrics != null && lyrics.synced) {
-                lyrics.lines.lastOrNull { it.startMs <= seekPreview }
-            } else {
-                null
-            }
-            if (line != null && line.text.isNotBlank()) SeekPreview(line, Modifier.align(Alignment.BottomCenter))
-        }
-    }
-    // The bottom block, top to bottom: seek bar, action row, playback row (nearest the thumb; the nav bar is under it).
-    // It has fixed heights and slots; a wide screen only puts it beside the upper area.
-    val controls: @Composable (Modifier) -> Unit = { modifier ->
-        FixedRowsFont {
-            Column(modifier) {
-                SeekBar { seekPreview = it }
-                // More (the song menu, where Ban lives) comes first and Like last, under the thumb. Each slot is a
-                // sixth of the row wide whatever the source offers, and the slots are centred together, so a source
-                // without Comments has its buttons no bigger and no further apart. Left-handed mode mirrors the row;
-                // otherwise slots never move.
-                Row(
-                    Modifier.fillMaxWidth().height(44.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    val liked = entry?.song?.id in Playback.liked
-                    val slots: List<(@Composable RowScope.() -> Unit)?> = listOf(
-                        {
-                            Slot(rememberVectorPainter(Icons.Default.MoreVert), "More", entry != null, label = "More") {
-                                menuOpen = true
-                            }
-                        },
-                        // A source without comments has no slot for them.
-                        if (!backend.hasComments) {
-                            null
-                        } else {
-                            {
-                                Slot(
-                                    rememberVectorPainter(CommentsIcon),
-                                    "Comments",
-                                    entry != null,
-                                    view == "comments",
-                                    label = "Comments",
-                                    state = if (view == "comments") "shown" else null,
-                                ) {
-                                    view = if (view == "comments") "song" else "comments"
-                                }
-                            }
-                        },
-                        {
-                            Slot(
-                                rememberVectorPainter(LyricsIcon),
-                                "Lyrics",
-                                hasLyrics || view == "lyrics",
-                                view == "lyrics",
-                                label = "Lyrics",
-                                state = if (view == "lyrics") "shown" else null,
-                                whyOff = when {
-                                    lyrics == null -> "Still looking for lyrics"
-                                    !Playback.online -> "No connection: lyrics are searched again when it's back"
-                                    else -> "No lyrics found for this song"
-                                },
-                            ) {
-                                view = if (view == "lyrics") "song" else "lyrics"
-                            }
-                        },
-                        {
-                            Slot(
-                                rememberVectorPainter(QueueIcon),
-                                "Queue",
-                                entry != null,
-                                view == "queue",
-                                label = "Queue",
-                                state = if (view == "queue") "shown" else null,
-                            ) {
-                                view = if (view == "queue") "song" else "queue"
-                            }
-                        },
-                        {
-                            Slot(
-                                rememberVectorPainter(likeIcon(liked)),
-                                likeWord,
-                                Playback.canLike(entry?.song),
-                                liked,
-                                label = likeWord,
-                                state = if (liked) "${likeWord.lowercase()}d" else "not ${likeWord.lowercase()}d",
-                                whyOff = if (!backend.canLike) "Sign in to ${backend.name} to ${likeWord.lowercase()} songs" else null,
-                            ) {
-                                haptic.performHapticFeedback(if (liked) HapticFeedbackType.ToggleOff else HapticFeedbackType.ToggleOn)
-                                Playback.toggleLike()
-                            }
-                        },
-                    )
-                    val shown = slots.filterNotNull()
-                    val ordered = if (Store.bool("ui.leftHanded", false)) shown.reversed() else shown
-                    Row(Modifier.fillMaxWidth(ordered.size / 6f), verticalAlignment = Alignment.CenterVertically) {
-                        for (slot in ordered) slot()
-                    }
-                }
-                Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Slot(
-                        painterResource(R.drawable.shuffle),
-                        "Shuffle",
-                        entry != null,
-                        Playback.shuffled,
-                        iconSize = 26,
-                        state = if (Playback.shuffled) "on" else "off",
-                    ) {
-                        Playback.toggleShuffle()
-                    }
-                    Slot(painterResource(R.drawable.previous), "Previous", entry != null, iconSize = 30) { Playback.previous() }
-                    // Shows what the user asked for: Pause while a song buffers or waits for the network, too.
-                    val showPlay = p.showPlayButton
-                    // A long press opens the sleep timer: a hidden extra on a button that's there anyway, so the row
-                    // stays as it is.
-                    Slot(
-                        painterResource(if (showPlay) R.drawable.play else R.drawable.pause),
-                        if (showPlay) "Play" else "Pause",
-                        entry != null,
-                        iconSize = 44,
-                        onLongClick = { sleepOpen = true },
-                        longClickLabel = "Sleep timer",
-                    ) {
-                        Playback.togglePlay()
-                    }
-                    val hasNext = Playback.neighbour(Playback.shownIndex(), 1) >= 0
-                    Slot(painterResource(R.drawable.next), "Next", hasNext, iconSize = 30) { Playback.next() }
-                    val repeatIcon = when (p.repeatMode) {
-                        AudioPlayer.REPEAT_MODE_ONE -> R.drawable.repeat_one
-                        AudioPlayer.REPEAT_MODE_ALL -> R.drawable.repeat
-                        // Off is shown as muted (see Slot), not as another icon.
-                        else -> R.drawable.repeat
-                    }
-                    val repeatState = when (p.repeatMode) {
-                        AudioPlayer.REPEAT_MODE_ONE -> "this song"
-                        AudioPlayer.REPEAT_MODE_ALL -> "all"
-                        else -> "off"
-                    }
-                    Slot(
-                        painterResource(repeatIcon),
-                        "Repeat",
-                        entry != null,
-                        p.repeatMode != AudioPlayer.REPEAT_MODE_OFF,
-                        iconSize = 26,
-                        state = repeatState,
-                    ) {
-                        Playback.cycleRepeat()
-                    }
-                }
-            }
-        }
-    }
+    val seekPreview = remember { SeekPreviewState() }
 
     // Landscape (a phone on its side, the MatePad): the song, lyrics or queue on the left, the same bottom block on the
     // right. Otherwise one column; on a wide portrait screen the block keeps a phone's width, so the thumb reaches it.
     val screen = screenSizeDp()
     if (screen.width > screen.height) {
         Row(Modifier.fillMaxSize()) {
-            upper(Modifier.weight(1f).fillMaxHeight())
+            PlayerUpperDeck(seekPreview, { sleepOpen = true }, Modifier.weight(1f).fillMaxHeight())
             Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
-                controls(Modifier.widthIn(max = 560.dp).fillMaxWidth())
+                PlayerControlsBlock(
+                    seekPreview,
+                    onOpenMenu = { menuOpen = true },
+                    onOpenSleep = { sleepOpen = true },
+                    modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
+                )
             }
         }
     } else {
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-            upper(Modifier.weight(1f).fillMaxWidth())
-            controls(Modifier.widthIn(max = 560.dp).fillMaxWidth())
+            PlayerUpperDeck(seekPreview, { sleepOpen = true }, Modifier.weight(1f).fillMaxWidth())
+            PlayerControlsBlock(
+                seekPreview,
+                onOpenMenu = { menuOpen = true },
+                onOpenSleep = { sleepOpen = true },
+                modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
+            )
         }
     }
-    if (menuOpen && entry != null) SongMenu(entry.song, queueIndex = null) { menuOpen = false }
+    if (menuOpen) {
+        val entry = Playback.currentEntryState
+        if (entry != null) SongMenu(entry.song, queueIndex = null) { menuOpen = false } else menuOpen = false
+    }
     if (sleepOpen) SleepDialog { sleepOpen = false }
+}
+
+@Composable
+private fun PlayerBackHandler() {
+    // Back closes the lyrics, queue or comments view first, then leaves the player as usual.
+    BackHandler(enabled = Nav.playerView != "song" && LocalTabShown.current) { Nav.playerView = "song" }
+}
+
+@Composable
+private fun PlayerUpperDeck(seekPreview: SeekPreviewState, onOpenSleep: () -> Unit, modifier: Modifier) {
+    val view = Nav.playerView
+    val opening = Playback.opening
+    val shownSong = Playback.shownSong
+    val loadedLyrics = Playback.lyrics
+    val lyricsState = if (loadedLyrics != null && loadedLyrics.songId == shownSong?.id) loadedLyrics else null
+    val lyrics = lyricsState?.lyrics
+    val hasLyrics = lyrics != null && lyrics.lines.isNotEmpty() && opening == null
+    LaunchedEffect(view, hasLyrics, lyrics) {
+        if (view == "lyrics" && !hasLyrics && lyrics != null) Nav.playerView = "song"
+    }
+
+    val visitedViews = remember { androidx.compose.runtime.mutableStateListOf(view) }
+    if (view !in visitedViews) visitedViews += view
+    // All views (including comments, which defers network fetch until shown or pressed) are built ahead into
+    // hardware layers so every view switch flips only RenderNode translation/zIndex.
+    LaunchedEffect(Unit) { buildAhead(visitedViews, listOf("song", "queue", "lyrics", "comments")) }
+    val tabShown = LocalTabShown.current
+
+    Box(modifier.clipToBounds()) {
+        for (v in visitedViews) {
+            androidx.compose.runtime.key(v) {
+                val active = v == view && opening == null
+                DeckLayer(active) {
+                    androidx.compose.runtime.CompositionLocalProvider(LocalTabShown provides (tabShown && active)) {
+                        when (v) {
+                            "lyrics" -> LyricsPanel()
+                            "queue" -> QueueView()
+                            "comments" -> backend.Comments()
+                            else -> SongView()
+                        }
+                    }
+                }
+            }
+        }
+        if (opening != null) OpeningPage(opening.first, opening.second)
+        BanBanner(Modifier.align(Alignment.BottomCenter))
+        // Top left, clear of Translate on the right even with a large font; the lists start below the chips.
+        SleepChip(Modifier.align(Alignment.TopStart), onClick = onOpenSleep)
+        SeekPreviewOverlay(seekPreview, Modifier.align(Alignment.BottomCenter))
+    }
+}
+
+@Composable
+private fun LyricsPanel() {
+    val song = Playback.shownSong
+    val loadedLyrics = Playback.lyrics
+    val lyricsState = if (loadedLyrics != null && loadedLyrics.songId == song?.id) loadedLyrics else null
+    val lyrics = lyricsState?.lyrics
+    LyricsBackdrop(song?.thumb)
+    if (lyricsState != null && lyrics != null) {
+        LyricsView(lyricsState, lyrics, song?.id)
+    } else {
+        Loading("Looking for lyrics…")
+    }
+}
+
+@Composable
+private fun BanBanner(modifier: Modifier) {
+    val lastBan = Playback.lastBan ?: return
+    val song = lastBan.first
+    Surface(
+        modifier
+            .padding(8.dp)
+            .fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.inverseSurface,
+    ) {
+        Row(Modifier.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Banned · ${song.title.latin}",
+                Modifier.weight(1f),
+                color = MaterialTheme.colorScheme.inverseOnSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            TextButton(onClick = { Playback.undoBan() }) {
+                Text("Undo", color = MaterialTheme.colorScheme.inversePrimary)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SeekPreviewOverlay(seekPreview: SeekPreviewState, modifier: Modifier) {
+    val ms = seekPreview.ms
+    if (ms < 0) return
+    val loadedLyrics = Playback.lyrics
+    val lyrics = if (loadedLyrics != null && loadedLyrics.songId == Playback.shownSong?.id) loadedLyrics.lyrics else null
+    val line = if (lyrics != null && lyrics.synced) lyrics.lines.lastOrNull { it.startMs <= ms } else null
+    if (line != null && line.text.isNotBlank()) SeekPreview(line, modifier)
+}
+
+@Composable
+private fun PlayerControlsBlock(
+    seekPreview: SeekPreviewState,
+    onOpenMenu: () -> Unit,
+    onOpenSleep: () -> Unit,
+    modifier: Modifier,
+) {
+    FixedRowsFont {
+        Column(modifier) {
+            SeekBar { seekPreview.ms = it }
+            ActionRow(onOpenMenu)
+            PlaybackRow(onOpenSleep)
+        }
+    }
+}
+
+@Composable
+private fun ActionRow(onOpenMenu: () -> Unit) {
+    val view = Nav.playerView
+    val entry = Playback.currentEntryState
+    val opening = Playback.opening
+    val shownSong = Playback.shownSong
+    val loadedLyrics = Playback.lyrics
+    val lyrics = if (loadedLyrics != null && loadedLyrics.songId == shownSong?.id) loadedLyrics.lyrics else null
+    val hasLyrics = lyrics != null && lyrics.lines.isNotEmpty() && opening == null
+    val liked = entry?.song?.id in Playback.liked
+    val haptic = LocalHapticFeedback.current
+    // More (the song menu, where Ban lives) comes first and Like last, under the thumb. Each slot is a
+    // sixth of the row wide whatever the source offers, and the slots are centred together, so a source
+    // without Comments has its buttons no bigger and no further apart. Left-handed mode mirrors the row;
+    // otherwise slots never move.
+    Row(
+        Modifier.fillMaxWidth().height(44.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val slots: List<(@Composable RowScope.() -> Unit)?> = listOf(
+            {
+                Slot(rememberVectorPainter(Icons.Default.MoreVert), "More", entry != null, label = "More") {
+                    onOpenMenu()
+                }
+            },
+            // A source without comments has no slot for them.
+            if (!backend.hasComments) {
+                null
+            } else {
+                {
+                    Slot(
+                        rememberVectorPainter(CommentsIcon),
+                        "Comments",
+                        entry != null,
+                        view == "comments",
+                        label = "Comments",
+                        state = if (view == "comments") "shown" else null,
+                        onPress = {
+                            if (view != "comments") Playback.shownSong?.id?.let { backend.prefetchComments(it) }
+                        },
+                    ) {
+                        Nav.playerView = if (view == "comments") "song" else "comments"
+                    }
+                }
+            },
+            {
+                Slot(
+                    rememberVectorPainter(LyricsIcon),
+                    "Lyrics",
+                    hasLyrics || view == "lyrics",
+                    view == "lyrics",
+                    label = "Lyrics",
+                    state = if (view == "lyrics") "shown" else null,
+                    whyOff = when {
+                        lyrics == null -> "Still looking for lyrics"
+                        !Playback.online -> "No connection: lyrics are searched again when it's back"
+                        else -> "No lyrics found for this song"
+                    },
+                ) {
+                    Nav.playerView = if (view == "lyrics") "song" else "lyrics"
+                }
+            },
+            {
+                Slot(
+                    rememberVectorPainter(QueueIcon),
+                    "Queue",
+                    entry != null,
+                    view == "queue",
+                    label = "Queue",
+                    state = if (view == "queue") "shown" else null,
+                ) {
+                    Nav.playerView = if (view == "queue") "song" else "queue"
+                }
+            },
+            {
+                Slot(
+                    rememberVectorPainter(likeIcon(liked)),
+                    likeWord,
+                    Playback.canLike(entry?.song),
+                    liked,
+                    label = likeWord,
+                    state = if (liked) "${likeWord.lowercase()}d" else "not ${likeWord.lowercase()}d",
+                    whyOff = if (!backend.canLike) "Sign in to ${backend.name} to ${likeWord.lowercase()} songs" else null,
+                ) {
+                    haptic.performHapticFeedback(if (liked) HapticFeedbackType.ToggleOff else HapticFeedbackType.ToggleOn)
+                    Playback.toggleLike()
+                }
+            },
+        )
+        val shown = slots.filterNotNull()
+        val ordered = if (Store.bool("ui.leftHanded", false)) shown.reversed() else shown
+        Row(Modifier.fillMaxWidth(ordered.size / 6f), verticalAlignment = Alignment.CenterVertically) {
+            for (slot in ordered) slot()
+        }
+    }
+}
+
+@Composable
+private fun PlaybackRow(onOpenSleep: () -> Unit) {
+    val entry = Playback.currentEntryState
+    val shuffled = Playback.shuffledState
+    val showPlay = Playback.showPlayButton
+    val hasNext = Playback.hasNextState
+    val repeatMode = Playback.repeatModeState
+    Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+        Slot(
+            painterResource(R.drawable.shuffle),
+            "Shuffle",
+            entry != null,
+            shuffled,
+            iconSize = 26,
+            state = if (shuffled) "on" else "off",
+        ) {
+            Playback.toggleShuffle()
+        }
+        Slot(painterResource(R.drawable.previous), "Previous", entry != null, iconSize = 30) { Playback.previous() }
+        // A long press opens the sleep timer: a hidden extra on a button that's there anyway, so the row
+        // stays as it is.
+        Slot(
+            painterResource(if (showPlay) R.drawable.play else R.drawable.pause),
+            if (showPlay) "Play" else "Pause",
+            entry != null,
+            iconSize = 44,
+            onLongClick = onOpenSleep,
+            longClickLabel = "Sleep timer",
+        ) {
+            Playback.togglePlay()
+        }
+        Slot(painterResource(R.drawable.next), "Next", hasNext, iconSize = 30) { Playback.next() }
+        val repeatIcon = when (repeatMode) {
+            AudioPlayer.REPEAT_MODE_ONE -> R.drawable.repeat_one
+            AudioPlayer.REPEAT_MODE_ALL -> R.drawable.repeat
+            // Off is shown as muted (see Slot), not as another icon.
+            else -> R.drawable.repeat
+        }
+        val repeatState = when (repeatMode) {
+            AudioPlayer.REPEAT_MODE_ONE -> "this song"
+            AudioPlayer.REPEAT_MODE_ALL -> "all"
+            else -> "off"
+        }
+        Slot(
+            painterResource(repeatIcon),
+            "Repeat",
+            entry != null,
+            repeatMode != AudioPlayer.REPEAT_MODE_OFF,
+            iconSize = 26,
+            state = repeatState,
+        ) {
+            Playback.cycleRepeat()
+        }
+    }
 }
 
 /**
@@ -365,22 +435,25 @@ private fun LyricsBackdrop(thumb: String?) {
         exact = true,
     )
     val bg = MaterialTheme.colorScheme.surface
-    val edgeFade = Brush.verticalGradient(0f to bg, 0.15f to Color.Transparent, 0.85f to Color.Transparent, 1f to bg)
+    val edgeFade = remember(bg) {
+        Brush.verticalGradient(0f to bg, 0.15f to Color.Transparent, 0.85f to Color.Transparent, 1f to bg)
+    }
     Box(Modifier.fillMaxSize().background(edgeFade))
 }
 
 /** While the sleep timer runs: how long is left, over the top of the upper area. Tap: change or turn it off. */
 @Composable
 private fun SleepChip(modifier: Modifier, onClick: () -> Unit) {
-    // Reading the clock makes the chip count down twice a second, also while paused. A hidden chip doesn't follow it.
-    if (LocalTabShown.current) Playback.clock
-    val text = when {
-        Playback.sleepAfterSong -> "Sleep when this song ends"
-        Playback.sleepAt != 0L -> {
-            val minutes = ((Playback.sleepAt - elapsedRealtime()) / 60_000 + 1).coerceAtLeast(1)
-            "Sleep in $minutes min"
-        }
-        else -> return
+    val afterSong = Playback.sleepAfterSong
+    val sleepAt = Playback.sleepAt
+    if (!afterSong && sleepAt == 0L) return
+    // Only subscribe to the half-second clock while a timed sleep countdown is actually running and visible.
+    if (sleepAt != 0L && LocalTabShown.current) Playback.clock
+    val text = if (afterSong) {
+        "Sleep when this song ends"
+    } else {
+        val minutes = ((sleepAt - elapsedRealtime()) / 60_000 + 1).coerceAtLeast(1)
+        "Sleep in $minutes min"
     }
     // One line, at most about 60% of a phone's width: with a large font it ends in "…" rather than reaching Translate.
     Chip(text, enabled = true, modifier.widthIn(max = 256.dp), onClick = onClick)
@@ -521,6 +594,7 @@ private fun SleepDialog(onDone: () -> Unit) {
 private fun RowScope.Slot(
     icon: Painter, description: String, enabled: Boolean, selected: Boolean = false, label: String? = null, iconSize: Int = 22,
     state: String? = null, onLongClick: (() -> Unit)? = null, longClickLabel: String? = null, whyOff: String? = null,
+    onPress: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     // A switch without a label (Shuffle, Repeat) gets the pill when on. When off it is muted, but less than an
@@ -530,9 +604,20 @@ private fun RowScope.Slot(
     // A rounded background only when selected, not a rounded clip on every slot: one GPU program less. It is 64 dp
     // wide in both rows, so the five-slot row's pill is no wider than the six-slot row's.
     val selectedBackground = if (selected) {
-        Modifier.background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(12.dp))
+        Modifier.background(MaterialTheme.colorScheme.secondaryContainer, SlotSelectedShape)
     } else {
         Modifier
+    }
+    val latestPress by rememberUpdatedState(onPress)
+    val pressMod = if (onPress == null || !enabled) {
+        Modifier
+    } else {
+        Modifier.pointerInput(description) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false)
+                latestPress?.invoke()
+            }
+        }
     }
     Box(
         Modifier
@@ -540,6 +625,7 @@ private fun RowScope.Slot(
             .widthIn(min = 48.dp)
             .fillMaxHeight()
             .padding(horizontal = 2.dp)
+            .then(pressMod)
             .combinedClickable(
                 enabled = enabled || whyOff != null,
                 onClickLabel = description,
@@ -563,34 +649,30 @@ private fun RowScope.Slot(
             if (label != null) {
                 androidx.compose.foundation.text.BasicText(
                     label,
-                    style = androidx.compose.ui.text.TextStyle(color = color, lineHeight = 12.sp),
+                    style = androidx.compose.ui.text.TextStyle(color = color, fontSize = 10.sp, lineHeight = 12.sp),
                     maxLines = 1,
                     softWrap = false,
-                    autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(minFontSize = 7.sp, maxFontSize = 10.sp),
+                    autoSize = if (LocalDensity.current.fontScale > 1.05f) {
+                        androidx.compose.foundation.text.TextAutoSize.StepBased(minFontSize = 7.sp, maxFontSize = 10.sp)
+                    } else {
+                        null
+                    },
                 )
             }
         }
     }
 }
 
+private val SlotSelectedShape = RoundedCornerShape(12.dp)
+
 @Composable
 private fun SeekBar(onPreview: (Long) -> Unit) {
-    Playback.tick
     // A hidden bar doesn't follow the clock, because redrawing the window twice a second wakes the GPU each time.
     // Shown again, reading LocalTabShown brings it up to date.
     if (LocalTabShown.current) Playback.clock
     val p = Playback.player
     val haptic = LocalHapticFeedback.current
-    // The length comes from the song being prepared, else the player. A song restored after a restart isn't prepared
-    // until Play, so its known length stands in.
-    val duration = if (Playback.opening != null) {
-        0L
-    } else {
-        Playback.pending?.let { it.durationSec * 1000L }
-            ?: p.duration.takeIf { it > 0 }
-            ?: Playback.current()?.song?.durationSec?.let { it * 1000L }
-            ?: 0L
-    }
+    val duration = Playback.durationMsState
     var dragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableFloatStateOf(0f) }
     var snappedTo by remember { mutableLongStateOf(-1L) }
@@ -598,7 +680,7 @@ private fun SeekBar(onPreview: (Long) -> Unit) {
     // Near a timed lyric line's start (12 dp of travel), a drag snaps to it with a tick, so a seek starts on a line
     // instead of a word into it.
     val lyricsState = Playback.lyrics
-    val shownLyrics = if (lyricsState != null && lyricsState.songId == Playback.shown()?.id) lyricsState.lyrics else null
+    val shownLyrics = if (lyricsState != null && lyricsState.songId == Playback.shownSong?.id) lyricsState.lyrics else null
     val lyrics = if (shownLyrics != null && shownLyrics.synced) shownLyrics else null
     val snapMs = with(LocalDensity.current) { 12.dp.toPx() } / width * duration
     // While a picked song is being prepared, the old one's progress would belong to another title: show the new start.
@@ -664,8 +746,7 @@ internal fun time(ms: Long): String {
  */
 @Composable
 private fun SongView() {
-    Playback.tick
-    val s = Playback.shown()
+    val s = Playback.shownSong
     if (s == null) {
         if (!Playback.restoring) Centered("Nothing playing. Pick a song in Home, Search or Library.")
         return
@@ -675,7 +756,7 @@ private fun SongView() {
     var dx by remember { mutableFloatStateOf(0f) }
     var dy by remember { mutableFloatStateOf(0f) }
     var width by remember { mutableIntStateOf(1) }
-    val at = Playback.shownIndex()
+    val at = Playback.shownIndexState
     val targets by rememberUpdatedState(Playback.neighbour(at, 1) to Playback.neighbour(at, -1))
     val side by remember { derivedStateOf { kotlin.math.sign(dx) } }
     val leave = with(LocalDensity.current) { 96.dp.toPx() }
@@ -775,22 +856,26 @@ private fun SongView() {
             translationY = dy
             alpha = 1f - (dy / (leave * 3)).coerceIn(0f, 0.5f)
         })
-        if (pop.value > 0f) {
-            Icon(
-                likeIcon(true),
-                null,
-                Modifier
-                    .align(Alignment.Center)
-                    .size(96.dp)
-                    .graphicsLayer {
-                        alpha = pop.value
-                        scaleX = 1.4f - 0.4f * pop.value
-                        scaleY = scaleX
-                    },
-                tint = MaterialTheme.colorScheme.primary,
-            )
-        }
+        LikePopOverlay(pop, Modifier.align(Alignment.Center))
     }
+}
+
+@Composable
+private fun LikePopOverlay(pop: Animatable<Float, *>, modifier: Modifier) {
+    val v = pop.value
+    if (v <= 0f) return
+    Icon(
+        likeIcon(true),
+        null,
+        modifier
+            .size(96.dp)
+            .graphicsLayer {
+                alpha = v
+                scaleX = 1.4f - 0.4f * v
+                scaleY = scaleX
+            },
+        tint = MaterialTheme.colorScheme.primary,
+    )
 }
 
 /** A mix from Home while its songs load: its cover and name, then its first song as soon as that's known. */
@@ -818,14 +903,16 @@ private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // Until the large art arrives, the list's thumbnail of this song (row or card size) stands in, if it's in memory.
-        val density = androidx.compose.ui.platform.LocalDensity.current
-        val placeholder = listOf(48.dp, 56.dp, 128.dp).firstNotNullOfOrNull { d ->
-            val px = with(density) { d.roundToPx() }
-            val url = thumbAt(s.thumb, px)
-            if (url == null) null else Images.peek(url, px)
+        val density = LocalDensity.current
+        val placeholder = remember(s.thumb, density) {
+            listOf(48.dp, 56.dp, 128.dp).firstNotNullOfOrNull { d ->
+                val px = with(density) { d.roundToPx() }
+                val url = thumbAt(s.thumb, px)
+                if (url == null) null else Images.peek(url, px)
+            }
         }
         val thumb = s.thumb
-        val big = if (thumb == null) null else bigThumb(thumb)
+        val big = remember(thumb) { if (thumb == null) null else bigThumb(thumb) }
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             ThumbPx(
                 big,
@@ -846,7 +933,17 @@ private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
             val longClickLabel = if (s.romanizable) "Correct romanization" else null
             var onLongClick: (() -> Unit)? = null
             if (s.romanizable) onLongClick = { fixing = true }
-            return combinedClickable(
+            val prefetch = if (id == null) {
+                Modifier
+            } else {
+                Modifier.pointerInput(kind, id) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        PageCache.prefetchDetail(Page(kind, id), thumb = s.thumb)
+                    }
+                }
+            }
+            return then(prefetch).combinedClickable(
                 onClickLabel = clickLabel,
                 onLongClickLabel = longClickLabel,
                 onLongClick = onLongClick,
@@ -859,13 +956,19 @@ private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
         // controls under it, so a large font doesn't shrink the art to a thumbnail.
         FixedRowsFont {
         val title = MaterialTheme.typography.headlineSmall
-        val artistStyle = MaterialTheme.typography.titleMedium.copy(
-            fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
+        val artistStyle = remember(onSurfaceVariant) {
+            MaterialTheme.typography.titleMedium.copy(
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
+                color = onSurfaceVariant,
+            )
+        }
         val small = MaterialTheme.typography.bodySmall
-        val namesHeight = with(LocalDensity.current) {
-            (title.fontSize * 1.25f * 2).toDp() + small.lineHeight.toDp() * 3 + (artistStyle.fontSize * 1.25f).toDp() + 4.dp
+        val localDensity = LocalDensity.current
+        val namesHeight = remember(localDensity) {
+            with(localDensity) {
+                (title.fontSize * 1.25f * 2).toDp() + small.lineHeight.toDp() * 3 + (artistStyle.fontSize * 1.25f).toDp() + 4.dp
+            }
         }
         // Bottom-aligned in it, so the names always sit against the seek bar.
         Column(Modifier.heightIn(min = namesHeight), Arrangement.Bottom, Alignment.CenterHorizontally) {
@@ -883,7 +986,7 @@ private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
                     Store.shown(album),
                     Modifier.fillMaxWidth().goTo("album", s.album?.id),
                     style = small,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = onSurfaceVariant,
                     textAlign = TextAlign.Center,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -892,7 +995,7 @@ private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
         }
         }
         if (fixing) CorrectDialog(s) { fixing = false }
-        if (current && Playback.waitingForNetwork) {
+        if (current && Playback.waitingForNetworkState) {
             Spacer(Modifier.height(8.dp))
             Text("Waiting for network…", color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         }
@@ -910,7 +1013,7 @@ private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
                     ) {
                         Text("Retry")
                     }
-                    if (Playback.player.hasNextMediaItem()) {
+                    if (Playback.hasNextState) {
                         TextButton(onClick = { Playback.next() }) { Text("Play the next song") }
                     }
                 }
@@ -933,44 +1036,60 @@ private fun LoadingRow(text: String) {
 
 @Composable
 private fun QueueView() {
-    Playback.tick
-    val all = Playback.entries()
-    val cur = Playback.player.currentMediaItemIndex
+    val all = Playback.queueEntries
+    val cur = Playback.currentIndexState
+    val cachedIds = Playback.cachedSongIds
+    val loading = Playback.radioLoading
+    val stopAtEnd = Store.stopAtEnd
     var menuFor by remember { mutableStateOf<Int?>(null) }
     // The next songs are the likely taps here.
     val shown = LocalTabShown.current
-    LaunchedEffect(shown) { if (shown) Playback.prepare(all.drop(cur + 1).map { it.song }) }
+    LaunchedEffect(shown, all, cur) {
+        if (shown && cur in all.indices) Playback.prepare(all.drop(cur + 1).map { it.song })
+    }
     // Each row is a header with -1, the radio's loading row with RADIO_LOADING, or null with an entry's index.
-    val rows = ArrayList<Pair<String?, Int>>()
-    if (cur in all.indices) {
-        rows.add("Now" to -1)
-        rows.add(null to cur)
-    }
-    val queued = (cur + 1 until all.size).filter { all[it].section == "queued" }
-    val radio = (cur + 1 until all.size).filter { all[it].section == "radio" }
-    if (queued.isNotEmpty()) {
-        rows.add("Up next" to -1)
-        for (i in queued) rows.add(null to i)
-    }
-    val loading = Playback.radioLoading
-    if (radio.isNotEmpty()) {
-        rows.add("Radio" to -1)
-        for (i in radio) rows.add(null to i)
-    } else if (loading != null) {
-        rows.add("Radio" to -1)
-        rows.add("Finding songs like ${loading.title.latin}" to RADIO_LOADING)
-    }
-    if (queued.isEmpty() && radio.isEmpty() && loading == null) {
-        val note = if (Store.stopAtEnd) "Nothing next: autoplay is off" else "Nothing next yet"
-        rows.add(note to -1)
+    val rows = remember(all, cur, loading, stopAtEnd) {
+        val out = ArrayList<Pair<String?, Int>>(all.size + 4)
+        if (cur in all.indices) {
+            out.add("Now" to -1)
+            out.add(null to cur)
+        }
+        val queued = ArrayList<Int>()
+        val radio = ArrayList<Int>()
+        for (i in (cur + 1).coerceAtLeast(0) until all.size) {
+            if (all[i].section == "queued") queued.add(i) else if (all[i].section == "radio") radio.add(i)
+        }
+        if (queued.isNotEmpty()) {
+            out.add("Up next" to -1)
+            for (i in queued) out.add(null to i)
+        }
+        if (radio.isNotEmpty()) {
+            out.add("Radio" to -1)
+            for (i in radio) out.add(null to i)
+        } else if (loading != null) {
+            out.add("Radio" to -1)
+            out.add("Finding songs like ${loading.title.latin}" to RADIO_LOADING)
+        }
+        if (queued.isEmpty() && radio.isEmpty() && loading == null) {
+            val note = if (stopAtEnd) "Nothing next: autoplay is off" else "Nothing next yet"
+            out.add(note to -1)
+        }
+        out
     }
     val list = androidx.compose.foundation.lazy.rememberLazyListState()
-    PrefetchCovers(all.drop(cur + 1).map { it.song.thumb }, 48.dp, list)
+    val coverUrls = remember(all, cur) {
+        if (cur + 1 in all.indices) all.subList(cur + 1, all.size).map { it.song.thumb } else emptyList()
+    }
+    PrefetchCovers(coverUrls, 48.dp, list)
     Box {
         // The strip is kept for the sleep timer's chip only while it runs.
         val sleeping = Playback.sleepAt != 0L || Playback.sleepAfterSong
         LazyColumn(Modifier.fillMaxSize().padding(top = if (sleeping) CHIP_STRIP else 0.dp), list) {
-            itemsIndexed(rows, contentType = { _, (header, i) -> if (header == null) 0 else i }) { _, (header, i) ->
+            itemsIndexed(
+                rows,
+                key = { rowIdx, (header, i) -> if (header != null) "h:$header:$i" else "s:${all[i].song.id}#$i:$rowIdx" },
+                contentType = { _, (header, i) -> if (header == null) 0 else i },
+            ) { _, (header, i) ->
                 if (i == RADIO_LOADING) {
                     LoadingRow(header!!)
                 } else if (header != null) {
@@ -978,8 +1097,8 @@ private fun QueueView() {
                 } else {
                     val e = all[i]
                     // "downloaded" means the whole song is on the phone, so it plays with no network.
-                    val saved = if (Playback.player.fullyCached(e.song.id)) "downloaded" else null
-                    val extra = listOfNotNull(e.song.reason, saved).joinToString(" · ").ifEmpty { null }
+                    val saved = if (e.song.id in cachedIds) "downloaded" else null
+                    val extra = if (e.song.reason == null) saved else if (saved == null) e.song.reason else "${e.song.reason} · $saved"
                     SongRow(e.song, highlight = i == cur, extra = extra, onMenu = { menuFor = i }) { Playback.skipTo(i) }
                 }
             }
@@ -991,6 +1110,14 @@ private fun QueueView() {
         SongMenu(all[menuIndex].song, queueIndex = menuIndex) { menuFor = null }
     }
 }
+
+/** Precomputed display metadata for one lyric line, so karaoke word ticks don't re-map words or re-check scripts. */
+private class PreparedLine(
+    val karaoke: Boolean,
+    val units: List<String>,
+    val unitLatin: List<String>,
+    val latinShown: Boolean,
+)
 
 @Composable
 private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
@@ -1009,12 +1136,6 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
     }
     val lines = shown.lines
     val synced = shown.synced
-    // The current line and word follow the position. The loop sleeps until the next line or word starts, or until a
-    // player change (Playback.tick: a seek, pause, start or speed change) comes first. It doesn't run once per display
-    // frame: at 120 Hz that would wake the main thread 120 times a second for a word change every few hundred ms.
-    // While paused, only a player change moves the position.
-    // The view opens (or the lyrics arrive) already at the current line: it is read from the player here, before the
-    // first frame, and the list starts there. Only later line changes scroll smoothly.
     val startLine = remember(lines) {
         if (synced && Playback.pending == null) {
             lines.indexOfLast { it.startMs <= Playback.player.currentPosition }
@@ -1024,40 +1145,65 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
     }
     var current by remember(lines) { mutableIntStateOf(startLine) }
     var currentWord by remember(lines) { mutableIntStateOf(-1) }
-    // Paused while another tab is shown; back on screen, it starts again from the current position.
+    val state = remember(lines) { LazyListState(firstVisibleItemIndex = if (startLine > 2) startLine - 2 else 0) }
+    // Paused while another tab or view is hidden; when shown again, snaps directly to the current line instead of
+    // animating across the whole song from wherever it was built ahead.
     val onScreen = LocalTabShown.current
+    var snappedLine by remember(lines) { mutableIntStateOf(startLine) }
     LaunchedEffect(lines, synced, onScreen) {
         if (!synced || !onScreen) return@LaunchedEffect
+        var snapNext = true
         while (true) {
-            val seen = Playback.tick to Playback.pending
             val pos = if (Playback.pending != null) -1L else Playback.player.currentPosition
             val line = lines.indexOfLast { it.startMs <= pos }
             val words = lines.getOrNull(line)?.words
             val word = words?.indexOfLast { it.startMs <= pos } ?: -1
-            current = line
-            currentWord = word
+            if (snapNext) {
+                snapNext = false
+                snappedLine = line
+                current = line
+                currentWord = word
+                val target = if (line > 2) line - 2 else 0
+                if (state.firstVisibleItemIndex != target) state.scrollToItem(target)
+            } else {
+                current = line
+                currentWord = word
+            }
             val nextLineStart = lines.getOrNull(line + 1)?.startMs ?: Long.MAX_VALUE
             val nextWordStart = words?.getOrNull(word + 1)?.startMs ?: Long.MAX_VALUE
             val next = minOf(nextLineStart, nextWordStart)
-            val change = snapshotFlow { Playback.tick to Playback.pending }.filter { it != seen }
             if (!Playback.player.isPlaying || pos < 0 || next == Long.MAX_VALUE) {
-                change.first()
+                Playback.playbackSignal.first()
             } else {
                 val waitMs = ((next - pos) / Playback.player.speed).toLong().coerceAtLeast(1)
-                withTimeoutOrNull(waitMs) { change.first() }
+                withTimeoutOrNull(waitMs) { Playback.playbackSignal.first() }
             }
         }
     }
-    val state = remember(lines) { LazyListState(firstVisibleItemIndex = if (startLine > 2) startLine - 2 else 0) }
     val showOriginal = Store.bool("lyrics.layer.original", true)
     val showLatin = Store.bool("lyrics.layer.latin", true)
     val ruby = Store.lyricsRuby
-    // Whether the song is Japanese, for the "scripts you read" check: kana in any line, as romanization decides it.
-    val sib = remember(lines) { lines.map { it.text }.filter { t -> t.any(Romanizer::isKana) }.take(1) }
+    val readScripts = Store.readScripts
+    val prepared = remember(lines, showLatin, readScripts) {
+        val sib = lines.map { it.text }.filter { t -> t.any(Romanizer::isKana) }.take(1)
+        lines.map { line ->
+            val karaoke = line.words.isNotEmpty()
+            val units = if (karaoke) line.words.map { it.text } else line.pieces
+            val unitLatin = if (karaoke) line.wordLatin else line.pieceLatin
+            val latinShown = showLatin &&
+                line.latin.isNotBlank() &&
+                line.latin != line.text &&
+                Romanizer.hasNonLatin(line.text) &&
+                !Store.reads(line.text, sib)
+            PreparedLine(karaoke, units, unitLatin, latinShown)
+        }
+    }
     // The word being corrected and its romaji in this line.
     var fixWord by remember { mutableStateOf<Pair<String, String>?>(null) }
-    // At the start line the list is already in place, so this first run doesn't move it.
-    LaunchedEffect(current) { if (current > 2) state.animateScrollToItem(current - 2) }
+    // Smooth-scroll only on live line advances while visible (initial open already snapped above).
+    LaunchedEffect(current) {
+        if (onScreen && current != snappedLine && current > 2) state.animateScrollToItem(current - 2)
+    }
     // Lines scroll out below the chips' strip (Translate, the sleep timer), so a chip never covers one.
     Box {
         // The first line starts below the top fade, so at rest no line is under it.
@@ -1066,66 +1212,20 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
             state = state,
             contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 24.dp),
         ) {
-            itemsIndexed(lines) { i, line ->
+            itemsIndexed(lines, key = { i, _ -> i }) { i, line ->
                 val active = i == current
-                // The other lines keep about 5:1 contrast. The words still to come in the current line have the same
-                // opacity (WordsText), so the line being sung is never lighter than its neighbours.
-                val alpha = if (!synced || active) 1f else UPCOMING
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .dim(alpha)
-                        .pointerInput(line) {
-                            detectTapGestures(onTap = { if (synced) Playback.player.seekTo(line.startMs) })
-                        }
-                        .padding(vertical = 8.dp),
-                ) {
-                    val wordIndex = if (active) currentWord else -1
-                    // A line timed as a whole (no word timing) is in the accent colour while it plays, as a karaoke
-                    // line's sung words are.
-                    val lineColor = if (active && synced && line.words.isEmpty()) MaterialTheme.colorScheme.primary else Color.Unspecified
-                    // Every line has the same weight, because bolding the active line would widen it and re-wrap long
-                    // lines mid-song.
-                    val big = MaterialTheme.typography.titleLarge.copy(lineBreak = LYRIC_BREAK, color = lineColor)
-                    val seek = { if (synced) Playback.player.seekTo(line.startMs) }
-                    // Karaoke lines show their timed words; other lines their words as romanization splits them.
-                    val karaoke = line.words.isNotEmpty()
-                    val units = if (karaoke) line.words.map { it.text } else line.pieces
-                    val unitLatin = if (karaoke) line.wordLatin else line.pieceLatin
-                    val latinShown = showLatin &&
-                        line.latin.isNotBlank() &&
-                        line.latin != line.text &&
-                        Romanizer.hasNonLatin(line.text) &&
-                        !Store.reads(line.text, sib)
-                    // A romaji word covers every syllable of its Japanese word but sits on the first one's slot (さよなら:
-                    // "sayonara" on さ, nothing on よなら), so it stays lit while the later syllables play.
-                    val latinIndex = (wordIndex downTo 0).firstOrNull { k -> unitLatin.getOrNull(k)?.isNotBlank() == true } ?: wordIndex
-                    val fix = { unit: Int -> fixWord = wordAt(line, units, unit) ?: fixWord }
-                    if (ruby && showOriginal && latinShown && line.pieces.size == line.pieceLatin.size) {
-                        // Ruby sets whole words, not karaoke syllables (which would scatter 二|人 apart), so the word holding
-                        // the syllable being sung is lit.
-                        val piece = if (karaoke && wordIndex >= 0) pieceAt(line, units, wordIndex) else wordIndex
-                        RubyLine(line.pieces, line.pieceLatin, piece, big, onTap = seek) { pieceIndex ->
-                            fixWord = wordAt(line, line.pieces, pieceIndex) ?: fixWord
-                        }
-                    } else {
-                        // A line with no romanization shown (Latin, or a script the user reads) shows its original, because
-                        // it is the only text there is.
-                        if ((showOriginal || !latinShown) && line.text.isNotBlank()) WordsText(units, line.text, wordIndex, big, seek, fix)
-                        if (latinShown) WordsText(unitLatin, line.latin, latinIndex, MaterialTheme.typography.bodyLarge.copy(color = lineColor), seek, fix)
-                    }
-                    val translation = line.translation
-                    if (!translation.isNullOrBlank()) {
-                        val translationColor = if (lineColor != Color.Unspecified || (active && synced)) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        }
-                        Text(translation, style = MaterialTheme.typography.bodyMedium, color = translationColor)
-                    }
-                }
+                LyricLineRow(
+                    line = line,
+                    meta = prepared[i],
+                    synced = synced,
+                    active = active,
+                    wordIndex = if (active) currentWord else -1,
+                    showOriginal = showOriginal,
+                    ruby = ruby,
+                    onFix = { fixWord = it },
+                )
             }
-            item {
+            item(key = "credits") {
                 val small = MaterialTheme.typography.labelSmall
                 val c = MaterialTheme.colorScheme.onSurfaceVariant
                 Column(Modifier.padding(top = 16.dp, bottom = 24.dp)) {
@@ -1137,6 +1237,8 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
         }
         // Lines fade out at the bottom edge, and under the chips' strip at the top, as the backdrop does.
         val bg = MaterialTheme.colorScheme.surface
+        val topFade = remember(bg) { Brush.verticalGradient(listOf(bg, Color.Transparent)) }
+        val bottomFade = remember(bg) { Brush.verticalGradient(listOf(Color.Transparent, bg)) }
         val fade = 24.dp
         Box(
             Modifier
@@ -1144,23 +1246,86 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
                 .padding(top = CHIP_STRIP)
                 .fillMaxWidth()
                 .height(fade)
-                .background(Brush.verticalGradient(listOf(bg, Color.Transparent))),
+                .background(topFade),
         )
         Box(
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .height(fade)
-                .background(Brush.verticalGradient(listOf(Color.Transparent, bg))),
+                .background(bottomFade),
         )
-        val hasText = lines.any { it.text.isNotBlank() }
+        val hasText = remember(lines) { lines.any { it.text.isNotBlank() } }
         val lang = Store.translationLanguages().first()
-        val translated = found.translations.any { it.language == lang }
+        val translated = remember(found.translations, lang) { found.translations.any { it.language == lang } }
         TranslateChip(found, hasText && showTranslation, translated, translationHidden, { translationHidden = it }, Modifier.align(Alignment.TopEnd))
     }
     val fixing = fixWord
     if (fixing != null && songId != null) {
         WordDialog(fixing.first, fixing.second, songId) { fixWord = null }
+    }
+}
+
+@Composable
+private fun LyricLineRow(
+    line: Line,
+    meta: PreparedLine,
+    synced: Boolean,
+    active: Boolean,
+    wordIndex: Int,
+    showOriginal: Boolean,
+    ruby: Boolean,
+    onFix: (Pair<String, String>) -> Unit,
+) {
+    // The other lines keep about 5:1 contrast. The words still to come in the current line have the same
+    // opacity (WordsText), so the line being sung is never lighter than its neighbours.
+    val alpha = if (!synced || active) 1f else UPCOMING
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .dim(alpha)
+            .pointerInput(line) {
+                detectTapGestures(onTap = { if (synced) Playback.player.seekTo(line.startMs) })
+            }
+            .padding(vertical = 8.dp),
+    ) {
+        // A line timed as a whole (no word timing) is in the accent colour while it plays, as a karaoke
+        // line's sung words are.
+        val lineColor = if (active && synced && line.words.isEmpty()) MaterialTheme.colorScheme.primary else Color.Unspecified
+        // Every line has the same weight, because bolding the active line would widen it and re-wrap long
+        // lines mid-song.
+        val big = MaterialTheme.typography.titleLarge.copy(lineBreak = LYRIC_BREAK, color = lineColor)
+        val seek = { if (synced) Playback.player.seekTo(line.startMs) }
+        // A romaji word covers every syllable of its Japanese word but sits on the first one's slot (さよなら:
+        // "sayonara" on さ, nothing on よなら), so it stays lit while the later syllables play.
+        val latinIndex = if (wordIndex < 0) {
+            -1
+        } else {
+            (wordIndex downTo 0).firstOrNull { k -> meta.unitLatin.getOrNull(k)?.isNotBlank() == true } ?: wordIndex
+        }
+        val fix = { unit: Int -> wordAt(line, meta.units, unit)?.let(onFix) ?: Unit }
+        if (ruby && showOriginal && meta.latinShown && line.pieces.size == line.pieceLatin.size) {
+            // Ruby sets whole words, not karaoke syllables (which would scatter 二|人 apart), so the word holding
+            // the syllable being sung is lit.
+            val piece = if (meta.karaoke && wordIndex >= 0) pieceAt(line, meta.units, wordIndex) else wordIndex
+            RubyLine(line.pieces, line.pieceLatin, piece, big, onTap = seek) { pieceIndex ->
+                wordAt(line, line.pieces, pieceIndex)?.let(onFix)
+            }
+        } else {
+            // A line with no romanization shown (Latin, or a script the user reads) shows its original, because
+            // it is the only text there is.
+            if ((showOriginal || !meta.latinShown) && line.text.isNotBlank()) WordsText(meta.units, line.text, wordIndex, big, seek, fix)
+            if (meta.latinShown) WordsText(meta.unitLatin, line.latin, latinIndex, MaterialTheme.typography.bodyLarge.copy(color = lineColor), seek, fix)
+        }
+        val translation = line.translation
+        if (!translation.isNullOrBlank()) {
+            val translationColor = if (lineColor != Color.Unspecified || (active && synced)) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            }
+            Text(translation, style = MaterialTheme.typography.bodyMedium, color = translationColor)
+        }
     }
 }
 
@@ -1258,24 +1423,34 @@ private fun WordsText(
     onLongPressUnit: (Int) -> Unit,
 ) {
     val hi = MaterialTheme.colorScheme.primary
-    val sung = SpanStyle(color = hi)
-    val now = SpanStyle(color = hi)
-    val coming = SpanStyle(color = MaterialTheme.colorScheme.onSurface.copy(alpha = UPCOMING))
-    val ranges = ArrayList<IntRange>()
-    val text: AnnotatedString = if (words.isEmpty()) {
-        AnnotatedString(whole)
-    } else {
-        buildAnnotatedString {
-            words.forEachIndexed { i, w ->
-                val start = length
-                val st = when {
-                    current < 0 -> null
-                    i < current -> sung
-                    i == current -> now
-                    else -> coming
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    val base = remember(words, whole) {
+        val rs = ArrayList<IntRange>(words.size)
+        val text = if (words.isEmpty()) {
+            AnnotatedString(whole)
+        } else {
+            buildAnnotatedString {
+                for (w in words) {
+                    val start = length
+                    append(w)
+                    rs.add(start until length)
                 }
-                if (st == null) append(w) else withStyle(st) { append(w) }
-                ranges.add(start until length)
+            }
+        }
+        text to rs
+    }
+    val text: AnnotatedString
+    val ranges: List<IntRange> = base.second
+    if (current < 0 || words.isEmpty()) {
+        text = base.first
+    } else {
+        text = remember(words, current, hi, onSurface) {
+            val sung = SpanStyle(color = hi)
+            val coming = SpanStyle(color = onSurface.copy(alpha = UPCOMING))
+            buildAnnotatedString {
+                words.forEachIndexed { i, w ->
+                    withStyle(if (i <= current) sung else coming) { append(w) }
+                }
             }
         }
     }

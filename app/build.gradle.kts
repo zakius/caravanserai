@@ -17,8 +17,8 @@ android {
     defaultConfig {
         minSdk = 26
         targetSdk = 36
-        versionCode = 69
-        versionName = "0.1.68"
+        versionCode = 70
+        versionName = "0.1.69"
         // `-Proma.dictBase=<url>` points a build at another folder holding the dictionary's zip.
         val dictBase = (findProperty("roma.dictBase") as String?) ?: "https://github.com/zakius/caravanserai/releases/download/dict-$dictVersion"
         buildConfigField("String", "DICT_URL", "\"$dictBase/roma-dict-$dictVersion.zip\"")

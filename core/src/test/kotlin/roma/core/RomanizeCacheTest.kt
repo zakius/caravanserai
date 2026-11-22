@@ -38,4 +38,32 @@ class RomanizeCacheTest {
         r.machine("さよなら")
         assertTrue(cache.map.isEmpty(), "kana-only Japanese without the dictionary is redone later, not kept")
     }
+
+    @Test fun computePiecesOffSkipsDictionaryOnCacheHit() {
+        val cache = MapCache()
+        val warm = Romanizer(jvmIcu).apply { this.cache = cache }
+        val expected = warm.text("夜に駆ける")
+        var dictCalls = 0
+        val cold = Romanizer(jvmIcu, dictionary = {
+            dictCalls++
+            error("dictionary should not be loaded on a cached non-ruby lookup")
+        }).apply {
+            this.cache = cache
+            computePieces = false
+        }
+        val got = cold.text("夜に駆ける")
+        assertEquals(expected.latin, got.latin)
+        assertTrue(got.pieces.isEmpty())
+        assertEquals(0, dictCalls)
+    }
+
+    @Test fun preparedSearchMatchesMatchDistance() {
+        val texts = listOf("夜に駆ける", "Yoru ni Kakeru", "YOASOBI", "Gunjō")
+        val folded = texts.map(::foldSearch).toTypedArray()
+        for (q in listOf("yoru", "yoru ni", "yoru ni kakru", "yoasbi", "gunjo", "zzzzz", "  ")) {
+            val expected = matchDistance(texts, q)
+            val actual = prepareQuery(q)?.let { matchFolded(folded, it) }
+            assertEquals(expected, actual, "query=$q")
+        }
+    }
 }

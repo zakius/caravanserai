@@ -35,11 +35,24 @@ object Images {
     private lateinit var dir: File
     private val memory = Lru()
     private val loading = ConcurrentHashMap<String, Deferred<Pic?>>()
-    // ponytail: 6 downloads at a time, matching the usual 6 connections per host over HTTP/1.1. If scrolling lags,
-    // a priority queue for the visible rows is the next step.
+    // Deduplicates concurrent network fetches of the same URL (e.g., 544 px player art + 16 px backdrop + 24 px colour).
+    private val downloading = ConcurrentHashMap<String, Deferred<ByteArray?>>()
+    // Local disk decodes run on their own fast pool so they never wait behind slow network downloads.
+    // On-screen downloads take up to 6 connections (HTTP/1.1 per-host concurrency); background prefetching
+    // is capped at 2 so it never starves visible covers.
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    private val io by lazy { Dispatchers.IO.limitedParallelism(6) }
-    private val scope by lazy { CoroutineScope(SupervisorJob() + io) }
+    private val decodeIo by lazy { Dispatchers.IO.limitedParallelism(4) }
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val netIo by lazy { Dispatchers.IO.limitedParallelism(6) }
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val prefetchIo by lazy { Dispatchers.IO.limitedParallelism(2) }
+    private val scope by lazy { CoroutineScope(SupervisorJob() + decodeIo) }
+    private val netScope by lazy { CoroutineScope(SupervisorJob() + netIo) }
+    private val prefetchScope by lazy { CoroutineScope(SupervisorJob() + prefetchIo) }
+    private val sha1 = ThreadLocal.withInitial { MessageDigest.getInstance("SHA-1") }
+    private val HEX = "0123456789abcdef".toCharArray()
+    private val tmpSeq = java.util.concurrent.atomic.AtomicLong()
+    private const val TOUCH_INTERVAL_MS = 24L * 60 * 60 * 1000
 
     /** [memoryBytes]: how much the decoded covers may take (see [picMemory]). */
     fun init(cache: File, memoryBytes: Long) {
@@ -112,14 +125,16 @@ object Images {
      * [px] is the side it's shown at. The bitmap is at least that big, so it stays sharp. [exact] scales it to exactly
      * [px] across, for the blurred backdrop and the colour sample. [software] makes the pixels readable with getPixel.
      */
-    suspend fun load(url: String, px: Int, exact: Boolean = false, software: Boolean = false): Pic? {
+    suspend fun load(url: String, px: Int, exact: Boolean = false, software: Boolean = false, background: Boolean = false): Pic? {
         val k = key(url, px, exact, software)
         val cached = memory.get(k)
         if (cached != null) return cached
+        val targetScope = if (background) prefetchScope else scope
         val job = loading.computeIfAbsent(k) {
-            scope.async(start = CoroutineStart.LAZY) {
+            targetScope.async(start = CoroutineStart.LAZY) {
                 try {
-                    val pic = runCatching { decodePic(bytes(url), px, exact, software) }.getOrNull()
+                    val data = bytes(url, background) ?: return@async null
+                    val pic = runCatching { decodePic(data, px, exact, software) }.getOrNull()
                     if (pic != null) memory.put(k, pic)
                     pic
                 } finally {
@@ -131,7 +146,8 @@ object Images {
     }
 
     fun prefetch(url: String, px: Int) {
-        scope.launch { load(url, px) }
+        if (peek(url, px) != null) return
+        prefetchScope.launch { load(url, px, background = true) }
     }
 
     /**
@@ -139,34 +155,52 @@ object Images {
      * ones out of memory, and decoding a file takes a few ms where downloading it takes a round trip.
      */
     suspend fun download(url: String) {
-        withContext(io) {
-            if (!file(url).exists()) runCatching { bytes(url) }
+        withContext(prefetchIo) {
+            if (!file(url).exists()) runCatching { bytes(url, background = true) }
         }
     }
 
     private fun file(url: String): File {
-        val digest = MessageDigest.getInstance("SHA-1").digest(url.toByteArray())
-        val name = digest.joinToString("") { byte -> "%02x".format(byte) }
-        return File(dir, name)
+        val digest = sha1.get()!!.digest(url.toByteArray(Charsets.UTF_8))
+        val chars = CharArray(digest.size * 2)
+        for (i in digest.indices) {
+            val v = digest[i].toInt() and 0xff
+            chars[i * 2] = HEX[v ushr 4]
+            chars[i * 2 + 1] = HEX[v and 0xf]
+        }
+        return File(dir, String(chars))
     }
 
-    private fun bytes(url: String): ByteArray {
+    private suspend fun bytes(url: String, background: Boolean): ByteArray? {
         val f = file(url)
-        val name = f.name
         if (f.exists()) {
-            f.setLastModified(System.currentTimeMillis())
-            return f.readBytes()
+            val now = System.currentTimeMillis()
+            if (now - f.lastModified() > TOUCH_INTERVAL_MS) f.setLastModified(now)
+            return runCatching { f.readBytes() }.getOrNull()
         }
-        val c = java.net.URI(backend.fetchUrl(url)).toURL().openConnection() as java.net.HttpURLConnection
-        c.connectTimeout = 15_000
-        c.readTimeout = 15_000
-        if (c.responseCode != 200) throw java.io.IOException("HTTP ${c.responseCode}")
-        val data = c.inputStream.use { it.readBytes() }
-        dir.mkdirs()
-        val tmp = File(dir, "$name.tmp")
-        tmp.writeBytes(data)
-        tmp.renameTo(f)
-        return data
+        val fetchScope = if (background) prefetchScope else netScope
+        val job = downloading.computeIfAbsent(url) {
+            fetchScope.async(start = CoroutineStart.LAZY) {
+                try {
+                    if (f.exists()) return@async runCatching { f.readBytes() }.getOrNull()
+                    runCatching {
+                        val c = java.net.URI(backend.fetchUrl(url)).toURL().openConnection() as java.net.HttpURLConnection
+                        c.connectTimeout = 15_000
+                        c.readTimeout = 15_000
+                        if (c.responseCode != 200) throw java.io.IOException("HTTP ${c.responseCode}")
+                        val data = c.inputStream.use { it.readBytes() }
+                        dir.mkdirs()
+                        val tmp = File(dir, "${f.name}.${tmpSeq.incrementAndGet()}.tmp")
+                        tmp.writeBytes(data)
+                        if (!tmp.renameTo(f)) tmp.delete()
+                        data
+                    }.getOrNull()
+                } finally {
+                    downloading.remove(url)
+                }
+            }
+        }
+        return job.await()
     }
 }
 
@@ -199,14 +233,13 @@ fun ThumbPx(
     placeholder: Pic? = null,
 ) {
     // Keyed on the picture: a row reused for another song never shows the previous one's cover.
-    val state = remember(url, px) {
-        val cached = if (url != null) Images.peek(url, px, exact) else null
-        mutableStateOf(cached ?: placeholder)
+    val initial = remember(url, px, exact) {
+        if (url != null) Images.peek(url, px, exact) else null
     }
-    // Loads even when peek missed only by a moment: a decode started at launch can finish between composing this and
-    // running the effect, and without the load the box would stay empty until something else recomposed it.
-    LaunchedEffect(url, px) {
-        if (url != null) {
+    val state = remember(url, px, exact) { mutableStateOf(initial ?: placeholder) }
+    // Only launch a coroutine when memory missed; an already-cached bitmap needs zero effect overhead.
+    if (url != null && initial == null) {
+        LaunchedEffect(url, px, exact) {
             val pic = Images.load(url, px, exact)
             if (pic != null) state.value = pic
         }
@@ -221,13 +254,13 @@ fun ThumbPx(
 }
 
 /**
- * The covers a screen holds below the fold or off to the side, fetched one at a time in the background: the [near]
- * ones from where [list] is scrolled to are decoded into memory, so they are drawn in their first frame; the rest
- * only go to disk, which would otherwise crowd the memory cache. Only when guesses are allowed (an unmetered network
- * outside Battery Saver, unless the user allows them anyway); stops when the screen goes.
+ * The covers a screen holds below the fold or off to the side, fetched in the background: the [near] ones from where
+ * [list] is scrolled to are decoded into memory, so they are drawn in their first frame; the rest only go to disk,
+ * which would otherwise crowd the memory cache. Only when the screen is shown and guesses are allowed.
  */
 @Composable
 fun PrefetchCovers(urls: List<String?>, size: Dp, list: LazyListState? = null, near: Int = 30) {
+    val shown = LocalTabShown.current
     val px = with(LocalDensity.current) { size.roundToPx() }
     // ponytail: list row indices are used as indices into urls, so headers above the rows shift the window by a few.
     // The start moves in steps of 10 rows, so scrolling restarts the prefetch now and then rather than at every row.
@@ -237,12 +270,15 @@ fun PrefetchCovers(urls: List<String?>, size: Dp, list: LazyListState? = null, n
             firstVisible / 10 * 10
         }
     }
-    LaunchedEffect(urls, px, from) {
-        if (Playback.thrifty()) return@LaunchedEffect
+    LaunchedEffect(urls, px, from, shown) {
+        if (!shown || Playback.thrifty()) return@LaunchedEffect
         for (u in urls.drop(from).take(near)) {
             val thumb = thumbAt(u, px)
-            if (thumb != null) Images.load(thumb, px)
+            if (thumb != null) Images.load(thumb, px, background = true)
         }
+    }
+    LaunchedEffect(urls, px, shown) {
+        if (!shown || Playback.thrifty()) return@LaunchedEffect
         for (u in urls) {
             val thumb = thumbAt(u, px)
             if (thumb != null) Images.download(thumb)

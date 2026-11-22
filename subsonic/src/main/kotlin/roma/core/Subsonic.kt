@@ -16,17 +16,23 @@ import kotlin.math.abs
  */
 object SubsonicIds {
     const val PREFIX = "s."
+    private val HEX = "0123456789abcdef".toCharArray()
 
-    fun encode(raw: String) = PREFIX + buildString {
-        for (b in raw.toByteArray()) {
-            val c = b.toInt().toChar()
-            if (b >= 0 && (c.isLetterOrDigit() || c == '_' || c == '-')) {
-                append(c)
+    fun encode(raw: String): String {
+        val bytes = raw.toByteArray(Charsets.UTF_8)
+        val sb = StringBuilder(PREFIX.length + bytes.size + 4)
+        sb.append(PREFIX)
+        for (b in bytes) {
+            val v = b.toInt() and 0xff
+            if (v in 'A'.code..'Z'.code || v in 'a'.code..'z'.code || v in '0'.code..'9'.code || v == '_'.code || v == '-'.code) {
+                sb.append(v.toChar())
             } else {
-                append('.')
-                append("%02x".format(b))
+                sb.append('.')
+                sb.append(HEX[v ushr 4])
+                sb.append(HEX[v and 0xf])
             }
         }
+        return sb.toString()
     }
 
     fun decode(id: String): String {

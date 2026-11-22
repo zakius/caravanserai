@@ -5,6 +5,7 @@ import com.worksap.nlp.sudachi.MMap
 import com.worksap.nlp.sudachi.Tokenizer
 import com.worksap.nlp.sudachi.dictionary.RomaDictionary
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import java.nio.ByteBuffer
 import java.text.Normalizer
 
@@ -23,7 +24,16 @@ class Text(
     /** The Latin form the source sent (a Subsonic server's romanization), the original where it sent none; null when romanized here. */
     val served: String? = null,
 ) {
-    val isLatin get() = original == latin || !Romanizer.hasNonLatin(original)
+    @Transient private var cachedIsLatin: Int = -1
+    val isLatin: Boolean
+        get() {
+            var v = cachedIsLatin
+            if (v < 0) {
+                v = if (original == latin || !Romanizer.hasNonLatin(original)) 1 else 0
+                cachedIsLatin = v
+            }
+            return v == 1
+        }
 
     companion object {
         /** Several names as one ("A, B"), keeping their words. */
@@ -98,6 +108,12 @@ class Romanizer(
      */
     @Volatile var cache: RomanizeCache? = null
 
+    /**
+     * When false, [text] skips splitting names into furigana pieces (two extra dictionary passes per non-Latin name).
+     * Non-ruby display modes never read [Text.pieces], so skipping it lets cached names stay completely off Sudachi/ICU.
+     */
+    @Volatile var computePieces: Boolean = true
+
     @Volatile private var loading: java.util.concurrent.Future<List<Override>>? = null
     /** The user's corrections. Reading waits for [loadOverrides]' file read if it hasn't finished. */
     var overrides: List<Override> = emptyList()
@@ -130,6 +146,7 @@ class Romanizer(
         var latin = o?.latin
         if (latin == null && titleOf) latin = ownLatin(s)
         if (latin == null) latin = machine(s, siblings, songId = songId)
+        if (!computePieces) return Text(s, latin)
         return pieced(s, latin, siblings, songId)
     }
 

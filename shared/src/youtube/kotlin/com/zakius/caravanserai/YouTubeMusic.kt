@@ -89,6 +89,7 @@ object YouTubeMusic : Source {
     override fun changes(key: String): Boolean {
         if (key != "cookie") return false
         cookie = Store.prefs.getString("cookie", null)
+        savedCache.clear()
         File(Store.cache, "mixes.json").delete()
         return true
     }
@@ -240,20 +241,32 @@ object YouTubeMusic : Source {
     override fun liked(id: String) = kotlinx.coroutines.runBlocking { YouTube.likeStatus(id).getOrNull() }
 
     // An album is saved through its audio playlist and an artist by subscribing. The page says which target to use
-    // and its state.
+    // and its state. Cached for 10 minutes so reopening a page shows Add/Remove on Frame 1 without an extra round trip.
     private val libraryTargets = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val savedCache = java.util.concurrent.ConcurrentHashMap<String, Pair<InLibrary, Long>>()
+    private const val SAVED_TTL_MS = 10 * 60_000L
+
+    override fun peekSaved(p: Page): InLibrary? {
+        if (!signedIn || p.kind !in setOf("album", "artist")) return null
+        val entry = savedCache[p.id] ?: return null
+        return if (System.currentTimeMillis() - entry.second < SAVED_TTL_MS) entry.first else null
+    }
 
     override fun saved(p: Page): InLibrary? {
         if (!signedIn || p.kind !in setOf("album", "artist")) return null
         val state = kotlinx.coroutines.runBlocking { YouTube.libraryState(p.id).getOrNull() } ?: return null
         val (saved, target) = state
         libraryTargets[p.id] = target
-        return InLibrary(saved)
+        val result = InLibrary(saved)
+        savedCache[p.id] = result to System.currentTimeMillis()
+        return result
     }
 
     override fun save(p: Page, on: Boolean): Boolean {
         val target = libraryTargets[p.id] ?: return false
-        return kotlinx.coroutines.runBlocking { YouTube.saveToLibrary(target, on).isSuccess }
+        val ok = kotlinx.coroutines.runBlocking { YouTube.saveToLibrary(target, on).isSuccess }
+        if (ok) savedCache[p.id] = InLibrary(on) to System.currentTimeMillis()
+        return ok
     }
 
     override fun streamUrl(id: String, full: Boolean): String {
@@ -269,23 +282,65 @@ object YouTubeMusic : Source {
 
     // Google-hosted art takes its size in the URL, and innertube hands over the largest thumbnail (often 544 px or
     // more, 80–115 KB). YouTube video stills come in fixed sizes. For the player, hqdefault (480 px) always exists.
+    // Index-based replacement avoids Regex Matcher allocations on every row draw and playlist build.
     override fun thumbAt(url: String, px: Int): String {
         if ("googleusercontent.com/" !in url) return url
-        return url.replace(SIZE_WH, "=w$px-h$px").replace(SIZE_S, "=s$px")
+        return replaceGoogleSize(url, px)
     }
-    override fun bigThumb(url: String) = url.replace(SIZE_WH, "=w$BIG_PX-h$BIG_PX").replace(SMALL_STILL, "/hqdefault.jpg")
-    // Compiled once, because thumbAt runs for every row drawn while a list scrolls, and bigThumb for each song of a
-    // 1,000-song playlist.
-    private val SIZE_WH by lazy { Regex("=w\\d+-h\\d+") }
-    private val SIZE_S by lazy { Regex("=s\\d+") }
-    private val SMALL_STILL by lazy { Regex("/(default|mqdefault)\\.jpg") }
+
+    override fun bigThumb(url: String): String {
+        val sized = if ("googleusercontent.com/" in url) replaceGoogleSize(url, BIG_PX) else url
+        return when {
+            sized.endsWith("/default.jpg") -> sized.substring(0, sized.length - "/default.jpg".length) + "/hqdefault.jpg"
+            sized.endsWith("/mqdefault.jpg") -> sized.substring(0, sized.length - "/mqdefault.jpg".length) + "/hqdefault.jpg"
+            "/default.jpg" in sized -> sized.replace("/default.jpg", "/hqdefault.jpg")
+            "/mqdefault.jpg" in sized -> sized.replace("/mqdefault.jpg", "/hqdefault.jpg")
+            else -> sized
+        }
+    }
+
+    private fun replaceGoogleSize(url: String, px: Int): String {
+        val eq = url.lastIndexOf('=')
+        if (eq < 0 || eq + 2 >= url.length) return url
+        val c = url[eq + 1]
+        if (c == 'w') {
+            var i = eq + 2
+            val wStart = i
+            while (i < url.length && url[i] in '0'..'9') i++
+            if (i > wStart && i + 2 < url.length && url[i] == '-' && url[i + 1] == 'h') {
+                var j = i + 2
+                val hStart = j
+                while (j < url.length && url[j] in '0'..'9') j++
+                if (j > hStart) {
+                    return buildString(url.length) {
+                        append(url, 0, eq)
+                        append("=w").append(px).append("-h").append(px)
+                        append(url, j, url.length)
+                    }
+                }
+            }
+        } else if (c == 's') {
+            var i = eq + 2
+            while (i < url.length && url[i] in '0'..'9') i++
+            if (i > eq + 2) {
+                return buildString(url.length) {
+                    append(url, 0, eq)
+                    append("=s").append(px)
+                    append(url, i, url.length)
+                }
+            }
+        }
+        return url
+    }
 
     override val lyricsProviders = allLyricsProviders
     override val lyrics: LyricsProvider = YouTubeLyrics
     override val lyricsRule = "All are asked at once. YouTube Music's text is the reference: word timing that matches it wins, then its own timed lyrics, then matching line timing, then its plain text. The order above only matters when YouTube Music has no lyrics."
     override val hasComments = true
     @Composable override fun Comments() = CommentsView()
+    override fun prefetchComments(songId: String) = prefetchSongComments(songId)
 
+    override fun peekShareUrl(s: Song) = link(s.id)
     override fun shareUrl(s: Song) = link(s.id)
     override val canShare = true
 
