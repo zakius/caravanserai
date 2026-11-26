@@ -95,6 +95,11 @@ class SubAlbum(
     val artist: String = "",
     val artistId: String? = null,
     val year: Int = 0,
+    /**
+     * The release date as yyyymmdd, from OpenSubsonic's originalReleaseDate or releaseDate, with 00 for an unknown
+     * month or day. Only the year (yyyy0000) where the server sends neither; 0 when it sends no year either.
+     */
+    val released: Int = 0,
     val coverArt: String? = null,
     val songCount: Int = 0,
     val created: String? = null,
@@ -629,6 +634,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
                 artist = o["artist"].str() ?: "",
                 artistId = o["artistId"].str(),
                 year = o["year"].int(),
+                released = released(o),
                 coverArt = o["coverArt"].str(),
                 songCount = o["songCount"].int(),
                 created = o["created"].str(),
@@ -639,6 +645,14 @@ class SubsonicClient(url: String, val user: String, private val password: String
                 nameLatin = nameLatin,
                 artistLatin = latin(o, "artist", latin),
             )
+        }
+
+        private fun released(o: JsonObject): Int {
+            val yearOnly = o["year"].int() * 10000
+            val date = (o["originalReleaseDate"] ?: o["releaseDate"]).obj() ?: return yearOnly
+            val year = date["year"].int()
+            if (year == 0) return yearOnly
+            return year * 10000 + date["month"].int() * 100 + date["day"].int()
         }
 
         fun artist(e: JsonElement, latin: Boolean = false, oasis: Boolean = false): SubArtist? {

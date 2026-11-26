@@ -1539,7 +1539,11 @@ fun PageScreen(p: Page) {
     }
     var menuFor by remember { mutableStateOf<Song?>(null) }
     val list = rememberLazyListState()
-    Loader("${p.kind}:${p.id}", { partial -> backend.detail(p, partial) }, list, ::detailRows, Detail.serializer()) { d ->
+    val scope = rememberCoroutineScope()
+    // A page with both songs and albums (an artist's) shows them on two tabs: 0 the songs, 1 the albums.
+    var tab by rememberSaveable(p) { mutableIntStateOf(0) }
+    val rows = { d: Detail -> detailRows(d, tab) }
+    Loader("${p.kind}:${p.id}", { partial -> backend.detail(p, partial) }, list, rows, Detail.serializer()) { d ->
         // Play and the first row are the likely taps, but not while another page covers this one.
         val shown = LocalTabShown.current
         LaunchedEffect(d.songs.firstOrNull()?.id, shown) {
@@ -1565,6 +1569,8 @@ fun PageScreen(p: Page) {
             }
         }
         val multiDisc = remember(d) { d.discs.toSet().size > 1 }
+        val tabbed = d.songs.isNotEmpty() && d.items.isNotEmpty()
+        val itemsLabel = if (d.items.all { it.kind == "album" }) "Albums" else "Albums and more"
         val subtitle = remember(d, artistPage) {
             listOf(d.subtitle, if (!artistPage) totalLength(d.songs) else "")
                 .filter { it.isNotBlank() }
@@ -1594,9 +1600,24 @@ fun PageScreen(p: Page) {
                         }
                     }
                 }
-                // An artist's page heads its songs as well as its releases.
-                if (d.songs.isNotEmpty() && d.items.isNotEmpty()) item(key = "songs-hdr") { Header("Songs") }
-                itemsIndexed(d.songs, key = { i, s -> "s:${s.id}#$i" }, contentType = { _, _ -> 0 }) { i, s ->
+                if (tabbed) {
+                    // Pinned under the bar once the header scrolls away. A switch scrolled past the header starts the
+                    // other list at its top.
+                    stickyHeader(key = "tabs") {
+                        fun show(t: Int) {
+                            if (t == tab) return
+                            tab = t
+                            if (list.firstVisibleItemIndex > 0) scope.launch { list.scrollToItem(1) }
+                        }
+                        FixedRowsFont {
+                            TabRow(tab) {
+                                Tab(tab == 0, { show(0) }, text = { Text("Songs", maxLines = 1, overflow = TextOverflow.Ellipsis) })
+                                Tab(tab == 1, { show(1) }, text = { Text(itemsLabel, maxLines = 1, overflow = TextOverflow.Ellipsis) })
+                            }
+                        }
+                    }
+                }
+                if (!tabbed || tab == 0) itemsIndexed(d.songs, key = { i, s -> "s:${s.id}#$i" }, contentType = { _, _ -> 0 }) { i, s ->
                     val disc = d.discs.getOrNull(i)
                     if (multiDisc && disc != null && disc != d.discs.getOrNull(i - 1)) Header("Disc $disc")
                     SongRow(
@@ -1610,9 +1631,8 @@ fun PageScreen(p: Page) {
                         Nav.tab = TAB_PLAYER
                     }
                 }
-                if (d.items.isNotEmpty()) {
-                    val allAlbums = d.items.all { it.kind == "album" }
-                    item(key = "items-hdr") { Header(if (allAlbums) "Albums" else "Albums and more") }
+                if (d.items.isNotEmpty() && (!tabbed || tab == 1)) {
+                    if (!tabbed) item(key = "items-hdr") { Header(itemsLabel) }
                     itemsIndexed(d.items, key = { i, item -> "i:${item.kind}:${item.id}#$i" }, contentType = { _, _ -> 1 }) { _, item ->
                         ItemRow(item) { openItem(item) }
                     }
@@ -1689,9 +1709,13 @@ private fun totalLength(songs: List<Song>): String {
 private fun playList(p: Page, songs: List<Song>) =
     if (p.kind == "playlist" && p.id.removePrefix("VL").startsWith("RD")) Playback.playMix(p.id, songs) else Playback.play(songs)
 
-/** What each LazyColumn item of a page shows, in order, for [Loader]. */
-private fun detailRows(d: Detail): List<Any?> {
+/** What each LazyColumn item of a page shows, in order, for [Loader], with [tab] the shown tab of a tabbed page. */
+private fun detailRows(d: Detail, tab: Int): List<Any?> {
     val header = listOf(d.title.original, d.subtitle, d.thumb, d.songs.isEmpty())
+    if (d.songs.isNotEmpty() && d.items.isNotEmpty()) {
+        val shown = if (tab == 0) d.songs.map { it.id } else d.items.map { it.id }
+        return listOf<Any?>(header, "tabs") + shown
+    }
     val more = if (d.items.isEmpty()) emptyList() else listOf("more") + d.items.map { it.id }
     return listOf<Any?>(header) + d.songs.map { it.id } + more
 }
