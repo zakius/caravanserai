@@ -2,6 +2,7 @@ package com.zakius.caravanserai
 
 import androidx.compose.runtime.Composable
 import com.metrolist.innertube.YouTube
+import com.metrolist.innertube.models.AlbumItem
 import com.metrolist.innertube.models.ArtistItem
 import com.metrolist.innertube.models.SongItem
 import com.metrolist.innertube.models.WatchEndpoint
@@ -203,7 +204,19 @@ object YouTubeMusic : Source {
                 val a = YouTube.artist(p.id).getOrThrow()
                 val songs = a.sections.flatMap { it.items }.filterIsInstance<SongItem>().map { r.song(it) }
                 Store.remember(songs)
-                val items = a.sections.flatMap { it.items }.filter { it !is SongItem }.mapNotNull { r.item(it) }
+                // Each section (Albums, Singles, …) keeps its place, its albums newest first and labelled with their
+                // year, since an artist page's album has no artist line.
+                val items = a.sections.flatMap { section ->
+                    section.items.filter { it !is SongItem }.sortedByDescending { (it as? AlbumItem)?.year ?: 0 }
+                }.mapNotNull { y ->
+                    val i = r.item(y)
+                    val year = (y as? AlbumItem)?.year
+                    if (i == null || year == null || i.subtitle.latin.isNotEmpty()) {
+                        i
+                    } else {
+                        Item(i.kind, i.id, i.title, roma.core.Text("$year", "$year"), i.thumb)
+                    }
+                }
                 val title = r.text(a.artist.title, artistId = a.artist.id)
                 val subtitle = a.monthlyListenerCount ?: a.subscriberCountText ?: ""
                 Detail(title, subtitle, a.artist.thumbnail, songs, items)

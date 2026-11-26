@@ -94,7 +94,8 @@ class SubsonicTest {
                     } else {
                         """"album":{"id":"al-9","name":"STRAY SHEEP","starred":"2026-10-31T01:00:00Z","oasisWanted":"wanted","oasisWantedError":"searching","artist":"米津玄師","artistId":"ar-9","song":[${songs[0]},${songs[1]}]}"""
                     }
-                    "getArtist" -> """"artist":{"id":"ar-9","name":"米津玄師","album":[{"id":"al-9","name":"STRAY SHEEP"},{"id":"al-10","name":"Lemon","year":2018,"releaseTypes":["Single"]}]}"""
+                    "getArtist" -> """"artist":{"id":"ar-9","name":"米津玄師","album":[{"id":"al-9","name":"STRAY SHEEP","year":2020,"originalReleaseDate":{"year":2020,"month":8,"day":5}},""" +
+                        """{"id":"al-10","name":"Lemon","year":2018,"releaseTypes":["Single"]},{"id":"al-11","name":"馬と鹿","year":2019,"releaseDate":{"year":2019,"month":3}}]}"""
                     // Over 5 MB of JSON, as a big library's playlist.
                     "getPlaylist" -> {
                         val entries = (1..20_000).joinToString(",") { n -> songs[0].replace("tr-1", "tr-$n") }
@@ -299,8 +300,9 @@ class SubsonicTest {
         assertEquals(listOf("tr-1", "tr-2"), tracks.map { it.id })
         val (artist, albums) = c.artist("ar-9")
         assertEquals("米津玄師", artist.name)
-        assertEquals(listOf("al-9", "al-10"), albums.map { it.id })
-        assertEquals(listOf(null, "Single"), albums.map { it.releaseType })
+        assertEquals(listOf("al-9", "al-10", "al-11"), albums.map { it.id })
+        assertEquals(listOf(null, "Single", null), albums.map { it.releaseType })
+        assertEquals(listOf(20200805, 20180000, 20190300), albums.map { it.released })
         assertEquals(listOf("tr-3"), c.topSongs("米津玄師").map { it.id })
         assertEquals("米津玄師", calls.last().second.toMap()["artist"])
         assertEquals(listOf("tr-5"), c.similarSongs("tr-1").map { it.id })

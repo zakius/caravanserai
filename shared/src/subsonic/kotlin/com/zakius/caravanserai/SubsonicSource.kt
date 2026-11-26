@@ -120,9 +120,10 @@ object SubsonicSource : Source {
         }
         val albumById = albums.associateBy { it.id }
         val artistById = artists.associateBy { it.id }
+        /** Each artist's albums, newest first. */
         val artistAlbums: Map<String, List<Item>> by lazy {
             val out = HashMap<String, MutableList<Item>>()
-            for (album in index.albums) {
+            for (album in index.albums.sortedByDescending { it.released }) {
                 val aid = album.artistId?.let(SubsonicIds::encode) ?: continue
                 val item = albumById[SubsonicIds.encode(album.id)] ?: continue
                 out.getOrPut(aid) { ArrayList() }.add(item)
@@ -508,8 +509,9 @@ object SubsonicSource : Source {
                 }
                 val (sa, subs) = server
                 cacheSaved(p, sa.starred, sa.wanted, sa.wantedError)
-                // A release the library doesn't hold is labelled with its type and year, such as "Single · 2021".
-                val all = subs.map { s ->
+                // Newest first. A release the library doesn't hold is labelled with its type and year, such as
+                // "Single · 2021".
+                val all = subs.sortedByDescending { it.released }.map { s ->
                     val known = l.albumById[SubsonicIds.encode(s.id)]
                     if (known != null) {
                         known
