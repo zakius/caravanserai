@@ -104,8 +104,12 @@ class SubsonicTest {
                     "getUser" -> """"user":{"username":"${p("username")}","scrobblingEnabled":true,"adminRole":true}"""
                     "getTopSongs" -> """"topSongs":{"song":[${songs[2]}]}"""
                     "getSimilarSongs" -> """"similarSongs":{"song":[${songs[4]}]}"""
-                    "getPlaylists" -> """"playlists":{"playlist":[{"id":"1","name":"Radio","owner":"admin"},{"id":"2","name":"Favourites","owner":"admin"},""" +
-                        """{"id":"3","name":"Replay Mix","owner":"YouTube Music","oasisMix":true},{"id":"4","name":"Archive Mix","owner":"YouTube Music","oasisMix":true}]}"""
+                    "getPlaylists" -> """"playlists":{"playlist":[{"id":"1","name":"Radio","owner":"admin","oasisSource":"all","comment":"Grows from what you play"},""" +
+                        """{"id":"5","name":"Last.fm top tracks","owner":"oasis","oasisMix":true,"oasisStation":"lastfm-top"},""" +
+                        """{"id":"2","name":"Favourites","owner":"admin"},""" +
+                        """{"id":"3","name":"Replay Mix","owner":"YouTube Music","oasisMix":true,"comment":"YOASOBI and more"},""" +
+                        """{"id":"4","name":"Archive Mix","owner":"YouTube Music","oasisMix":true},""" +
+                        """{"id":"6","name":"Daily Jams","owner":"ListenBrainz","oasisMix":true}]}"""
                     "scrobble", "star" -> """"x":1"""
                     else -> """"x":1"""
                 }
@@ -318,15 +322,30 @@ class SubsonicTest {
 
     @Test fun mixesMarked() {
         val c = SubsonicClient(url, "admin", "secret")
-        // oasisMix without the extension oasis is just a field: no mixes.
+        // oasisMix and oasisSource without the extension oasis are just fields: no home mixes.
         c.sync()
-        assertTrue(c.playlists().none { it.mix })
+        assertTrue(c.playlists().none { it.isHomeMix })
         oasisListed = true
         assertTrue(c.sync().supports(SubsonicClient.OASIS))
         val all = c.playlists()
-        assertEquals(listOf("Radio", "Favourites"), all.filter { !it.mix }.map { it.name })
-        // Mixes keep the server's order.
-        assertEquals(listOf("Replay Mix", "Archive Mix"), all.filter { it.mix }.map { it.name })
+        // Only plain playlists stay out of Home's mix/radio shelves.
+        assertEquals(listOf("Favourites"), all.filter { !it.isHomeMix }.map { it.name })
+        // Home shelves group oasis & user radios first, then each external service in server order.
+        val shelves = SubsonicClient.mixShelves(all, c.user)
+        assertEquals(
+            listOf(
+                "Mixes & radios" to listOf("Radio", "Last.fm top tracks"),
+                "YouTube Music mixes" to listOf("Replay Mix", "Archive Mix"),
+                "ListenBrainz mixes" to listOf("Daily Jams"),
+            ),
+            shelves.map { (title, list) -> title to list.map { it.name } },
+        )
+        // Mix cards use comment (or "Radio" for a radio without one) rather than repeating the shelf's owner.
+        val r = Romanizer(jvmIcu)
+        assertEquals("Grows from what you play", r.mixItem(shelves[0].second[0]).subtitle.latin)
+        assertEquals("Radio", r.mixItem(shelves[0].second[1]).subtitle.latin)
+        assertEquals("YOASOBI and more", r.mixItem(shelves[1].second[0]).subtitle.latin)
+        assertEquals("", r.mixItem(shelves[1].second[1]).subtitle.latin)
     }
 
     @Test fun mediaUrlsCarryAuth() {

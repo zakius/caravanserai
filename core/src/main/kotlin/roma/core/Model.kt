@@ -181,6 +181,41 @@ fun foldSearch(s: String): String {
 @Serializable
 class Item(val kind: String, val id: String, val title: Text, val subtitle: Text, val thumb: String?, val song: Song? = null)
 
+/** Folded searchable texts of an [Item] (song, album, artist or playlist), for repeated [filterItems] calls. */
+fun foldItem(item: Item): Array<String> {
+    val s = item.song
+    return if (s != null) {
+        arrayOf(
+            foldSearch(s.title.original),
+            foldSearch(s.title.latin),
+            foldSearch(s.artistOriginal),
+            foldSearch(s.artistLatin),
+            foldSearch(s.artistLatin + s.title.latin),
+            foldSearch(s.album?.name?.original ?: ""),
+            foldSearch(s.album?.name?.latin ?: ""),
+        )
+    } else {
+        arrayOf(
+            foldSearch(item.title.original),
+            foldSearch(item.title.latin),
+            foldSearch(item.subtitle.original),
+            foldSearch(item.subtitle.latin),
+            foldSearch(item.subtitle.latin + item.title.latin),
+        )
+    }
+}
+
+/** Filters [items] by [query] using romanization-aware, typo-tolerant matching, best matches first. */
+fun filterItems(items: List<Item>, folded: Array<Array<String>>, query: String): List<Item> {
+    val prepared = prepareQuery(query) ?: return items
+    val scored = ArrayList<Pair<Item, Int>>()
+    for (i in items.indices) {
+        val distance = matchFolded(folded[i], prepared) ?: continue
+        scored.add(items[i] to distance)
+    }
+    return scored.sortedBy { it.second }.map { it.first }
+}
+
 /** Dotted versions compared number by number: 0.1.10 is newer than 0.1.9. */
 fun newerVersion(a: String, b: String): Boolean {
     val x = a.split('.').map { it.toIntOrNull() ?: 0 }

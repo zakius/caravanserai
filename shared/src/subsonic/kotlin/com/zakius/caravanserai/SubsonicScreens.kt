@@ -93,80 +93,21 @@ import roma.core.song
 // The Subsonic app's own screens: Home's tiles, the server's settings and the first-start server form.
 
 /**
- * Home's pinned tiles, three to a row: the server's mixes (oasis only), then the starred songs and the whole library
- * at random. A server without mixes gets the last two as a row of two short buttons, which neither leaves a third of
- * the row empty nor outweighs the album covers below.
+ * Home's pinned tiles: the starred songs and the whole library at random, as a compact row of two buttons that neither
+ * leaves empty space nor outweighs the shelves below. Server-generated mixes and radios live in Home's shelves.
  */
 @Composable
-internal fun LibraryTiles(mixes: List<Item>) {
+internal fun LibraryTiles() {
     val tint = MaterialTheme.colorScheme.onSecondaryContainer
-    if (mixes.isEmpty()) {
-        Row(
-            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            ShortTile("Starred", SubsonicSource.STARRED, Modifier.weight(1f)) {
-                Icon(Icons.Filled.Star, null, Modifier.size(24.dp), tint = tint)
-            }
-            ShortTile("Shuffle all", SubsonicSource.SHUFFLE, Modifier.weight(1f)) {
-                Icon(androidx.compose.ui.res.painterResource(R.drawable.shuffle), null, Modifier.size(24.dp), tint = tint)
-            }
+    Row(
+        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        ShortTile("Starred", SubsonicSource.STARRED, Modifier.weight(1f)) {
+            Icon(Icons.Filled.Star, null, Modifier.size(24.dp), tint = tint)
         }
-        return
-    }
-    val (cols, _, side) = mixGrid(screenSizeDp().width, mixes.size)
-    @Composable
-    fun Tile(title: String, id: String, picture: @Composable () -> Unit) = Column(
-        Modifier
-            .width(side)
-            .pointerInput(id) {
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    Playback.prefetchMix(id)
-                }
-            }
-            .clickable {
-                Playback.playMix(id, title = title)
-                Nav.tab = TAB_PLAYER
-            },
-    ) {
-        picture()
-        Spacer(Modifier.height(4.dp))
-        Text(title, style = MaterialTheme.typography.bodySmall, maxLines = 3)
-    }
-    @Composable
-    fun Drawn(icon: @Composable () -> Unit) = Box(
-        Modifier
-            .size(side)
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.secondaryContainer),
-        contentAlignment = Alignment.Center,
-    ) {
-        icon()
-    }
-    // Each tile is (title, id, the mix's card). Starred and Shuffle all have no card, so they are drawn.
-    val mixTiles = mixes.map { mix -> Triple(Store.shown(mix.title), mix.id, mix) }
-    val drawnTiles: List<Triple<String, String, Item?>> = listOf(
-        Triple("Starred", SubsonicSource.STARRED, null),
-        Triple("Shuffle all", SubsonicSource.SHUFFLE, null),
-    )
-    val tiles = mixTiles + drawnTiles
-    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        for (line in tiles.chunked(cols)) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            for ((title, id, m) in line) Tile(title, id) {
-                if (m != null) {
-                    Thumb(shownThumb(m.thumb, side), side, Modifier.size(side).clip(RoundedCornerShape(8.dp)))
-                } else {
-                    Drawn {
-                        if (id == SubsonicSource.STARRED) {
-                            Icon(Icons.Filled.Star, null, Modifier.size(side / 3), tint = tint)
-                        } else {
-                            val shuffle = androidx.compose.ui.res.painterResource(R.drawable.shuffle)
-                            Icon(shuffle, null, Modifier.size(side / 3), tint = tint)
-                        }
-                    }
-                }
-            }
+        ShortTile("Shuffle all", SubsonicSource.SHUFFLE, Modifier.weight(1f)) {
+            Icon(androidx.compose.ui.res.painterResource(R.drawable.shuffle), null, Modifier.size(24.dp), tint = tint)
         }
     }
 }

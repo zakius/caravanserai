@@ -127,7 +127,10 @@ class SubArtist(
     val nameLatin: String? = null,
 )
 
-/** [mix] is true for one of the account's personal mixes (extension oasis's "oasisMix"). It is false on other servers. */
+/**
+ * [mix] is true for a server-generated mix, station or radio (extension oasis's "oasisMix"), and [radio] for a radio
+ * playlist ("oasisSource" or "oasisStation"). Both are false on other servers.
+ */
 @Serializable
 class SubPlaylist(
     val id: String,
@@ -137,7 +140,12 @@ class SubPlaylist(
     val coverArt: String? = null,
     val mix: Boolean = false,
     val nameLatin: String? = null,
-)
+    val comment: String? = null,
+    val radio: Boolean = false,
+) {
+    /** Whether this playlist belongs in Home's mix/radio shelves rather than Library → Playlists. */
+    val isHomeMix: Boolean get() = mix || radio
+}
 
 /** The whole library as of [syncedAt], with what the server said about itself. */
 @Serializable
@@ -322,6 +330,8 @@ class SubsonicClient(url: String, val user: String, private val password: String
                 coverArt = o["coverArt"].str(),
                 mix = oasis && o["oasisMix"].str() == "true",
                 nameLatin = latin(o, "name", romanization),
+                comment = o["comment"].str(),
+                radio = oasis && (o["oasisSource"].str() != null || o["oasisStation"].str() != null),
             )
         }
     }
@@ -335,7 +345,10 @@ class SubsonicClient(url: String, val user: String, private val password: String
             o["owner"].str() ?: "",
             songs.size,
             o["coverArt"].str(),
+            mix = oasis && o["oasisMix"].str() == "true",
             nameLatin = latin(o, "name", romanization),
+            comment = o["comment"].str(),
+            radio = oasis && (o["oasisSource"].str() != null || o["oasisStation"].str() != null),
         )
         return playlist to songs
     }
@@ -559,6 +572,30 @@ class SubsonicClient(url: String, val user: String, private val password: String
         const val SHARE_URL = "shareUrl"
 
         /**
+         * Groups Home's mixes and radios into shelves: the server's own mixes and user radios first ("Mixes & radios"),
+         * then one shelf per external service owner (e.g. "<owner> mixes") in the server's order.
+         */
+        fun mixShelves(playlists: List<SubPlaylist>, user: String): List<Pair<String, List<SubPlaylist>>> {
+            val own = ArrayList<SubPlaylist>()
+            val services = LinkedHashMap<String, MutableList<SubPlaylist>>()
+            for (p in playlists) {
+                if (!p.isHomeMix) continue
+                val isOwn = p.owner.isBlank() ||
+                    p.owner.equals(OASIS, ignoreCase = true) ||
+                    (user.isNotBlank() && p.owner.equals(user, ignoreCase = true))
+                if (isOwn) {
+                    own += p
+                } else {
+                    services.getOrPut(p.owner) { ArrayList() }.add(p)
+                }
+            }
+            val shelves = ArrayList<Pair<String, List<SubPlaylist>>>()
+            if (own.isNotEmpty()) shelves += "Mixes & radios" to own
+            for ((owner, list) in services) shelves += "$owner mixes" to list
+            return shelves
+        }
+
+        /**
          * Plain http is allowed only to a server on the user's own network: localhost, a private, link-local or CGNAT
          * (Tailscale) address, a name without a dot or under .local, .lan, .home.arpa or .internal, or a name that
          * resolves to such addresses only. Blocking, because it may resolve [host].
@@ -719,6 +756,15 @@ fun Romanizer.item(p: SubPlaylist): Item {
     val ownerServed = if (p.nameLatin != null) p.owner else null
     val owner = text(p.owner, served = ownerServed)
     return Item("playlist", id, name, owner, subsonicCover(p.coverArt))
+}
+
+/** A mix or radio card on a Home shelf: the shelf header already names the source, so the subtitle shows its note. */
+fun Romanizer.mixItem(p: SubPlaylist): Item {
+    val id = SubsonicIds.encode(p.id)
+    val name = text(p.name, served = p.nameLatin)
+    val sub = p.comment?.trim()?.takeIf { it.isNotEmpty() } ?: if (p.radio) "Radio" else ""
+    val subtitle = if (sub.isEmpty()) Text("", "") else text(sub)
+    return Item("playlist", id, name, subtitle, subsonicCover(p.coverArt))
 }
 
 /**
