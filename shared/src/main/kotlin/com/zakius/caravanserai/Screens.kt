@@ -100,6 +100,8 @@ import roma.core.LastFm
 import roma.core.Override
 import roma.core.Romanizer
 import roma.core.Song
+import roma.core.filterItems
+import roma.core.foldItem
 import roma.core.item
 import roma.core.song
 
@@ -1466,6 +1468,8 @@ fun LibraryScreen() {
     val visited = remember { mutableStateListOf(tab) }
     if (tab !in visited) visited += tab
     val parentShown = LocalTabShown.current
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    LaunchedEffect(parentShown, tab) { focusManager.clearFocus() }
     // Warm the other library tabs' disk copies when Library is opened so switching sub-tabs shows cached lists at once.
     LaunchedEffect(parentShown) {
         if (!parentShown) return@LaunchedEffect
@@ -1489,6 +1493,10 @@ fun LibraryScreen() {
                 DeckLayer(active) {
                     androidx.compose.runtime.CompositionLocalProvider(LocalTabShown provides (parentShown && active)) {
                         val list = rememberLazyListState()
+                        var filter by rememberSaveable(Store.dataVersion) { mutableStateOf("") }
+                        LaunchedEffect(filter) {
+                            if (list.firstVisibleItemIndex > 0) list.scrollToItem(0)
+                        }
                         Loader(
                             "library:${source.libraryKey(t)}",
                             { partial -> source.library(t, partial) },
@@ -1496,26 +1504,58 @@ fun LibraryScreen() {
                             { items -> items.map { it.id } },
                             ListSerializer(Item.serializer()),
                         ) { items ->
-                            val thumbs = remember(items) { items.map { it.thumb } }
+                            val folded = remember(items) {
+                                lazy(LazyThreadSafetyMode.NONE) { Array(items.size) { foldItem(items[it]) } }
+                            }
+                            val shown = remember(items, filter) {
+                                if (filter.isBlank()) items else filterItems(items, folded.value, filter)
+                            }
+                            val thumbs = remember(shown) { shown.map { it.thumb } }
                             PrefetchCovers(thumbs, 48.dp, list)
-                            if (items.isEmpty()) Centered(source.libraryEmpty(t))
-                            Box {
-                                LazyColumn(Modifier.fillMaxSize(), list) {
-                                    // A song (in Starred) is a song row, with its length and ⋮ menu, as songs are everywhere else.
-                                    itemsIndexed(
-                                        items,
-                                        key = { idx, item -> "${item.kind}:${item.id}#$idx" },
-                                        contentType = { _, item -> if (item.song != null) 0 else 1 },
-                                    ) { _, item ->
-                                        val s = item.song
-                                        if (s != null) {
-                                            SongRow(s, onMenu = { menuFor = s }) { openItem(item) }
-                                        } else {
-                                            ItemRow(item) { openItem(item) }
+                            if (items.isEmpty()) {
+                                Centered(source.libraryEmpty(t))
+                            } else {
+                                Column(Modifier.fillMaxSize()) {
+                                    Box(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp)) {
+                                        OutlinedTextField(
+                                            filter, { filter = it },
+                                            Modifier.fillMaxWidth(),
+                                            placeholder = "Filter ${tabs[t].lowercase()}",
+                                            singleLine = true,
+                                            onSearch = { focusManager.clearFocus() },
+                                        )
+                                        if (filter.isNotEmpty()) {
+                                            IconButton(
+                                                onClick = { filter = "" },
+                                                Modifier.align(Alignment.CenterEnd),
+                                            ) { Icon(Icons.Default.Clear, "Clear") }
+                                        }
+                                    }
+                                    if (shown.isEmpty()) {
+                                        Box(Modifier.weight(1f)) {
+                                            Centered("No matches for “${filter.trim()}”.")
+                                        }
+                                    } else {
+                                        Box(Modifier.weight(1f)) {
+                                            LazyColumn(Modifier.fillMaxSize(), list) {
+                                                // A song (in Starred) is a song row, with its length and ⋮ menu, as songs are everywhere else.
+                                                itemsIndexed(
+                                                    shown,
+                                                    key = { idx, item -> "${item.kind}:${item.id}#$idx" },
+                                                    contentType = { _, item -> if (item.song != null) 0 else 1 },
+                                                ) { _, item ->
+                                                    val s = item.song
+                                                    if (s != null) {
+                                                        SongRow(s, onMenu = { menuFor = s }) { openItem(item) }
+                                                    } else {
+                                                        ItemRow(item) { openItem(item) }
+                                                    }
+                                                }
+                                            }
+                                            FastScroll(list)
                                         }
                                     }
                                 }
-                                FastScroll(list)
                             }
                         }
                     }

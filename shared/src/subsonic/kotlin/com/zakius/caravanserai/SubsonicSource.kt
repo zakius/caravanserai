@@ -29,8 +29,10 @@ import roma.core.item
 import roma.core.LrcLib
 import roma.core.matchDistance
 import roma.core.matchFolded
+import roma.core.mixItem
 import roma.core.prepareQuery
 import roma.core.song
+import roma.core.subsonicCover
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
@@ -301,22 +303,6 @@ object SubsonicSource : Source {
         changes++
     }
 
-    /**
-     * The server's mixes for Home's tiles, in the server's order. They are playlists marked "oasisMix" by a server with
-     * the extension oasis, which publishes its streaming services' personal mixes this way. Other servers have none.
-     */
-    var mixTiles by mutableStateOf<List<Item>?>(null)
-        private set
-
-    /** Reads the mixes again; returns how many there are. Blocking. */
-    private fun refreshMixes(): Int {
-        val tiles = need().playlists().filter { it.mix }.map { Store.romanizer.item(it) }
-        // Kept for the next start, so its Home shows them as the app's mixes before the server answers.
-        Store.mixes = tiles
-        postMain { mixTiles = tiles }
-        return tiles.size
-    }
-
     override suspend fun home(from: String?): Pair<String?, List<Section>> = coroutineScope {
         val l = lib()
         val r = Store.romanizer
@@ -325,27 +311,32 @@ object SubsonicSource : Source {
         fun server(type: String): List<Item> = runCatching {
             need().albumList(type).map { album -> l.albumById[SubsonicIds.encode(album.id)] ?: r.item(album) }
         }.getOrDefault(emptyList())
-        val mixesJob = async(Dispatchers.IO) { runCatching { refreshMixes() } }
+        val playlistsJob = async(Dispatchers.IO) { runCatching { need().playlists() }.getOrDefault(emptyList()) }
         val recentJob = async(Dispatchers.IO) { server("recent") }
         val frequentJob = async(Dispatchers.IO) { server("frequent") }
         val newest = l.index.albums
             .sortedByDescending { it.created ?: "" }
             .take(20)
             .mapNotNull { album -> l.albumById[SubsonicIds.encode(album.id)] }
+        val allPlaylists = playlistsJob.await()
         val recent = recentJob.await()
         val frequent = frequentJob.await()
-        mixesJob.await()
-        val shelves = listOf(
-            shelf("Recently added", newest),
-            shelf("Recently played", recent),
-            shelf("Most played", frequent),
-            shelf("Albums at random", l.albums.shuffled().take(20)),
-            shelf("Artists", l.artists.shuffled().take(20)),
+        val mixShelves = SubsonicClient.mixShelves(allPlaylists, client?.user ?: "").map { (title, list) ->
+            shelf(title, list.map { r.mixItem(it) })
+        }
+        val shelves = (
+            mixShelves + listOf(
+                shelf("Recently added", newest),
+                shelf("Recently played", recent),
+                shelf("Most played", frequent),
+                shelf("Albums at random", l.albums.shuffled().take(20)),
+                shelf("Artists", l.artists.shuffled().take(20)),
+            )
         ).filter { it.items.isNotEmpty() }
         null to shelves
     }
     override val mixes = false
-    @Composable override fun HomeTiles(mixes: List<Item>?, read: Boolean) = LibraryTiles(mixTiles ?: mixes.orEmpty())
+    @Composable override fun HomeTiles(mixes: List<Item>?, read: Boolean) = LibraryTiles()
 
     override val searchIsLocal = true
     override suspend fun suggestions(query: String) = emptyList<String>()
@@ -399,7 +390,7 @@ object SubsonicSource : Source {
             }
             1 -> bestFolded(l.albums, l.foldedAlbums)
             2 -> bestFolded(l.artists, l.foldedArtists)
-            else -> playlists()
+            else -> playlists(includeMixes = true)
                 .mapNotNull { x -> matchDistance(x.texts(), query)?.let { x to it } }
                 .sortedBy { it.second }
                 .take(100)
@@ -411,8 +402,7 @@ object SubsonicSource : Source {
     override val libraryReady get() = client != null
     override val libraryHint = "Add your server in Settings to see its albums and playlists."
     override val libraryHintPage = Page("settings", "source")
-    // A server's library is its albums, so they come first.
-    override val libraryTabs = listOf("Albums", "Artists", "Playlists", "Starred")
+    override val libraryTabs = listOf("Playlists", "Albums", "Artists", "Starred")
     override fun libraryKey(tab: Int) = "subsonic-" + libraryTabs[tab].lowercase()
     override fun libraryEmpty(tab: Int) = when (libraryTabs[tab]) {
         "Playlists" -> "No playlists on your server yet."
@@ -443,8 +433,9 @@ object SubsonicSource : Source {
         return artistItems + albumItems + songItems
     }
 
-    // The mixes live in Home's tiles; Playlists holds the rest.
-    private fun playlists() = need().playlists().filter { !it.mix }.map { Store.romanizer.item(it) }
+    // Generated mixes and radios live in Home's shelves; Library → Playlists holds actual playlists.
+    private fun playlists(includeMixes: Boolean = false) =
+        need().playlists().filter { includeMixes || !it.isHomeMix }.map { Store.romanizer.item(it) }
 
     override suspend fun detail(p: Page, partial: suspend (Detail) -> Unit): Detail {
         val l = lib()
@@ -476,7 +467,8 @@ object SubsonicSource : Source {
             "playlist" -> {
                 val (pl, subs) = need().playlist(SubsonicIds.decode(p.id))
                 val songs = subs.map { l.byId[SubsonicIds.encode(it.id)] ?: r.song(it) }
-                Detail(r.text(pl.name, served = pl.nameLatin), pl.owner, songs.firstOrNull()?.thumb, songs, emptyList())
+                val thumb = subsonicCover(pl.coverArt) ?: songs.firstOrNull()?.thumb
+                Detail(r.text(pl.name, served = pl.nameLatin), pl.owner, thumb, songs, emptyList())
             }
             else -> coroutineScope {
                 fun count(n: Int, what: String) = "$n $what" + if (n == 1) "" else "s"
