@@ -196,15 +196,12 @@ object Store {
         }
     }
 
-    /** The playlists pinned to Home, as (id, title), in the order they were pinned. */
-    fun pins(): List<Pair<String, String>> = str("home.pins", "").lines().filter { '\t' in it }.map { line ->
-        line.substringBefore('\t') to line.substringAfter('\t')
-    }
+    /** The ids of the playlists pinned to Home, in the order they were pinned. */
+    fun pins(): List<String> = str("home.pins", "").lines().filter { it.isNotBlank() }.map { it.substringBefore('\t') }  // 0.1.74 kept titles after a tab
 
-    fun pin(id: String, title: String, pinned: Boolean) {
-        val others = pins().filter { it.first != id }
-        val all = if (pinned) others + (id to title.replace('\t', ' ').replace('\n', ' ')) else others
-        set("home.pins", all.joinToString("\n") { "${it.first}\t${it.second}" })
+    fun pin(id: String, pinned: Boolean) {
+        val others = pins().filter { it != id }
+        set("home.pins", (if (pinned) others + id else others).joinToString("\n"))
     }
 
     // Per-key state subscribes the calling composable only to [key], not every setting in the app.

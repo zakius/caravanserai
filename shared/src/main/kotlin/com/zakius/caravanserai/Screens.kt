@@ -949,6 +949,12 @@ object Home {
     private val waiting = HashMap<Int, Section>()
     private var mixJob: Job? = null
 
+    /** Loads Home again now, as after pinning a playlist to it. */
+    fun reload() {
+        fetchedAt = 0
+        start()
+    }
+
     /** Loads Home unless it is loading or fresh. Call it whenever Home may be shown. */
     fun start() {
         val stale = System.currentTimeMillis() - fetchedAt > 30 * 60_000 || dataVersion != Store.dataVersion
@@ -1746,9 +1752,10 @@ private fun PageButtons(p: Page, d: Detail) {
             Spacer(Modifier.width(8.dp))
         }
         if (source.canPin && p.kind == "playlist") {
-            val pinned = Store.pins().any { it.first == p.id }
+            val pinned = p.id in Store.pins()
             TextButton(onClick = {
-                Store.pin(p.id, d.title.latin, !pinned)
+                Store.pin(p.id, !pinned)
+                Home.reload()
             }, contentPadding = padding) {
                 Text(if (pinned) "Unpin from Home" else "Pin to Home")
             }

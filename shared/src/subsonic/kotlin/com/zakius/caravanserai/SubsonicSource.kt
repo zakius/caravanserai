@@ -308,9 +308,10 @@ object SubsonicSource : Source {
         val l = lib()
         val r = Store.romanizer
         fun shelf(title: String, items: List<Item>) = Section(roma.core.Text(title, title), items)
-        // The generated playlists are in Library → Playlists and feed the dial above; the shelves are albums.
+        // The generated playlists are in Library → Playlists; Home shows only the playlists pinned from their page.
         fun server(type: String): List<SubAlbum> = runCatching { need().albumList(type) }.getOrDefault(emptyList())
         fun items(albums: List<SubAlbum>) = albums.map { album -> l.albumById[SubsonicIds.encode(album.id)] ?: r.item(album) }
+        val playlistsJob = async(Dispatchers.IO) { if (Store.pins().isEmpty()) emptyList() else runCatching { need().playlists() }.getOrDefault(emptyList()) }
         val recentJob = async(Dispatchers.IO) { server("recent") }
         val frequentJob = async(Dispatchers.IO) { server("frequent") }
         // oasis says per album how many songs this user played: a begun album continues, an unplayed new one is marked.
@@ -323,7 +324,11 @@ object SubsonicSource : Source {
             .map { item -> if (item.id in unplayed) markedNew(item) else item }
         val recent = recentJob.await()
         val begun = recent.filter { album -> (album.songsPlayed ?: 0) in 1 until album.songCount }
+        // The pinned playlists as the server has them now, in the order they were pinned; one deleted since is left out.
+        val byId = playlistsJob.await().associateBy { SubsonicIds.encode(it.id) }
+        val pinned = Store.pins().mapNotNull { id -> byId[id] }.map { r.mixItem(it) }
         val shelves = listOf(
+            shelf("Pinned", pinned),
             shelf("Continue", items(begun)),
             shelf("Recently added", newest),
             shelf("Recently played", items(recent)),
@@ -338,26 +343,6 @@ object SubsonicSource : Source {
     private fun markedNew(item: Item): Item {
         val subtitle = roma.core.Text("New · " + item.subtitle.original, "New · " + item.subtitle.latin)
         return Item(item.kind, item.id, item.title, subtitle, item.thumb, item.song)
-    }
-
-    /** One stop of Home's dial: its name, what it means, and its songs with why each is there and the mixes holding it. */
-    class DialStop(val id: String, val name: String, val description: String, val songs: List<Song>, val why: List<String>, val from: List<List<String>>)
-
-    /** The last dial oasis gave, shown at once while a fresh one loads. */
-    @Volatile var dial: List<DialStop> = emptyList()
-        private set
-
-    /** Home's dial from oasis (oasisHome); empty from other servers, or when it can't be reached. */
-    suspend fun loadDial(): List<DialStop> {
-        val c = client ?: return emptyList()
-        if (!c.oasis) return emptyList()
-        val l = lib()
-        val stops = withContext(Dispatchers.IO) { runCatching { c.home() }.getOrNull() } ?: return dial
-        dial = stops.filter { it.songs.isNotEmpty() }.map { stop ->
-            val songs = stop.songs.map { h -> l.byId[SubsonicIds.encode(h.song.id)] ?: Store.romanizer.song(h.song) }
-            DialStop(stop.id, stop.name, stop.description, songs, stop.songs.map { it.why }, stop.songs.map { it.from })
-        }
-        return dial
     }
 
     override val mixes = false
