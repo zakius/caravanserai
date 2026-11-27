@@ -1461,7 +1461,7 @@ fun SearchScreen() {
                     itemsIndexed(
                         found.items,
                         key = { idx, item -> "${item.kind}:${item.id}#$idx" },
-                        contentType = { _, item -> if (item.song != null) 0 else 1 },
+                        contentType = { _, item -> if (item.kind == HEADING) 2 else if (item.song != null) 0 else 1 },
                     ) { _, item ->
                         val s = item.song
                         if (s != null) {
@@ -1543,7 +1543,8 @@ fun LibraryScreen() {
                                 lazy(LazyThreadSafetyMode.NONE) { Array(items.size) { foldItem(items[it]) } }
                             }
                             val shown = remember(items, filter) {
-                                if (filter.isBlank()) items else filterItems(items, folded.value, filter)
+                                // A filtered list has no headings: the items under one may be filtered out.
+                                if (filter.isBlank()) items else filterItems(items, folded.value, filter).filter { it.kind != HEADING }
                             }
                             val thumbs = remember(shown) { shown.map { it.thumb } }
                             PrefetchCovers(thumbs, 48.dp, list)
@@ -1580,7 +1581,9 @@ fun LibraryScreen() {
                                                     contentType = { _, item -> if (item.song != null) 0 else 1 },
                                                 ) { _, item ->
                                                     val s = item.song
-                                                    if (s != null) {
+                                                    if (item.kind == HEADING) {
+                                                        Header(item.title.latin)
+                                                    } else if (s != null) {
                                                         SongRow(s, onMenu = { menuFor = s }) { openItem(item) }
                                                     } else {
                                                         ItemRow(item) { openItem(item) }
@@ -1741,6 +1744,14 @@ private fun PageButtons(p: Page, d: Detail) {
                 Nav.tab = TAB_PLAYER
             }) { Text("Play") }
             Spacer(Modifier.width(8.dp))
+        }
+        if (source.canPin && p.kind == "playlist") {
+            val pinned = Store.pins().any { it.first == p.id }
+            TextButton(onClick = {
+                Store.pin(p.id, d.title.latin, !pinned)
+            }, contentPadding = padding) {
+                Text(if (pinned) "Unpin from Home" else "Pin to Home")
+            }
         }
         val now = state
         if (now != null) {
