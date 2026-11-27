@@ -46,6 +46,9 @@ class SongPage(val songs: List<Song>, val next: String?)
  * app are remembered in the local index. Besides the data, a source brings the UI that only it shows: its settings
  * page, Home's pinned tiles, its first-start step and its comments.
  */
+/** The kind of a list item that is a heading over the items after it, such as Library's "Made for you". */
+const val HEADING = "heading"
+
 interface Source {
     /** Shown where results are headed and in Settings. */
     val name: String
@@ -120,6 +123,8 @@ interface Source {
      * album or artist to the library reads Star too.
      */
     val stars: Boolean get() = false
+    /** A playlist's page offers to pin it to Home, where the source's tiles show the pinned ones (Store.pins). */
+    val canPin: Boolean get() = false
     /** Blocking. Returns whether the server accepted it. */
     fun like(id: String, like: Boolean): Boolean
     /** Blocking. Null when the server couldn't say. */

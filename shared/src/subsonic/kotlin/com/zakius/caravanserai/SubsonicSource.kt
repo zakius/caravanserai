@@ -20,6 +20,7 @@ import roma.core.LyricsProvider
 import roma.core.Scrobble
 import roma.core.ScrobbleQueue
 import roma.core.Song
+import roma.core.SubAlbum
 import roma.core.SubsonicClient
 import roma.core.SubsonicIds
 import roma.core.SubsonicIndex
@@ -69,7 +70,7 @@ object SubsonicSource : Source {
                 clientKey = key
                 val created = SubsonicClient(url, user, password)
                 created.romanization = romanizes
-                created.oasis = library?.index?.supports(SubsonicClient.OASIS) == true
+                created.oasis = library?.index?.lists(SubsonicClient.OASIS) == true
                 cachedClient = created
             }
             return cachedClient
@@ -201,7 +202,7 @@ object SubsonicSource : Source {
 
     private fun publish(l: Library) {
         library = l
-        client?.oasis = l.index.supports(SubsonicClient.OASIS)
+        client?.oasis = l.index.lists(SubsonicClient.OASIS)
         Playback.markLiked(l.index.songs.filter { it.starred }.map { SubsonicIds.encode(it.id) })
         postMain { changes++ }
     }
@@ -307,34 +308,58 @@ object SubsonicSource : Source {
         val l = lib()
         val r = Store.romanizer
         fun shelf(title: String, items: List<Item>) = Section(roma.core.Text(title, title), items)
-        // Play counts and mixes live on the server; fetch all three concurrently instead of serially.
-        fun server(type: String): List<Item> = runCatching {
-            need().albumList(type).map { album -> l.albumById[SubsonicIds.encode(album.id)] ?: r.item(album) }
-        }.getOrDefault(emptyList())
-        val playlistsJob = async(Dispatchers.IO) { runCatching { need().playlists() }.getOrDefault(emptyList()) }
+        // The generated playlists are in Library → Playlists and feed the dial above; the shelves are albums.
+        fun server(type: String): List<SubAlbum> = runCatching { need().albumList(type) }.getOrDefault(emptyList())
+        fun items(albums: List<SubAlbum>) = albums.map { album -> l.albumById[SubsonicIds.encode(album.id)] ?: r.item(album) }
         val recentJob = async(Dispatchers.IO) { server("recent") }
         val frequentJob = async(Dispatchers.IO) { server("frequent") }
+        // oasis says per album how many songs this user played: a begun album continues, an unplayed new one is marked.
+        val newestJob = async(Dispatchers.IO) { if (client?.oasis == true) server("newest") else emptyList() }
+        val unplayed = newestJob.await().filter { it.songsPlayed == 0 }.map { SubsonicIds.encode(it.id) }.toSet()
         val newest = l.index.albums
             .sortedByDescending { it.created ?: "" }
             .take(20)
             .mapNotNull { album -> l.albumById[SubsonicIds.encode(album.id)] }
-        val allPlaylists = playlistsJob.await()
+            .map { item -> if (item.id in unplayed) markedNew(item) else item }
         val recent = recentJob.await()
-        val frequent = frequentJob.await()
-        val mixShelves = SubsonicClient.mixShelves(allPlaylists).map { (title, list) ->
-            shelf(title, list.map { r.mixItem(it) })
-        }
-        val shelves = (
-            mixShelves + listOf(
-                shelf("Recently added", newest),
-                shelf("Recently played", recent),
-                shelf("Most played", frequent),
-                shelf("Albums at random", l.albums.shuffled().take(20)),
-                shelf("Artists", l.artists.shuffled().take(20)),
-            )
+        val begun = recent.filter { album -> (album.songsPlayed ?: 0) in 1 until album.songCount }
+        val shelves = listOf(
+            shelf("Continue", items(begun)),
+            shelf("Recently added", newest),
+            shelf("Recently played", items(recent)),
+            shelf("Most played", items(frequentJob.await())),
+            shelf("Albums at random", l.albums.shuffled().take(20)),
+            shelf("Artists", l.artists.shuffled().take(20)),
         ).filter { it.items.isNotEmpty() }
         null to shelves
     }
+
+    /** An album item whose subtitle starts with "New", for an album that arrived and wasn't played yet. */
+    private fun markedNew(item: Item): Item {
+        val subtitle = roma.core.Text("New · " + item.subtitle.original, "New · " + item.subtitle.latin)
+        return Item(item.kind, item.id, item.title, subtitle, item.thumb, item.song)
+    }
+
+    /** One stop of Home's dial: its name, what it means, and its songs with why each is there and the mixes holding it. */
+    class DialStop(val id: String, val name: String, val description: String, val songs: List<Song>, val why: List<String>, val from: List<List<String>>)
+
+    /** The last dial oasis gave, shown at once while a fresh one loads. */
+    @Volatile var dial: List<DialStop> = emptyList()
+        private set
+
+    /** Home's dial from oasis (oasisHome); empty from other servers, or when it can't be reached. */
+    suspend fun loadDial(): List<DialStop> {
+        val c = client ?: return emptyList()
+        if (!c.oasis) return emptyList()
+        val l = lib()
+        val stops = withContext(Dispatchers.IO) { runCatching { c.home() }.getOrNull() } ?: return dial
+        dial = stops.filter { it.songs.isNotEmpty() }.map { stop ->
+            val songs = stop.songs.map { h -> l.byId[SubsonicIds.encode(h.song.id)] ?: Store.romanizer.song(h.song) }
+            DialStop(stop.id, stop.name, stop.description, songs, stop.songs.map { it.why }, stop.songs.map { it.from })
+        }
+        return dial
+    }
+
     override val mixes = false
     @Composable override fun HomeTiles(mixes: List<Item>?, read: Boolean) = LibraryTiles()
 
@@ -415,7 +440,7 @@ object SubsonicSource : Source {
         return when (libraryTabs[tab]) {
             "Albums" -> l.sortedAlbums
             "Artists" -> l.sortedArtists
-            "Playlists" -> playlists()
+            "Playlists" -> playlists(headings = true)
             else -> starred(l)
         }
     }
@@ -433,10 +458,17 @@ object SubsonicSource : Source {
         return artistItems + albumItems + songItems
     }
 
-    // Library → Playlists shows every playlist: user and mirrored playlists first, then generated mixes and radios.
-    private fun playlists(): List<Item> {
+    // Library → Playlists shows every playlist: user and mirrored playlists first, then generated mixes and radios
+    // under the headings the server names (oasisShelf). Search gets them without headings.
+    private fun playlists(headings: Boolean = false): List<Item> {
+        val r = Store.romanizer
         val all = need().playlists()
-        return (all.filter { !it.isHomeMix } + all.filter { it.isHomeMix }).map { Store.romanizer.item(it) }
+        val own = all.filter { !it.isGenerated }.map { r.item(it) }
+        if (!headings) return own + all.filter { it.isGenerated }.map { r.item(it) }
+        val made = SubsonicClient.mixShelves(all).flatMap { (title, list) ->
+            listOf(Item(HEADING, "shelf:$title", roma.core.Text(title, title), roma.core.Text("", ""), null)) + list.map { r.mixItem(it) }
+        }
+        return own + made
     }
 
     override suspend fun detail(p: Page, partial: suspend (Detail) -> Unit): Detail {
@@ -579,6 +611,7 @@ object SubsonicSource : Source {
 
     override val canLike get() = client != null
     override val stars = true
+    override val canPin = true
     override fun like(id: String, like: Boolean) = runCatching { need().star(SubsonicIds.decode(id), like) }.isSuccess
     override fun liked(id: String) = runCatching { need().song(SubsonicIds.decode(id)).starred }.getOrNull()
 

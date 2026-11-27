@@ -196,6 +196,17 @@ object Store {
         }
     }
 
+    /** The playlists pinned to Home, as (id, title), in the order they were pinned. */
+    fun pins(): List<Pair<String, String>> = str("home.pins", "").lines().filter { '\t' in it }.map { line ->
+        line.substringBefore('\t') to line.substringAfter('\t')
+    }
+
+    fun pin(id: String, title: String, pinned: Boolean) {
+        val others = pins().filter { it.first != id }
+        val all = if (pinned) others + (id to title.replace('\t', ' ').replace('\n', ' ')) else others
+        set("home.pins", all.joinToString("\n") { "${it.first}\t${it.second}" })
+    }
+
     // Per-key state subscribes the calling composable only to [key], not every setting in the app.
     fun str(key: String, def: String): String {
         val state = strStates.computeIfAbsent(key) { mutableStateOf(prefs.getString(it, null)) }

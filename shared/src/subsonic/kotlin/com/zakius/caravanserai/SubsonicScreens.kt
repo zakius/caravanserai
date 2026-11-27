@@ -93,23 +93,96 @@ import roma.core.song
 // The Subsonic app's own screens: Home's tiles, the server's settings and the first-start server form.
 
 /**
- * Home's pinned tiles: the starred songs and the whole library at random, as a compact row of two buttons that neither
- * leaves empty space nor outweighs the shelves below. Server-generated mixes and radios live in Home's shelves.
+ * Home's top: the starred songs, the whole library at random and the playlists pinned to Home, as rows of two short
+ * buttons, then the dial when the server is oasis. The generated playlists are listed in Library → Playlists.
  */
 @Composable
 internal fun LibraryTiles() {
     val tint = MaterialTheme.colorScheme.onSecondaryContainer
-    Row(
-        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        ShortTile("Starred", SubsonicSource.STARRED, Modifier.weight(1f)) {
-            Icon(Icons.Filled.Star, null, Modifier.size(24.dp), tint = tint)
-        }
-        ShortTile("Shuffle all", SubsonicSource.SHUFFLE, Modifier.weight(1f)) {
+    val tiles = mutableListOf<Triple<String, String, @Composable () -> Unit>>(
+        Triple("Starred", SubsonicSource.STARRED) { Icon(Icons.Filled.Star, null, Modifier.size(24.dp), tint = tint) },
+        Triple("Shuffle all", SubsonicSource.SHUFFLE) {
             Icon(androidx.compose.ui.res.painterResource(R.drawable.shuffle), null, Modifier.size(24.dp), tint = tint)
+        },
+    )
+    for ((id, title) in Store.pins()) {
+        tiles += Triple(title, id) { Icon(androidx.compose.ui.res.painterResource(R.drawable.play), null, Modifier.size(24.dp), tint = tint) }
+    }
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        for (pair in tiles.chunked(2)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                for ((title, id, icon) in pair) ShortTile(title, id, Modifier.weight(1f), icon)
+                if (pair.size == 1) Spacer(Modifier.weight(1f))
+            }
         }
     }
+    Dial()
+}
+
+/** Songs shown from a stop at a time; Deal again shows the next ones. */
+private const val HAND = 5
+
+/**
+ * Home's dial (oasis only): stops from what the user plays now to what they never played, each dealing a hand of
+ * songs from their plays and from every playlist made for them, with why each is there. The last stop chosen stays.
+ */
+@Composable
+private fun Dial() {
+    var stops by remember { mutableStateOf(SubsonicSource.dial) }
+    LaunchedEffect(Unit) { stops = SubsonicSource.loadDial() }
+    if (stops.isEmpty()) return
+    val chosen = Store.str("home.dial", "blend")
+    val stop = stops.firstOrNull { it.id == chosen } ?: stops.first()
+    var deal by remember(stop) { mutableIntStateOf(0) }
+    var menuFor by remember { mutableStateOf<Song?>(null) }
+    val n = stop.songs.size
+    val start = (deal * HAND) % n
+    // The hand first, then the rest of the stop, so Play keeps going after the songs shown.
+    val order = (start until n) + (0 until start)
+    val queue = order.map { stop.songs[it] }
+    Header("Play something")
+    androidx.compose.foundation.layout.FlowRow(
+        Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        for (s in stops) FilterChip(s.id == stop.id, { Store.set("home.dial", s.id) }, label = { Text(s.name) })
+    }
+    Text(
+        stop.description,
+        Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    for ((place, i) in order.take(HAND).withIndex()) {
+        val song = stop.songs[i]
+        SongRow(song, extra = stop.why[i], onMenu = { menuFor = song }) {
+            Playback.play(queue, place)
+            Nav.tab = TAB_PLAYER
+        }
+    }
+    val mixes = stop.from.flatten().distinct()
+    if (mixes.isNotEmpty()) {
+        val more = if (mixes.size > 2) " and ${mixes.size - 2} more" else ""
+        Text(
+            "From " + mixes.take(2).joinToString(", ") + more,
+            Modifier.fillMaxWidth().clickable { Nav.select(TAB_LIBRARY) }.padding(horizontal = 16.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+    Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Button(onClick = {
+            Playback.play(queue)
+            Nav.tab = TAB_PLAYER
+        }) { Text("Play") }
+        Spacer(Modifier.width(8.dp))
+        if (n > HAND) TextButton(onClick = { deal++ }) { Text("Deal again") }
+    }
+    val menuSong = menuFor
+    if (menuSong != null) SongMenu(menuSong, null) { menuFor = null }
 }
 
 /** One of Home's two short buttons, which plays [id]: an icon and its title on the tile's colour. */

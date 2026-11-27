@@ -109,7 +109,14 @@ class SubAlbum(
     val wantedError: String? = null,
     val nameLatin: String? = null,
     val artistLatin: String? = null,
+    /** How many of its songs this user played (extension oasis's "oasisSongsPlayed"); null from other servers. */
+    val songsPlayed: Int? = null,
 )
+
+/** One stop of Home's dial from oasis's oasisHome: its songs, each with why it is there. */
+class HomeStop(val id: String, val name: String, val description: String, val songs: List<HomeSong>)
+
+class HomeSong(val song: SubSong, val why: String, val from: List<String>)
 
 /**
  * [wanted] says how a starred album or artist that the server doesn't hold yet is coming: "wanted", "downloading" or
@@ -145,8 +152,8 @@ class SubPlaylist(
     val radio: Boolean = false,
     val shelf: String? = null,
 ) {
-    /** Whether this playlist belongs in Home's mix/radio shelves rather than Library → Playlists. */
-    val isHomeMix: Boolean get() = mix || radio
+    /** Whether the server generated this playlist (a mix, station or radio), so Library lists it under its shelf name. */
+    val isGenerated: Boolean get() = mix || radio
 }
 
 /** The whole library as of [syncedAt], with what the server said about itself. */
@@ -168,6 +175,9 @@ class SubsonicIndex(
     val serverScrobbles: Boolean? = null,
 ) {
     fun supports(extension: String, version: Int = 1) = version in extensionVersions[extension].orEmpty()
+
+    /** Whether the server lists [extension] at all, in any version: oasis's is unstable, version 0. */
+    fun lists(extension: String) = extension in extensionVersions
 }
 
 /**
@@ -187,7 +197,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
      */
     @Volatile var romanization = false
     /**
-     * The server has the extension oasis v1: every request opts in (oasis=1), so its playlists say which are mixes and
+     * The server lists the extension oasis: every request opts in (oasis=1), so its playlists say which are mixes and
      * its albums and artists what is on its way. [sync] sets it.
      */
     @Volatile var oasis = false
@@ -272,7 +282,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
     fun sync(page: Int = 500): SubsonicIndex {
         val extensions = extensions()
         romanization = ROMANIZATION in extensions
-        oasis = 1 in extensions[OASIS].orEmpty()
+        oasis = OASIS in extensions
         val searched = paged(page, SubSong::id) { offset ->
             val params = listOf(
                 "query" to "\"\"",
@@ -317,6 +327,20 @@ class SubsonicClient(url: String, val user: String, private val password: String
         val params = listOf("type" to type, "size" to "$size")
         val result = call("getAlbumList2", params)["albumList2"].obj()
         return result?.get("album").arr().orEmpty().mapNotNull { album(it, romanization, oasis) }
+    }
+
+    /** Home's dial from oasis (oasisHome), its stops in order. Only for a server with the extension oasis. */
+    fun home(): List<HomeStop> {
+        val stops = call("oasisHome")["oasisHome"].obj()?.get("stop").arr().orEmpty()
+        return stops.mapNotNull { e ->
+            val o = e.obj() ?: return@mapNotNull null
+            val songs = o["song"].arr().orEmpty().mapNotNull { s ->
+                val song = song(s, romanization) ?: return@mapNotNull null
+                val from = s.obj()?.get("oasisFrom").arr().orEmpty().mapNotNull { it.str() }
+                HomeSong(song, s.obj()?.get("oasisWhy").str() ?: "", from)
+            }
+            HomeStop(o["id"].str() ?: "", o["name"].str() ?: "", o["description"].str() ?: "", songs)
+        }
     }
 
     fun playlists(): List<SubPlaylist> {
@@ -574,11 +598,11 @@ class SubsonicClient(url: String, val user: String, private val password: String
         /** Songs carry shareUrl, a public link to share as is. */
         const val SHARE_URL = "shareUrl"
 
-        /** Groups Home's mixes and radios into shelves named by the server (oasis's "oasisShelf", else the owner), in its order. */
+        /** Groups the mixes and radios under headings named by the server (oasis's "oasisShelf", else the owner), in its order. */
         fun mixShelves(playlists: List<SubPlaylist>): List<Pair<String, List<SubPlaylist>>> {
             val shelves = LinkedHashMap<String, MutableList<SubPlaylist>>()
             for (p in playlists) {
-                if (!p.isHomeMix) continue
+                if (!p.isGenerated) continue
                 shelves.getOrPut(p.shelf ?: p.owner) { ArrayList() }.add(p)
             }
             return shelves.toList()
@@ -670,6 +694,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
                 wantedError = if (oasis) o["oasisWantedError"].str() else null,
                 nameLatin = nameLatin,
                 artistLatin = latin(o, "artist", latin),
+                songsPlayed = if (oasis) o["oasisSongsPlayed"].str()?.toIntOrNull() else null,
             )
         }
 

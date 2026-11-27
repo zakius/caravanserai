@@ -61,7 +61,7 @@ class SubsonicTest {
                     "ping" -> """"x":1"""
                     "getOpenSubsonicExtensions" -> {
                         var list = """"openSubsonicExtensions":[{"name":"formPost","versions":[1]},{"name":"songLyrics","versions":[1,2]}"""
-                        if (oasisListed) list += """,{"name":"oasis","versions":[1]}"""
+                        if (oasisListed) list += """,{"name":"oasis","versions":[0]}"""
                         if (shareListed) list += """,{"name":"shareUrl","versions":[1]}"""
                         if (romanizing) list += """,{"name":"romanization","versions":[1]}"""
                         list + "]"
@@ -79,7 +79,7 @@ class SubsonicTest {
                         }
                         """"searchResult3":{"song":[${listed.joinToString(",")}]}"""
                     }
-                    "getAlbumList2" -> """"albumList2":{"album":[{"id":"al-1","name":"THE BOOK","artist":"YOASOBI","artistId":"ar-1","songCount":7,"coverArt":"al-1"}]}"""
+                    "getAlbumList2" -> """"albumList2":{"album":[{"id":"al-1","name":"THE BOOK","artist":"YOASOBI","artistId":"ar-1","songCount":7,"coverArt":"al-1","oasisSongsPlayed":3}]}"""
                     "getArtists" -> """"artists":{"index":[{"name":"Y","artist":[{"id":"ar-1","name":"YOASOBI","albumCount":1}]}]}"""
                     // songLyrics v2 for tr-1 sends every layer whatever kinds says, like a server that ignores it.
                     // tr-2 has no pronunciation.
@@ -110,6 +110,8 @@ class SubsonicTest {
                         """{"id":"3","name":"Replay Mix","owner":"YouTube Music","oasisMix":true,"oasisShelf":"YouTube Music mixes","comment":"YOASOBI and more"},""" +
                         """{"id":"4","name":"Archive Mix","owner":"YouTube Music","oasisMix":true,"oasisShelf":"YouTube Music mixes"},""" +
                         """{"id":"6","name":"Daily Jams","owner":"ListenBrainz","oasisMix":true}]}"""
+                    "oasisHome" -> """"oasisHome":{"stop":[{"id":"repeat","name":"On repeat","description":"Most played",""" +
+                        """"song":[{"id":"tr-1","title":"夜に駆ける","oasisWhy":"3 plays lately","oasisFrom":["My Supermix","Radio"]}]}]}"""
                     "scrobble", "star" -> """"x":1"""
                     else -> """"x":1"""
                 }
@@ -320,17 +322,28 @@ class SubsonicTest {
         assertNull(SubsonicClient.song(Json.parseToJsonElement(songs[0]))!!.path)
     }
 
+    @Test fun oasisHomeAndPlayedSongs() {
+        val c = SubsonicClient(url, "admin", "secret")
+        oasisListed = true
+        c.sync()
+        val stop = c.home().single()
+        assertEquals("On repeat", stop.name)
+        assertEquals("3 plays lately", stop.songs.single().why)
+        assertEquals(listOf("My Supermix", "Radio"), stop.songs.single().from)
+        assertEquals(3, c.albumList("recent").single().songsPlayed)
+    }
+
     @Test fun mixesMarked() {
         val c = SubsonicClient(url, "admin", "secret")
         // oasisMix and oasisSource without the extension oasis are just fields: no home mixes.
         c.sync()
-        assertTrue(c.playlists().none { it.isHomeMix })
+        assertTrue(c.playlists().none { it.isGenerated })
         oasisListed = true
-        assertTrue(c.sync().supports(SubsonicClient.OASIS))
+        assertTrue(c.sync().lists(SubsonicClient.OASIS))
         val all = c.playlists()
-        // Only plain playlists stay out of Home's mix/radio shelves.
-        assertEquals(listOf("Favourites"), all.filter { !it.isHomeMix }.map { it.name })
-        // Home shelves are the server's oasisShelf names in its order; a mix without one goes on its owner's shelf.
+        // Only the plain playlists are not generated.
+        assertEquals(listOf("Favourites"), all.filter { !it.isGenerated }.map { it.name })
+        // Library's headings are the server's oasisShelf names in its order; a mix without one goes under its owner.
         val shelves = SubsonicClient.mixShelves(all)
         assertEquals(
             listOf(
@@ -340,7 +353,7 @@ class SubsonicTest {
             ),
             shelves.map { (title, list) -> title to list.map { it.name } },
         )
-        // Mix cards use comment (or "Radio" for a radio without one) rather than repeating the shelf's owner.
+        // Generated playlists show their comment (or "Radio" for a radio without one) rather than repeating the shelf's owner.
         val r = Romanizer(jvmIcu)
         assertEquals("Grows from what you play", r.mixItem(shelves[0].second[0]).subtitle.latin)
         assertEquals("Radio", r.mixItem(shelves[0].second[1]).subtitle.latin)
