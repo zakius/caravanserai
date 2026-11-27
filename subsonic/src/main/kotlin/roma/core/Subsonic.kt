@@ -113,11 +113,6 @@ class SubAlbum(
     val songsPlayed: Int? = null,
 )
 
-/** One stop of Home's dial from oasis's oasisHome: its songs, each with why it is there. */
-class HomeStop(val id: String, val name: String, val description: String, val songs: List<HomeSong>)
-
-class HomeSong(val song: SubSong, val why: String, val from: List<String>)
-
 /**
  * [wanted] says how a starred album or artist that the server doesn't hold yet is coming: "wanted", "downloading" or
  * "failed" (extension oasis's "oasisWanted"). [wantedError] says why it isn't there yet. Both are null on other servers.
@@ -327,20 +322,6 @@ class SubsonicClient(url: String, val user: String, private val password: String
         val params = listOf("type" to type, "size" to "$size")
         val result = call("getAlbumList2", params)["albumList2"].obj()
         return result?.get("album").arr().orEmpty().mapNotNull { album(it, romanization, oasis) }
-    }
-
-    /** Home's dial from oasis (oasisHome), its stops in order. Only for a server with the extension oasis. */
-    fun home(): List<HomeStop> {
-        val stops = call("oasisHome")["oasisHome"].obj()?.get("stop").arr().orEmpty()
-        return stops.mapNotNull { e ->
-            val o = e.obj() ?: return@mapNotNull null
-            val songs = o["song"].arr().orEmpty().mapNotNull { s ->
-                val song = song(s, romanization) ?: return@mapNotNull null
-                val from = s.obj()?.get("oasisFrom").arr().orEmpty().mapNotNull { it.str() }
-                HomeSong(song, s.obj()?.get("oasisWhy").str() ?: "", from)
-            }
-            HomeStop(o["id"].str() ?: "", o["name"].str() ?: "", o["description"].str() ?: "", songs)
-        }
     }
 
     fun playlists(): List<SubPlaylist> {

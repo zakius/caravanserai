@@ -110,8 +110,6 @@ class SubsonicTest {
                         """{"id":"3","name":"Replay Mix","owner":"YouTube Music","oasisMix":true,"oasisShelf":"YouTube Music mixes","comment":"YOASOBI and more"},""" +
                         """{"id":"4","name":"Archive Mix","owner":"YouTube Music","oasisMix":true,"oasisShelf":"YouTube Music mixes"},""" +
                         """{"id":"6","name":"Daily Jams","owner":"ListenBrainz","oasisMix":true}]}"""
-                    "oasisHome" -> """"oasisHome":{"stop":[{"id":"repeat","name":"On repeat","description":"Most played",""" +
-                        """"song":[{"id":"tr-1","title":"夜に駆ける","oasisWhy":"3 plays lately","oasisFrom":["My Supermix","Radio"]}]}]}"""
                     "scrobble", "star" -> """"x":1"""
                     else -> """"x":1"""
                 }
@@ -322,14 +320,12 @@ class SubsonicTest {
         assertNull(SubsonicClient.song(Json.parseToJsonElement(songs[0]))!!.path)
     }
 
-    @Test fun oasisHomeAndPlayedSongs() {
+    @Test fun playedSongsOnlyWithOasis() {
         val c = SubsonicClient(url, "admin", "secret")
+        c.sync()
+        assertEquals(null, c.albumList("recent").single().songsPlayed)
         oasisListed = true
         c.sync()
-        val stop = c.home().single()
-        assertEquals("On repeat", stop.name)
-        assertEquals("3 plays lately", stop.songs.single().why)
-        assertEquals(listOf("My Supermix", "Radio"), stop.songs.single().from)
         assertEquals(3, c.albumList("recent").single().songsPlayed)
     }
 
