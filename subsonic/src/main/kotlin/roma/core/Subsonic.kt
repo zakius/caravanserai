@@ -129,7 +129,8 @@ class SubArtist(
 
 /**
  * [mix] is true for a server-generated mix, station or radio (extension oasis's "oasisMix"), and [radio] for a radio
- * playlist ("oasisSource" or "oasisStation"). Both are false on other servers.
+ * playlist ("oasisSource" or "oasisStation"). Both are false on other servers. [shelf] names the Home shelf it goes on
+ * ("oasisShelf").
  */
 @Serializable
 class SubPlaylist(
@@ -142,6 +143,7 @@ class SubPlaylist(
     val nameLatin: String? = null,
     val comment: String? = null,
     val radio: Boolean = false,
+    val shelf: String? = null,
 ) {
     /** Whether this playlist belongs in Home's mix/radio shelves rather than Library → Playlists. */
     val isHomeMix: Boolean get() = mix || radio
@@ -332,6 +334,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
                 nameLatin = latin(o, "name", romanization),
                 comment = o["comment"].str(),
                 radio = oasis && (o["oasisSource"].str() != null || o["oasisStation"].str() != null),
+                shelf = if (oasis) o["oasisShelf"].str() else null,
             )
         }
     }
@@ -571,28 +574,14 @@ class SubsonicClient(url: String, val user: String, private val password: String
         /** Songs carry shareUrl, a public link to share as is. */
         const val SHARE_URL = "shareUrl"
 
-        /**
-         * Groups Home's mixes and radios into shelves: the server's own mixes and user radios first ("Mixes & radios"),
-         * then one shelf per external service owner (e.g. "<owner> mixes") in the server's order.
-         */
-        fun mixShelves(playlists: List<SubPlaylist>, user: String): List<Pair<String, List<SubPlaylist>>> {
-            val own = ArrayList<SubPlaylist>()
-            val services = LinkedHashMap<String, MutableList<SubPlaylist>>()
+        /** Groups Home's mixes and radios into shelves named by the server (oasis's "oasisShelf", else the owner), in its order. */
+        fun mixShelves(playlists: List<SubPlaylist>): List<Pair<String, List<SubPlaylist>>> {
+            val shelves = LinkedHashMap<String, MutableList<SubPlaylist>>()
             for (p in playlists) {
                 if (!p.isHomeMix) continue
-                val isOwn = p.owner.isBlank() ||
-                    p.owner.equals(OASIS, ignoreCase = true) ||
-                    (user.isNotBlank() && p.owner.equals(user, ignoreCase = true))
-                if (isOwn) {
-                    own += p
-                } else {
-                    services.getOrPut(p.owner) { ArrayList() }.add(p)
-                }
+                shelves.getOrPut(p.shelf ?: p.owner) { ArrayList() }.add(p)
             }
-            val shelves = ArrayList<Pair<String, List<SubPlaylist>>>()
-            if (own.isNotEmpty()) shelves += "Mixes & radios" to own
-            for ((owner, list) in services) shelves += "$owner mixes" to list
-            return shelves
+            return shelves.toList()
         }
 
         /**
