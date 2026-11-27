@@ -390,7 +390,7 @@ object SubsonicSource : Source {
             }
             1 -> bestFolded(l.albums, l.foldedAlbums)
             2 -> bestFolded(l.artists, l.foldedArtists)
-            else -> playlists(includeMixes = true)
+            else -> playlists()
                 .mapNotNull { x -> matchDistance(x.texts(), query)?.let { x to it } }
                 .sortedBy { it.second }
                 .take(100)
@@ -433,9 +433,11 @@ object SubsonicSource : Source {
         return artistItems + albumItems + songItems
     }
 
-    // Generated mixes and radios live in Home's shelves; Library → Playlists holds actual playlists.
-    private fun playlists(includeMixes: Boolean = false) =
-        need().playlists().filter { includeMixes || !it.isHomeMix }.map { Store.romanizer.item(it) }
+    // Library → Playlists shows every playlist: user and mirrored playlists first, then generated mixes and radios.
+    private fun playlists(): List<Item> {
+        val all = need().playlists()
+        return (all.filter { !it.isHomeMix } + all.filter { it.isHomeMix }).map { Store.romanizer.item(it) }
+    }
 
     override suspend fun detail(p: Page, partial: suspend (Detail) -> Unit): Detail {
         val l = lib()

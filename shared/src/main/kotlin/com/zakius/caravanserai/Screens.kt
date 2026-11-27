@@ -76,6 +76,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -238,10 +239,27 @@ fun ItemRow(item: Item, onClick: () -> Unit) {
 }
 
 @Composable
-internal fun Card(item: Item, onClick: () -> Unit) {
+internal fun Card(item: Item, hasSubtitle: Boolean = true, hasNonLatin: Boolean = true, onClick: () -> Unit) {
     // With a large font the card and its picture grow too, up to 1.6×, so a title fits its width instead of breaking
-    // inside a word.
-    val grow = LocalDensity.current.fontScale.coerceIn(1f, 1.6f)
+    // inside a word. Every card in a shelf reserves the same text height so scrolling horizontally never shifts lower
+    // shelves when a taller title enters view.
+    val density = LocalDensity.current
+    val grow = density.fontScale.coerceIn(1f, 1.6f)
+    val large = density.fontScale > 1.3f
+    val mode = Store.listMode
+    val titleStyle = MaterialTheme.typography.bodyMedium
+    val smallStyle = MaterialTheme.typography.bodySmall
+    val textHeight = with(density) {
+        val titleLine = (titleStyle.fontSize * 1.25f).toDp()
+        val smallLine = (if (smallStyle.lineHeight.isSpecified) smallStyle.lineHeight else smallStyle.fontSize * 1.35f).toDp()
+        val titleHeight = when {
+            !hasNonLatin || mode == "romanized" || mode == "original" -> titleLine * 2
+            mode == "ruby" -> (titleLine + smallLine) * 2
+            else -> titleLine * 2 + smallLine
+        }
+        val subtitleHeight = if (hasSubtitle) smallLine * (if (large) 2 else 1) else 0.dp
+        titleHeight + subtitleHeight + 2.dp
+    }
     val cardModifier = Modifier
         .width(140.dp * grow)
         .prefetchOnPress(item)
@@ -251,16 +269,17 @@ internal fun Card(item: Item, onClick: () -> Unit) {
         val shape = if (item.kind == "artist") CircleShape else RoundedCornerShape(6.dp)
         Thumb(shownThumb(item.thumb, 128.dp * grow), 128.dp * grow, Modifier.size(128.dp * grow).clip(shape))
         Spacer(Modifier.height(4.dp))
-        Name(item.title, Store.listMode, MaterialTheme.typography.bodyMedium)
-        if (item.subtitle.latin.isNotBlank()) {
-            val large = LocalDensity.current.fontScale > 1.3f
-            Text(
-                item.subtitle.latin,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = if (large) 2 else 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+        Column(Modifier.height(textHeight)) {
+            Name(item.title, mode, titleStyle)
+            if (item.subtitle.latin.isNotBlank()) {
+                Text(
+                    item.subtitle.latin,
+                    style = smallStyle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = if (large) 2 else 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
@@ -1107,8 +1126,12 @@ object Home {
                 }
                 .filter { shelf -> shelf.items.isNotEmpty() }
             fresh += add
-            val notFetchedAgain = saved.filter { s -> fresh.none { f -> f.title.original == s.title.original } }
-            Store.writePage("home", fresh + notFetchedAgain, ListSerializer(Section.serializer()))
+            val toSave = if (backend.mixes) {
+                fresh + saved.filter { s -> fresh.none { f -> f.title.original == s.title.original } }
+            } else {
+                fresh.toList()
+            }
+            Store.writePage("home", toSave, ListSerializer(Section.serializer()))
             merge(add)
             // The mixes are spread over several pages (the numbered ones often come after the Supermix), so the
             // row waits for the first MIX_PAGES pages. Mixes on later pages still join it.
@@ -1125,8 +1148,18 @@ object Home {
 
     private fun sameItems(a: List<Item>, b: List<Item>) = a.map { it.id } == b.map { it.id }
 
-    /** Merges fresh shelves into the shown ones by title, as [Home] describes. LazyColumn item i + 1 is shelf i. */
-    private fun merge(add: List<Section>) {
+    /**
+     * Merges fresh shelves into the shown ones by title, as [Home] describes. For a single-page library Home
+     * (Subsonic), shelf additions, removals or order changes replace the shelf list in the source's order (once idle)
+     * so new shelves at the top aren't appended to the bottom.
+     */
+    private suspend fun merge(add: List<Section>) {
+        if (!backend.mixes && sections.map { it.title.original } != add.map { it.title.original }) {
+            if (sections.isNotEmpty()) Touch.awaitIdle()
+            waiting.clear()
+            sections = add
+            return
+        }
         val shown = sections.toMutableList()
         val on = visible()
         val matched = HashSet<Int>()
@@ -1194,9 +1227,11 @@ fun HomeScreen() {
                     Name(sec.title, Store.listMode, label)
                 }
                 // The cards' own 6 dp and this 10 dp put the first picture at 16 dp, under the shelf's title.
+                val hasSubtitle = remember(sec) { sec.items.any { it.subtitle.latin.isNotBlank() } }
+                val hasNonLatin = remember(sec, dataVersion) { sec.items.any { !it.title.isLatin && !Store.reads(it.title.original) } }
                 LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp)) {
                     itemsIndexed(sec.items, key = { idx, item -> "${item.kind}:${item.id}#$idx" }) { _, item ->
-                        Card(item) { openItem(item) }
+                        Card(item, hasSubtitle = hasSubtitle, hasNonLatin = hasNonLatin) { openItem(item) }
                     }
                 }
             }
