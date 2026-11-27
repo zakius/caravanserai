@@ -101,21 +101,15 @@ internal fun LibraryTiles() {
     val tint = MaterialTheme.colorScheme.onSecondaryContainer
     val tiles = mutableListOf<Triple<String, String, @Composable () -> Unit>>(
         Triple("Starred", SubsonicSource.STARRED) { Icon(Icons.Filled.Star, null, Modifier.size(24.dp), tint = tint) },
-        Triple("Shuffle all", SubsonicSource.SHUFFLE) {
-            Icon(androidx.compose.ui.res.painterResource(R.drawable.shuffle), null, Modifier.size(24.dp), tint = tint)
-        },
+        Triple("Shuffle all", SubsonicSource.SHUFFLE) { TileIcon(androidx.compose.ui.res.painterResource(R.drawable.shuffle)) },
     )
-    for ((id, title) in Store.pins()) {
-        tiles += Triple(title, id) { Icon(androidx.compose.ui.res.painterResource(R.drawable.play), null, Modifier.size(24.dp), tint = tint) }
-    }
-    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        for (pair in tiles.chunked(2)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                for ((title, id, icon) in pair) ShortTile(title, id, Modifier.weight(1f), icon)
-                if (pair.size == 1) Spacer(Modifier.weight(1f))
-            }
+    for ((id, title) in Store.pins()) tiles += Triple(title, id) { TileIcon(androidx.compose.ui.res.painterResource(R.drawable.play)) }
+    TileRows(tiles.map { (title, id, icon) ->
+        ShortTileSpec(title, icon, onPress = { Playback.prefetchMix(id) }) {
+            Playback.playMix(id, title = title)
+            Nav.tab = TAB_PLAYER
         }
-    }
+    })
     Dial()
 }
 
@@ -123,8 +117,8 @@ internal fun LibraryTiles() {
 private const val HAND = 5
 
 /**
- * Home's dial (oasis only): stops from what the user plays now to what they never played, each dealing a hand of
- * songs from their plays and from every playlist made for them, with why each is there. The last stop chosen stays.
+ * Home's dial (oasis only), laid out as Home's shelves are: a title, the stops as chips, the hand of songs as cards
+ * with oasis's reason under each, then Play and Deal again as short buttons. The last stop chosen stays.
  */
 @Composable
 private fun Dial() {
@@ -134,81 +128,84 @@ private fun Dial() {
     val chosen = Store.str("home.dial", "blend")
     val stop = stops.firstOrNull { it.id == chosen } ?: stops.first()
     var deal by remember(stop) { mutableIntStateOf(0) }
-    var menuFor by remember { mutableStateOf<Song?>(null) }
     val n = stop.songs.size
     val start = (deal * HAND) % n
     // The hand first, then the rest of the stop, so Play keeps going after the songs shown.
     val order = (start until n) + (0 until start)
     val queue = order.map { stop.songs[it] }
+    val hand = order.take(HAND).map { i ->
+        val song = stop.songs[i]
+        Item("song", song.id, song.title, roma.core.Text(stop.why[i], stop.why[i]), song.thumb, song)
+    }
     Header("Play something")
     androidx.compose.foundation.layout.FlowRow(
-        Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
+        Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         for (s in stops) FilterChip(s.id == stop.id, { Store.set("home.dial", s.id) }, label = { Text(s.name) })
     }
-    Text(
-        stop.description,
-        Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    for ((place, i) in order.take(HAND).withIndex()) {
-        val song = stop.songs[i]
-        SongRow(song, extra = stop.why[i], onMenu = { menuFor = song }) {
-            Playback.play(queue, place)
-            Nav.tab = TAB_PLAYER
+    val hasNonLatin = hand.any { !it.title.isLatin && !Store.reads(it.title.original) }
+    // As on the shelves: the cards' own 6 dp and this 10 dp put the first picture at 16 dp.
+    LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp)) {
+        itemsIndexed(hand, key = { _, item -> item.id }) { place, item ->
+            Card(item, hasSubtitle = true, hasNonLatin = hasNonLatin) {
+                Playback.play(queue, place)
+                Nav.tab = TAB_PLAYER
+            }
         }
     }
-    val mixes = stop.from.flatten().distinct()
-    if (mixes.isNotEmpty()) {
-        val more = if (mixes.size > 2) " and ${mixes.size - 2} more" else ""
-        Text(
-            "From " + mixes.take(2).joinToString(", ") + more,
-            Modifier.fillMaxWidth().clickable { Nav.select(TAB_LIBRARY) }.padding(horizontal = 16.dp, vertical = 8.dp),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.primary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-    Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Button(onClick = {
+    TileRows(listOfNotNull(
+        ShortTileSpec("Play", { TileIcon(androidx.compose.ui.res.painterResource(R.drawable.play)) }) {
             Playback.play(queue)
             Nav.tab = TAB_PLAYER
-        }) { Text("Play") }
-        Spacer(Modifier.width(8.dp))
-        if (n > HAND) TextButton(onClick = { deal++ }) { Text("Deal again") }
-    }
-    val menuSong = menuFor
-    if (menuSong != null) SongMenu(menuSong, null) { menuFor = null }
+        },
+        if (n > HAND) ShortTileSpec("Deal again", { TileIcon(androidx.compose.ui.res.painterResource(R.drawable.next)) }) { deal++ } else null,
+    ))
 }
 
-/** One of Home's two short buttons, which plays [id]: an icon and its title on the tile's colour. */
 @Composable
-private fun ShortTile(title: String, id: String, modifier: Modifier, icon: @Composable () -> Unit) {
+private fun TileIcon(painter: androidx.compose.ui.graphics.painter.Painter) =
+    Icon(painter, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+
+/** A short button's title, icon, what it starts on finger-down (a prefetch) and what a tap does. */
+private class ShortTileSpec(val title: String, val icon: @Composable () -> Unit, val onPress: (() -> Unit)? = null, val onClick: () -> Unit)
+
+/** Short buttons two to a row, an odd last one at half width, as Home's top has them. */
+@Composable
+private fun TileRows(tiles: List<ShortTileSpec>) {
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        for (pair in tiles.chunked(2)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                for (tile in pair) ShortTile(tile, Modifier.weight(1f))
+                if (pair.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+/** One of Home's short buttons: an icon and its title on the tile's colour. */
+@Composable
+private fun ShortTile(tile: ShortTileSpec, modifier: Modifier) {
+    val press = tile.onPress
     Row(
         modifier
             .heightIn(min = 56.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.secondaryContainer)
-            .pointerInput(id) {
+            .then(if (press == null) Modifier else Modifier.pointerInput(tile.title) {
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
-                    Playback.prefetchMix(id)
+                    press()
                 }
-            }
-            .clickable {
-                Playback.playMix(id, title = title)
-                Nav.tab = TAB_PLAYER
-            }
+            })
+            .clickable(onClick = tile.onClick)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        icon()
+        tile.icon()
         Spacer(Modifier.width(12.dp))
-        Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSecondaryContainer)
+        Text(tile.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSecondaryContainer)
     }
 }
 

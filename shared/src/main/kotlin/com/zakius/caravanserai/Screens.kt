@@ -1194,7 +1194,7 @@ fun HomeScreen() {
         LaunchedEffect(Unit) { Startup.later { shelves = true } }
         Column(Modifier.fillMaxSize()) {
             ScreenTitle("Home")
-            Header(if (backend.mixes) "Your mixes" else "Your library")
+            if (backend.mixes) Header("Your mixes")
             backend.HomeTiles(Home.mixes, Home.mixesRead)
         }
         return
@@ -1215,7 +1215,7 @@ fun HomeScreen() {
             item(key = "mixes") {
                 // Signed out, the hint is short, and YouTube's shelves follow it at once.
                 Column(if (backend.mixes && backend.libraryReady) Modifier.heightIn(min = height) else Modifier) {
-                    Header(if (backend.mixes) "Your mixes" else "Your library")
+                    if (backend.mixes) Header("Your mixes")
                     backend.HomeTiles(Home.mixes, Home.mixesRead)
                 }
             }
