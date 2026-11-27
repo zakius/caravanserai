@@ -104,11 +104,11 @@ class SubsonicTest {
                     "getUser" -> """"user":{"username":"${p("username")}","scrobblingEnabled":true,"adminRole":true}"""
                     "getTopSongs" -> """"topSongs":{"song":[${songs[2]}]}"""
                     "getSimilarSongs" -> """"similarSongs":{"song":[${songs[4]}]}"""
-                    "getPlaylists" -> """"playlists":{"playlist":[{"id":"1","name":"Radio","owner":"admin","oasisSource":"all","comment":"Grows from what you play"},""" +
-                        """{"id":"5","name":"Last.fm top tracks","owner":"oasis","oasisMix":true,"oasisStation":"lastfm-top"},""" +
+                    "getPlaylists" -> """"playlists":{"playlist":[{"id":"1","name":"Radio","owner":"admin","oasisSource":"all","oasisShelf":"Made for you","comment":"Grows from what you play"},""" +
+                        """{"id":"5","name":"Last.fm top tracks","owner":"oasis","oasisMix":true,"oasisShelf":"Made for you","oasisStation":"lastfm-top"},""" +
                         """{"id":"2","name":"Favourites","owner":"admin"},""" +
-                        """{"id":"3","name":"Replay Mix","owner":"YouTube Music","oasisMix":true,"comment":"YOASOBI and more"},""" +
-                        """{"id":"4","name":"Archive Mix","owner":"YouTube Music","oasisMix":true},""" +
+                        """{"id":"3","name":"Replay Mix","owner":"YouTube Music","oasisMix":true,"oasisShelf":"YouTube Music mixes","comment":"YOASOBI and more"},""" +
+                        """{"id":"4","name":"Archive Mix","owner":"YouTube Music","oasisMix":true,"oasisShelf":"YouTube Music mixes"},""" +
                         """{"id":"6","name":"Daily Jams","owner":"ListenBrainz","oasisMix":true}]}"""
                     "scrobble", "star" -> """"x":1"""
                     else -> """"x":1"""
@@ -330,13 +330,13 @@ class SubsonicTest {
         val all = c.playlists()
         // Only plain playlists stay out of Home's mix/radio shelves.
         assertEquals(listOf("Favourites"), all.filter { !it.isHomeMix }.map { it.name })
-        // Home shelves group oasis & user radios first, then each external service in server order.
-        val shelves = SubsonicClient.mixShelves(all, c.user)
+        // Home shelves are the server's oasisShelf names in its order; a mix without one goes on its owner's shelf.
+        val shelves = SubsonicClient.mixShelves(all)
         assertEquals(
             listOf(
-                "Mixes & radios" to listOf("Radio", "Last.fm top tracks"),
+                "Made for you" to listOf("Radio", "Last.fm top tracks"),
                 "YouTube Music mixes" to listOf("Replay Mix", "Archive Mix"),
-                "ListenBrainz mixes" to listOf("Daily Jams"),
+                "ListenBrainz" to listOf("Daily Jams"),
             ),
             shelves.map { (title, list) -> title to list.map { it.name } },
         )

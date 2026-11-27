@@ -321,7 +321,7 @@ object SubsonicSource : Source {
         val allPlaylists = playlistsJob.await()
         val recent = recentJob.await()
         val frequent = frequentJob.await()
-        val mixShelves = SubsonicClient.mixShelves(allPlaylists, client?.user ?: "").map { (title, list) ->
+        val mixShelves = SubsonicClient.mixShelves(allPlaylists).map { (title, list) ->
             shelf(title, list.map { r.mixItem(it) })
         }
         val shelves = (
